@@ -16,6 +16,21 @@ function studioDate(
   return new Date(iso);
 }
 
+async function upsertSynonym(
+  serviceId: string,
+  synonym: string,
+  sortOrder: number,
+  isActive = true,
+) {
+  await prisma.serviceSynonym.upsert({
+    where: {
+      serviceId_synonym: { serviceId, synonym },
+    },
+    update: { sortOrder, isActive },
+    create: { serviceId, synonym, sortOrder, isActive },
+  });
+}
+
 async function main() {
   const passwordHash = await bcrypt.hash("dev-password", 10);
 
@@ -63,149 +78,498 @@ async function main() {
     },
   });
 
-  const master1 = await prisma.master.upsert({
-    where: { userId: masterUser1.id },
+  const masterUser3 = await prisma.user.upsert({
+    where: { email: "master3@example.local" },
     update: {},
     create: {
+      email: "master3@example.local",
+      passwordHash,
+      role: "MASTER",
+      name: "Тестовый мастер 3",
+    },
+  });
+
+  const master1 = await prisma.master.upsert({
+    where: { userId: masterUser1.id },
+    update: {
+      internalName: "Анна И.",
+      publicName: "Анна",
+      clientDescription: "Стилист, стрижки и укладки (тест)",
+      isActive: true,
+      isPublic: true,
+      isOnlineBookingEnabled: true,
+    },
+    create: {
       userId: masterUser1.id,
-      displayName: "Анна (тест)",
+      internalName: "Анна И.",
+      publicName: "Анна",
+      clientDescription: "Стилист, стрижки и укладки (тест)",
       slotMinutes: 30,
       workStart: "09:00",
       workEnd: "18:00",
       breakAfterMinutes: 15,
       sortOrder: 1,
+      isActive: true,
+      isPublic: true,
+      isOnlineBookingEnabled: true,
     },
   });
 
   const master2 = await prisma.master.upsert({
     where: { userId: masterUser2.id },
-    update: {},
+    update: {
+      internalName: "Мария К.",
+      publicName: "Мария",
+      clientDescription: "Мастер маникюра и перманентного макияжа (тест)",
+      isActive: true,
+      isPublic: true,
+      isOnlineBookingEnabled: true,
+    },
     create: {
       userId: masterUser2.id,
-      displayName: "Мария (тест)",
+      internalName: "Мария К.",
+      publicName: "Мария",
+      clientDescription: "Мастер маникюра и перманентного макияжа (тест)",
       slotMinutes: 15,
       workStart: "10:00",
       workEnd: "19:00",
       breakAfterMinutes: 10,
       sortOrder: 2,
+      isActive: true,
+      isPublic: true,
+      isOnlineBookingEnabled: true,
+    },
+  });
+
+  const master3 = await prisma.master.upsert({
+    where: { userId: masterUser3.id },
+    update: {
+      internalName: "Елена С.",
+      publicName: "Елена",
+      clientDescription: "Lash-мастер (тест)",
+      isActive: true,
+      isPublic: false,
+      isOnlineBookingEnabled: false,
+    },
+    create: {
+      userId: masterUser3.id,
+      internalName: "Елена С.",
+      publicName: "Елена",
+      clientDescription: "Lash-мастер (тест)",
+      slotMinutes: 30,
+      workStart: "11:00",
+      workEnd: "20:00",
+      breakAfterMinutes: 10,
+      sortOrder: 3,
+      isActive: true,
+      isPublic: false,
+      isOnlineBookingEnabled: false,
     },
   });
 
   const categoryHair = await prisma.serviceCategory.upsert({
     where: { id: "00000000-0000-4000-8000-000000000001" },
-    update: {},
+    update: {
+      name: "Волосы",
+      description: "Стрижки и уход за волосами (тест)",
+      isActive: true,
+      isPublic: true,
+      sortOrder: 1,
+    },
     create: {
       id: "00000000-0000-4000-8000-000000000001",
       name: "Волосы",
+      description: "Стрижки и уход за волосами (тест)",
       sortOrder: 1,
+      isActive: true,
+      isPublic: true,
     },
   });
 
   const categoryNails = await prisma.serviceCategory.upsert({
     where: { id: "00000000-0000-4000-8000-000000000002" },
-    update: {},
+    update: {
+      name: "Ногти",
+      description: "Маникюр и педикюр (тест)",
+      isActive: true,
+      isPublic: true,
+      sortOrder: 2,
+    },
     create: {
       id: "00000000-0000-4000-8000-000000000002",
       name: "Ногти",
+      description: "Маникюр и педикюр (тест)",
       sortOrder: 2,
+      isActive: true,
+      isPublic: true,
+    },
+  });
+
+  const categoryPmu = await prisma.serviceCategory.upsert({
+    where: { id: "00000000-0000-4000-8000-000000000003" },
+    update: {
+      name: "Перманентный макияж",
+      description: "PMU и коррекция (тест)",
+      isActive: true,
+      isPublic: true,
+      sortOrder: 3,
+    },
+    create: {
+      id: "00000000-0000-4000-8000-000000000003",
+      name: "Перманентный макияж",
+      description: "PMU и коррекция (тест)",
+      sortOrder: 3,
+      isActive: true,
+      isPublic: true,
+    },
+  });
+
+  const categoryRemoval = await prisma.serviceCategory.upsert({
+    where: { id: "00000000-0000-4000-8000-000000000004" },
+    update: {
+      name: "Удаление",
+      description: "Удаление перманента (тест)",
+      isActive: true,
+      isPublic: true,
+      sortOrder: 4,
+    },
+    create: {
+      id: "00000000-0000-4000-8000-000000000004",
+      name: "Удаление",
+      description: "Удаление перманента (тест)",
+      sortOrder: 4,
+      isActive: true,
+      isPublic: true,
+    },
+  });
+
+  const categoryLashes = await prisma.serviceCategory.upsert({
+    where: { id: "00000000-0000-4000-8000-000000000005" },
+    update: {
+      name: "Ресницы",
+      description: "Услуги для ресниц (тест)",
+      isActive: true,
+      isPublic: true,
+      sortOrder: 5,
+    },
+    create: {
+      id: "00000000-0000-4000-8000-000000000005",
+      name: "Ресницы",
+      description: "Услуги для ресниц (тест)",
+      sortOrder: 5,
+      isActive: true,
+      isPublic: true,
     },
   });
 
   const serviceHaircut = await prisma.service.upsert({
     where: { id: "00000000-0000-4000-8000-000000000101" },
-    update: {},
+    update: {
+      internalName: "Стрижка женская (тест)",
+      publicName: "Стрижка",
+      clientDescription: "Модельная стрижка (тест)",
+      isActive: true,
+      isPublic: true,
+      isOnlineBookingEnabled: true,
+    },
     create: {
       id: "00000000-0000-4000-8000-000000000101",
       categoryId: categoryHair.id,
-      name: "Стрижка (тест)",
+      internalName: "Стрижка женская (тест)",
+      publicName: "Стрижка",
+      clientDescription: "Модельная стрижка (тест)",
       durationMinutes: 60,
       breakAfterMinutes: 15,
       price: 1500,
+      sortOrder: 1,
+      isActive: true,
       isPublic: true,
+      isOnlineBookingEnabled: true,
     },
   });
 
   const serviceManicure = await prisma.service.upsert({
     where: { id: "00000000-0000-4000-8000-000000000102" },
-    update: {},
+    update: {
+      internalName: "Маникюр классический (тест)",
+      publicName: "Маникюр",
+      clientDescription: "Классический маникюр (тест)",
+      isActive: true,
+      isPublic: true,
+      isOnlineBookingEnabled: true,
+    },
     create: {
       id: "00000000-0000-4000-8000-000000000102",
       categoryId: categoryNails.id,
-      name: "Маникюр (тест)",
+      internalName: "Маникюр классический (тест)",
+      publicName: "Маникюр",
+      clientDescription: "Классический маникюр (тест)",
       durationMinutes: 90,
       breakAfterMinutes: 10,
-      price: 2000,
+      priceFrom: 1800,
+      priceTo: 2500,
+      sortOrder: 1,
+      isActive: true,
       isPublic: true,
+      isOnlineBookingEnabled: true,
     },
   });
 
-  await prisma.serviceSynonym.upsert({
-    where: {
-      serviceId_synonym: {
-        serviceId: serviceHaircut.id,
-        synonym: "подстричься",
-      },
+  const servicePmu = await prisma.service.upsert({
+    where: { id: "00000000-0000-4000-8000-000000000103" },
+    update: {
+      internalName: "Перманентный макияж (тест)",
+      publicName: "Перманентный макияж",
+      clientDescription: "PMU бровей или век (тест)",
+      isActive: true,
+      isPublic: true,
+      isOnlineBookingEnabled: false,
     },
-    update: {},
     create: {
-      serviceId: serviceHaircut.id,
-      synonym: "подстричься",
+      id: "00000000-0000-4000-8000-000000000103",
+      categoryId: categoryPmu.id,
+      internalName: "Перманентный макияж (тест)",
+      publicName: "Перманентный макияж",
+      clientDescription: "PMU бровей или век (тест)",
+      durationMinutes: 120,
+      breakAfterMinutes: 15,
+      priceFrom: 5000,
+      priceTo: 8000,
+      sortOrder: 1,
+      isActive: true,
+      isPublic: true,
+      isOnlineBookingEnabled: false,
     },
   });
 
-  await prisma.serviceSynonym.upsert({
-    where: {
-      serviceId_synonym: {
-        serviceId: serviceHaircut.id,
-        synonym: "стрижка",
-      },
-    },
+  const servicePmuLips = await prisma.service.upsert({
+    where: { id: "00000000-0000-4000-8000-000000000104" },
     update: {},
     create: {
-      serviceId: serviceHaircut.id,
-      synonym: "стрижка",
+      id: "00000000-0000-4000-8000-000000000104",
+      categoryId: categoryPmu.id,
+      internalName: "Перманентный макияж губ (тест)",
+      publicName: "Перманентный макияж губ",
+      clientDescription: "PMU губ (тест)",
+      durationMinutes: 150,
+      breakAfterMinutes: 15,
+      priceFrom: 6000,
+      priceTo: 9000,
+      sortOrder: 2,
+      isActive: true,
+      isPublic: true,
+      isOnlineBookingEnabled: true,
     },
   });
 
-  await prisma.serviceSynonym.upsert({
-    where: {
-      serviceId_synonym: {
-        serviceId: serviceManicure.id,
-        synonym: "маникюр",
-      },
-    },
+  const serviceRemoval = await prisma.service.upsert({
+    where: { id: "00000000-0000-4000-8000-000000000105" },
     update: {},
     create: {
-      serviceId: serviceManicure.id,
-      synonym: "маникюр",
+      id: "00000000-0000-4000-8000-000000000105",
+      categoryId: categoryRemoval.id,
+      internalName: "Удаление перманента (тест)",
+      publicName: "Удаление перманента",
+      clientDescription: "Лазерное/ремувер удаление (тест)",
+      durationMinutes: 60,
+      breakAfterMinutes: 10,
+      priceFrom: 3000,
+      priceTo: 5000,
+      sortOrder: 1,
+      isActive: true,
+      isPublic: true,
+      isOnlineBookingEnabled: true,
     },
   });
+
+  const servicePlasma = await prisma.service.upsert({
+    where: { id: "00000000-0000-4000-8000-000000000106" },
+    update: {},
+    create: {
+      id: "00000000-0000-4000-8000-000000000106",
+      categoryId: categoryPmu.id,
+      internalName: "Холодная плазма веки (тест)",
+      publicName: "Холодная плазма веки",
+      clientDescription: "Плазмолifting век (тест)",
+      durationMinutes: 45,
+      breakAfterMinutes: 10,
+      price: 3500,
+      sortOrder: 3,
+      isActive: true,
+      isPublic: true,
+      isOnlineBookingEnabled: true,
+    },
+  });
+
+  const serviceLashes = await prisma.service.upsert({
+    where: { id: "00000000-0000-4000-8000-000000000107" },
+    update: {},
+    create: {
+      id: "00000000-0000-4000-8000-000000000107",
+      categoryId: categoryLashes.id,
+      internalName: "Ламинирование ресниц (тест)",
+      publicName: "Ламинирование ресниц",
+      clientDescription: "Уход и ламинирование (тест)",
+      durationMinutes: 75,
+      breakAfterMinutes: 10,
+      price: 2200,
+      sortOrder: 1,
+      isActive: true,
+      isPublic: true,
+      isOnlineBookingEnabled: true,
+    },
+  });
+
+  const serviceArchived = await prisma.service.upsert({
+    where: { id: "00000000-0000-4000-8000-000000000108" },
+    update: {},
+    create: {
+      id: "00000000-0000-4000-8000-000000000108",
+      categoryId: categoryHair.id,
+      internalName: "Устаревшая услуга (тест)",
+      publicName: "Устаревшая услуга",
+      clientDescription: "Снята с публикации, не удалена (тест)",
+      durationMinutes: 30,
+      breakAfterMinutes: 0,
+      price: 500,
+      sortOrder: 99,
+      isActive: false,
+      isPublic: false,
+      isOnlineBookingEnabled: false,
+    },
+  });
+
+  await upsertSynonym(serviceHaircut.id, "подстричься", 1);
+  await upsertSynonym(serviceHaircut.id, "стрижка", 2);
+  await upsertSynonym(serviceManicure.id, "маникюр", 1);
+  await upsertSynonym(servicePmu.id, "татуаж", 1);
+  await upsertSynonym(servicePmuLips.id, "пм губ", 1);
+  await upsertSynonym(serviceRemoval.id, "убрать татуаж", 1);
+  await upsertSynonym(servicePlasma.id, "плазма век", 1);
+  await upsertSynonym(serviceLashes.id, "реснички", 1);
+  await upsertSynonym(servicePmu.id, "перманент", 2, false);
 
   await prisma.masterService.upsert({
     where: {
-      masterId_serviceId: {
-        masterId: master1.id,
-        serviceId: serviceHaircut.id,
-      },
+      masterId_serviceId: { masterId: master1.id, serviceId: serviceHaircut.id },
     },
-    update: {},
+    update: {
+      isEnabled: true,
+      isPublic: true,
+      isOnlineBookingEnabled: true,
+      sortOrder: 1,
+    },
     create: {
       masterId: master1.id,
       serviceId: serviceHaircut.id,
+      isEnabled: true,
+      isPublic: true,
+      isOnlineBookingEnabled: true,
+      sortOrder: 1,
     },
   });
 
   await prisma.masterService.upsert({
     where: {
-      masterId_serviceId: {
-        masterId: master2.id,
-        serviceId: serviceManicure.id,
-      },
+      masterId_serviceId: { masterId: master2.id, serviceId: serviceManicure.id },
     },
-    update: {},
+    update: {
+      isEnabled: true,
+      isPublic: true,
+      isOnlineBookingEnabled: true,
+      sortOrder: 1,
+    },
     create: {
       masterId: master2.id,
       serviceId: serviceManicure.id,
+      isEnabled: true,
+      isPublic: true,
+      isOnlineBookingEnabled: true,
+      sortOrder: 1,
+    },
+  });
+
+  await prisma.masterService.upsert({
+    where: {
+      masterId_serviceId: { masterId: master2.id, serviceId: servicePmuLips.id },
+    },
+    update: {
+      isEnabled: true,
+      isPublic: true,
+      isOnlineBookingEnabled: true,
+      durationMinutesOverride: 120,
+      priceOverride: 7500,
+      sortOrder: 2,
+    },
+    create: {
+      masterId: master2.id,
+      serviceId: servicePmuLips.id,
+      isEnabled: true,
+      isPublic: true,
+      isOnlineBookingEnabled: true,
+      durationMinutesOverride: 120,
+      priceOverride: 7500,
+      sortOrder: 2,
+    },
+  });
+
+  await prisma.masterService.upsert({
+    where: {
+      masterId_serviceId: { masterId: master2.id, serviceId: servicePmu.id },
+    },
+    update: {
+      isEnabled: true,
+      isPublic: true,
+      isOnlineBookingEnabled: false,
+      sortOrder: 3,
+    },
+    create: {
+      masterId: master2.id,
+      serviceId: servicePmu.id,
+      isEnabled: true,
+      isPublic: true,
+      isOnlineBookingEnabled: false,
+      sortOrder: 3,
+    },
+  });
+
+  await prisma.masterService.upsert({
+    where: {
+      masterId_serviceId: { masterId: master2.id, serviceId: serviceRemoval.id },
+    },
+    update: {
+      isEnabled: true,
+      isPublic: true,
+      isOnlineBookingEnabled: true,
+      sortOrder: 4,
+    },
+    create: {
+      masterId: master2.id,
+      serviceId: serviceRemoval.id,
+      isEnabled: true,
+      isPublic: true,
+      isOnlineBookingEnabled: true,
+      sortOrder: 4,
+    },
+  });
+
+  await prisma.masterService.upsert({
+    where: {
+      masterId_serviceId: { masterId: master3.id, serviceId: serviceLashes.id },
+    },
+    update: {
+      isEnabled: true,
+      isPublic: false,
+      isOnlineBookingEnabled: false,
+      sortOrder: 1,
+    },
+    create: {
+      masterId: master3.id,
+      serviceId: serviceLashes.id,
+      isEnabled: true,
+      isPublic: false,
+      isOnlineBookingEnabled: false,
+      sortOrder: 1,
     },
   });
 
@@ -287,7 +651,10 @@ async function main() {
 
   await prisma.bookingLink.upsert({
     where: { token: "test-bot-token-demo" },
-    update: {},
+    update: {
+      serviceId: serviceManicure.id,
+      masterId: master2.id,
+    },
     create: {
       token: "test-bot-token-demo",
       serviceId: serviceManicure.id,
@@ -302,8 +669,10 @@ async function main() {
   console.log("Seed completed.");
   console.log(`Timezone: ${STUDIO_TIMEZONE}`);
   console.log(`Users: owner=${owner.email}, manager=${manager.email}`);
-  console.log(`Masters: ${master1.displayName}, ${master2.displayName}`);
-  console.log(`Services: ${serviceHaircut.name}, ${serviceManicure.name}`);
+  console.log(`Masters: ${master1.publicName}, ${master2.publicName}, ${master3.publicName}`);
+  console.log(
+    `Services: ${serviceHaircut.publicName}, ${serviceManicure.publicName}, ${servicePmu.publicName}, ${serviceArchived.internalName} (archived)`,
+  );
   console.log("Booking link token: test-bot-token-demo");
 }
 

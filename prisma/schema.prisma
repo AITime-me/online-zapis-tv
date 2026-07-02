@@ -79,17 +79,22 @@ model User {
 }
 
 model Master {
-  id                String   @id @default(uuid()) @db.Uuid
-  userId            String?  @unique @map("user_id") @db.Uuid
-  displayName       String   @map("display_name")
-  slotMinutes       Int      @default(30) @map("slot_minutes")
-  workStart         String   @map("work_start")
-  workEnd           String   @map("work_end")
-  breakAfterMinutes Int      @default(0) @map("break_after_minutes")
-  sortOrder         Int      @default(0) @map("sort_order")
-  isActive          Boolean  @default(true) @map("is_active")
-  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  id                     String   @id @default(uuid()) @db.Uuid
+  userId                 String?  @unique @map("user_id") @db.Uuid
+  internalName           String   @map("internal_name")
+  publicName             String   @map("public_name")
+  clientDescription      String?  @map("client_description")
+  photoUrl               String?  @map("photo_url")
+  slotMinutes            Int      @default(30) @map("slot_minutes")
+  workStart              String   @map("work_start")
+  workEnd                String   @map("work_end")
+  breakAfterMinutes      Int      @default(0) @map("break_after_minutes")
+  sortOrder              Int      @default(0) @map("sort_order")
+  isActive               Boolean  @default(true) @map("is_active")
+  isPublic               Boolean  @default(true) @map("is_public")
+  isOnlineBookingEnabled Boolean  @default(true) @map("is_online_booking_enabled")
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   user           User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
   masterServices MasterService[]
@@ -101,11 +106,14 @@ model Master {
 }
 
 model ServiceCategory {
-  id        String   @id @default(uuid()) @db.Uuid
-  name      String
-  sortOrder Int      @default(0) @map("sort_order")
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  description String?
+  sortOrder   Int      @default(0) @map("sort_order")
+  isActive    Boolean  @default(true) @map("is_active")
+  isPublic    Boolean  @default(true) @map("is_public")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   services Service[]
 
@@ -113,16 +121,22 @@ model ServiceCategory {
 }
 
 model Service {
-  id                String   @id @default(uuid()) @db.Uuid
-  categoryId        String   @map("category_id") @db.Uuid
-  name              String
-  durationMinutes   Int      @map("duration_minutes")
-  breakAfterMinutes Int      @default(0) @map("break_after_minutes")
-  price             Decimal? @db.Decimal(10, 2)
-  isActive          Boolean  @default(true) @map("is_active")
-  isPublic          Boolean  @default(true) @map("is_public")
-  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  id                     String   @id @default(uuid()) @db.Uuid
+  categoryId             String   @map("category_id") @db.Uuid
+  internalName           String   @map("internal_name")
+  publicName             String   @map("public_name")
+  clientDescription      String?  @map("client_description")
+  durationMinutes        Int      @map("duration_minutes")
+  breakAfterMinutes      Int      @default(0) @map("break_after_minutes")
+  price                  Decimal? @db.Decimal(10, 2)
+  priceFrom              Decimal? @map("price_from") @db.Decimal(10, 2)
+  priceTo                Decimal? @map("price_to") @db.Decimal(10, 2)
+  sortOrder              Int      @default(0) @map("sort_order")
+  isActive               Boolean  @default(true) @map("is_active")
+  isPublic               Boolean  @default(true) @map("is_public")
+  isOnlineBookingEnabled Boolean  @default(true) @map("is_online_booking_enabled")
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   category       ServiceCategory  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   synonyms       ServiceSynonym[]
@@ -137,20 +151,32 @@ model ServiceSynonym {
   id        String   @id @default(uuid()) @db.Uuid
   serviceId String   @map("service_id") @db.Uuid
   synonym   String
+  sortOrder Int      @default(0) @map("sort_order")
+  isActive  Boolean  @default(true) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
-  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Restrict)
 
   @@unique([serviceId, synonym])
   @@map("service_synonyms")
 }
 
 model MasterService {
-  masterId  String @map("master_id") @db.Uuid
-  serviceId String @map("service_id") @db.Uuid
+  masterId                    String   @map("master_id") @db.Uuid
+  serviceId                   String   @map("service_id") @db.Uuid
+  isEnabled                   Boolean  @default(true) @map("is_enabled")
+  isPublic                    Boolean  @default(true) @map("is_public")
+  isOnlineBookingEnabled      Boolean  @default(true) @map("is_online_booking_enabled")
+  durationMinutesOverride     Int?     @map("duration_minutes_override")
+  breakAfterMinutesOverride   Int?     @map("break_after_minutes_override")
+  priceOverride               Decimal? @map("price_override") @db.Decimal(10, 2)
+  sortOrder                   Int      @default(0) @map("sort_order")
+  createdAt                   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                   DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
-  master  Master  @relation(fields: [masterId], references: [id], onDelete: Cascade)
-  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  master  Master  @relation(fields: [masterId], references: [id], onDelete: Restrict)
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Restrict)
 
   @@id([masterId, serviceId])
   @@map("master_services")
@@ -256,13 +282,15 @@ model EmergencyExport {
 }
 
 model AuditLog {
-  id         String   @id @default(uuid()) @db.Uuid
-  userId     String?  @map("user_id") @db.Uuid
-  action     String
-  entityType String   @map("entity_type")
-  entityId   String?  @map("entity_id") @db.Uuid
-  payload    Json?
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String?  @map("user_id") @db.Uuid
+  action         String
+  entityType     String   @map("entity_type")
+  entityId       String?  @map("entity_id") @db.Uuid
+  payload        Json?
+  previousValues Json?    @map("previous_values")
+  newValues      Json?    @map("new_values")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
