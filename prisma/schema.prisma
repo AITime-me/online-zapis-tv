@@ -1,0 +1,284 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  OWNER
+  MANAGER
+  MASTER
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+enum AppointmentSource {
+  INTERNAL
+  ONLINE
+  BOT
+  PHONE
+  OTHER
+}
+
+enum ScheduleBlockType {
+  DAY_OFF
+  VACATION
+  TRAINING
+  DO_NOT_BOOK
+  BREAK
+  PERSONAL
+  TECHNICAL
+}
+
+enum EmergencyExportType {
+  TODAY
+  TOMORROW
+  SEVEN_DAYS
+  THIRTY_DAYS
+  CUSTOM
+}
+
+enum EmergencyExportStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum ExportStorage {
+  LOCAL
+  S3
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         UserRole
+  name         String
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  master              Master?
+  createdAppointments Appointment[]     @relation("AppointmentCreatedBy")
+  createdBlocks       ScheduleBlock[]   @relation("BlockCreatedBy")
+  managerNotes        ManagerNote[]
+  requestedExports    EmergencyExport[] @relation("ExportRequestedBy")
+  auditLogs           AuditLog[]
+
+  @@map("users")
+}
+
+model Master {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String?  @unique @map("user_id") @db.Uuid
+  displayName       String   @map("display_name")
+  slotMinutes       Int      @default(30) @map("slot_minutes")
+  workStart         String   @map("work_start")
+  workEnd           String   @map("work_end")
+  breakAfterMinutes Int      @default(0) @map("break_after_minutes")
+  sortOrder         Int      @default(0) @map("sort_order")
+  isActive          Boolean  @default(true) @map("is_active")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  user           User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  masterServices MasterService[]
+  appointments   Appointment[]
+  scheduleBlocks ScheduleBlock[]
+  bookingLinks   BookingLink[]
+
+  @@map("masters")
+}
+
+model ServiceCategory {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  services Service[]
+
+  @@map("service_categories")
+}
+
+model Service {
+  id                String   @id @default(uuid()) @db.Uuid
+  categoryId        String   @map("category_id") @db.Uuid
+  name              String
+  durationMinutes   Int      @map("duration_minutes")
+  breakAfterMinutes Int      @default(0) @map("break_after_minutes")
+  price             Decimal? @db.Decimal(10, 2)
+  isActive          Boolean  @default(true) @map("is_active")
+  isPublic          Boolean  @default(true) @map("is_public")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  category       ServiceCategory  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  synonyms       ServiceSynonym[]
+  masterServices MasterService[]
+  appointments   Appointment[]
+  bookingLinks   BookingLink[]
+
+  @@map("services")
+}
+
+model ServiceSynonym {
+  id        String   @id @default(uuid()) @db.Uuid
+  serviceId String   @map("service_id") @db.Uuid
+  synonym   String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceId, synonym])
+  @@map("service_synonyms")
+}
+
+model MasterService {
+  masterId  String @map("master_id") @db.Uuid
+  serviceId String @map("service_id") @db.Uuid
+
+  master  Master  @relation(fields: [masterId], references: [id], onDelete: Cascade)
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@id([masterId, serviceId])
+  @@map("master_services")
+}
+
+model Appointment {
+  id              String            @id @default(uuid()) @db.Uuid
+  masterId        String            @map("master_id") @db.Uuid
+  serviceId       String?           @map("service_id") @db.Uuid
+  startsAt        DateTime          @map("starts_at") @db.Timestamptz
+  endsAt          DateTime          @map("ends_at") @db.Timestamptz
+  clientName      String            @map("client_name")
+  clientPhone     String            @map("client_phone")
+  comment         String?
+  importantNote   String?           @map("important_note")
+  isBold          Boolean           @default(false) @map("is_bold")
+  status          AppointmentStatus @default(SCHEDULED)
+  source          AppointmentSource @default(INTERNAL)
+  promoCode       String?           @map("promo_code")
+  botSessionId    String?           @map("bot_session_id")
+  createdByUserId String?           @map("created_by_user_id") @db.Uuid
+  cancelledAt     DateTime?         @map("cancelled_at") @db.Timestamptz
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz
+
+  master        Master   @relation(fields: [masterId], references: [id], onDelete: Restrict)
+  service       Service? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  createdByUser User?    @relation("AppointmentCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([masterId, startsAt, endsAt])
+  @@index([startsAt])
+  @@map("appointments")
+}
+
+model ScheduleBlock {
+  id              String            @id @default(uuid()) @db.Uuid
+  masterId        String?           @map("master_id") @db.Uuid
+  startsAt        DateTime          @map("starts_at") @db.Timestamptz
+  endsAt          DateTime          @map("ends_at") @db.Timestamptz
+  blockType       ScheduleBlockType @map("block_type")
+  internalReason  String?           @map("internal_reason")
+  createdByUserId String?           @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz
+
+  master        Master? @relation(fields: [masterId], references: [id], onDelete: Cascade)
+  createdByUser User?   @relation("BlockCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([masterId, startsAt, endsAt])
+  @@index([startsAt])
+  @@map("schedule_blocks")
+}
+
+model ManagerNote {
+  id              String   @id @default(uuid()) @db.Uuid
+  noteDate        DateTime @map("note_date") @db.Date
+  content         String
+  createdByUserId String?  @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  createdByUser User? @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([noteDate])
+  @@map("manager_notes")
+}
+
+model BookingLink {
+  id           String    @id @default(uuid()) @db.Uuid
+  token        String    @unique
+  serviceId    String?   @map("service_id") @db.Uuid
+  masterId     String?   @map("master_id") @db.Uuid
+  source       String?
+  promoCode    String?   @map("promo_code")
+  botSessionId String?   @map("bot_session_id")
+  expiresAt    DateTime? @map("expires_at") @db.Timestamptz
+  isUsed       Boolean   @default(false) @map("is_used")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  service Service? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  master  Master?  @relation(fields: [masterId], references: [id], onDelete: SetNull)
+
+  @@map("booking_links")
+}
+
+model EmergencyExport {
+  id                String                @id @default(uuid()) @db.Uuid
+  exportType        EmergencyExportType   @map("export_type")
+  periodFrom        DateTime              @map("period_from") @db.Date
+  periodTo          DateTime              @map("period_to") @db.Date
+  filePath          String?               @map("file_path")
+  storage           ExportStorage         @default(LOCAL)
+  status            EmergencyExportStatus @default(PENDING)
+  errorMessage      String?               @map("error_message")
+  requestedByUserId String?               @map("requested_by_user_id") @db.Uuid
+  createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz
+  completedAt       DateTime?             @map("completed_at") @db.Timestamptz
+
+  requestedByUser User? @relation("ExportRequestedBy", fields: [requestedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@map("emergency_exports")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String?  @map("user_id") @db.Uuid
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String?  @map("entity_id") @db.Uuid
+  payload    Json?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+model ChangeEvent {
+  id                  String   @id @default(uuid()) @db.Uuid
+  eventType           String   @map("event_type")
+  entityType          String   @map("entity_type")
+  entityId            String   @map("entity_id") @db.Uuid
+  payloadAnonymized   Json?    @map("payload_anonymized")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([createdAt])
+  @@map("change_events")
+}
