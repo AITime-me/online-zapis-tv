@@ -1,5 +1,5 @@
-import Link from "next/link";
 import { requireRole } from "@/lib/auth/session";
+import { AdminNavLinks } from "@/components/admin/admin-nav";
 import { MastersPanel } from "@/components/admin/masters-panel";
 import { listMasters } from "@/services/MasterAdminService";
 
@@ -17,20 +17,7 @@ export default async function MastersAdminPage() {
             Справочник мастеров для внутреннего расписания
           </p>
         </div>
-        <div className="flex gap-3 text-sm">
-          <Link
-            href="/schedule"
-            className="text-[#1a73e8] hover:underline"
-          >
-            К расписанию
-          </Link>
-          <Link
-            href="/admin/emergency-export"
-            className="text-[#1a73e8] hover:underline"
-          >
-            Аварийная выгрузка
-          </Link>
-        </div>
+        <AdminNavLinks current="masters" />
       </header>
 
       <MastersPanel initialMasters={masters} />

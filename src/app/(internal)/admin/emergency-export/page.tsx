@@ -1,5 +1,5 @@
-import Link from "next/link";
 import { requireRole } from "@/lib/auth/session";
+import { AdminNavLinks } from "@/components/admin/admin-nav";
 import { EmergencyExportPanel } from "@/components/admin/emergency-export-panel";
 import { emergencyExportService } from "@/services/EmergencyExportService";
 
@@ -49,9 +49,7 @@ export default async function EmergencyExportAdminPage() {
             Локальная XLSX-выгрузка расписания на сегодня
           </p>
         </div>
-        <Link href="/schedule" className="text-sm text-[#1a73e8] hover:underline">
-          К расписанию
-        </Link>
+        <AdminNavLinks current="export" />
       </header>
 
       <EmergencyExportPanel initialStatus={initialStatus} />

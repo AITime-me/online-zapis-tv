@@ -46,6 +46,12 @@ export default async function SchedulePage({ searchParams }: SchedulePageProps) 
               Мастера
             </Link>
             <Link
+              href="/admin/services"
+              className="text-xs text-[#1a73e8] hover:underline"
+            >
+              Услуги
+            </Link>
+            <Link
               href="/admin/emergency-export"
               className="text-xs text-[#1a73e8] hover:underline"
             >
