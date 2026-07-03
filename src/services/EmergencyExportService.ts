@@ -73,9 +73,11 @@ const APPOINTMENT_SOURCE_LABELS: Record<AppointmentSource, string> = {
 const BLOCK_TYPE_LABELS: Record<ScheduleBlockType, string> = {
   DAY_OFF: "Выходной",
   VACATION: "Отпуск",
+  SICK_LEAVE: "Больничный",
   TRAINING: "Обучение",
   DO_NOT_BOOK: "Не ставить",
   BREAK: "Перерыв",
+  LUNCH: "Обед",
   PERSONAL: "Личное время",
   TECHNICAL: "Техническое окно",
 };
@@ -196,7 +198,10 @@ export class EmergencyExportService {
     };
 
     const blockWhere: Prisma.ScheduleBlockWhereInput = {
-      startsAt: { gte: dayStart, lte: dayEnd },
+      OR: [
+        { startsAt: { gte: dayStart, lte: dayEnd } },
+        { isFullDay: true, blockDate: noteDate },
+      ],
     };
 
     const [appointments, blocks, managerNotes] = await Promise.all([
@@ -244,12 +249,14 @@ export class EmergencyExportService {
 
     for (const block of blocks) {
       rows.push({
-        sortAt: block.startsAt,
+        sortAt: block.isFullDay
+          ? new Date(noteDate.getTime() + 12 * 60 * 60 * 1000)
+          : block.startsAt!,
         values: [
-          formatStudioDate(block.startsAt),
+          formatStudioDate(block.isFullDay ? noteDate : block.startsAt!),
           block.master?.internalName ?? "Менеджер",
-          formatStudioTime(block.startsAt),
-          formatStudioTime(block.endsAt),
+          block.isFullDay ? "Весь день" : formatStudioTime(block.startsAt!),
+          block.isFullDay ? "Весь день" : formatStudioTime(block.endsAt!),
           "Блок",
           "",
           "",
@@ -271,7 +278,9 @@ export class EmergencyExportService {
           "Менеджер",
           "",
           "",
-          "Заметка менеджера",
+          note.noteType === "OWNER"
+            ? "Заметка руководителя"
+            : "Заметка менеджера",
           "",
           "",
           "",

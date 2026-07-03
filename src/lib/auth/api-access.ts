@@ -39,6 +39,8 @@ export async function requireApiRoles(
   return { user: session.user };
 }
 
+export const WRITE_SCHEDULE_ROLES: UserRole[] = ["OWNER", "MANAGER"];
+
 export const EXPORT_ALLOWED_ROLES: UserRole[] = ["OWNER", "MANAGER"];
 
 export const INTERNAL_API_ROLES: UserRole[] = ["OWNER", "MANAGER", "MASTER"];

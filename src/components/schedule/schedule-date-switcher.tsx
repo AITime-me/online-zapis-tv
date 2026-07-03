@@ -31,7 +31,7 @@ export function ScheduleDateSwitcher({
           return (
             <Link
               key={button.date}
-              href={`/schedule?date=${button.date}`}
+              href={`/schedule?view=day&date=${button.date}`}
               className={`px-2 py-0.5 text-xs leading-tight ${
                 isActive
                   ? "bg-[#1a73e8] font-medium text-white"

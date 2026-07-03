@@ -2,6 +2,7 @@ import { STUDIO_TIMEZONE as ENV_STUDIO_TIMEZONE } from "@/lib/env";
 import {
   addDaysToDateKey,
   formatDateKeyInStudio,
+  getDaysInMonthKey,
   isValidDateKey,
 } from "@/lib/datetime/date-key";
 
@@ -94,3 +95,25 @@ export function formatExportFileTimestamp(
 }
 
 export { addDaysToDateKey, formatDateKeyInStudio, isValidDateKey };
+
+export function getStudioCurrentMonthKey(
+  timezone: string = ENV_STUDIO_TIMEZONE,
+): string {
+  return getStudioTodayRange(timezone).dateKey.slice(0, 7);
+}
+
+export function getStudioMonthRangeFromMonthKey(
+  monthKey: string,
+  timezone: string = ENV_STUDIO_TIMEZONE,
+) {
+  const days = getDaysInMonthKey(monthKey);
+  const firstDay = days[0]!;
+  const lastDay = days[days.length - 1]!;
+
+  return {
+    monthKey,
+    days,
+    monthStart: getStudioDayRangeFromDateKey(firstDay, timezone).dayStart,
+    monthEnd: getStudioDayRangeFromDateKey(lastDay, timezone).dayEnd,
+  };
+}

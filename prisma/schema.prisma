@@ -32,9 +32,11 @@ enum AppointmentSource {
 enum ScheduleBlockType {
   DAY_OFF
   VACATION
+  SICK_LEAVE
   TRAINING
   DO_NOT_BOOK
   BREAK
+  LUNCH
   PERSONAL
   TECHNICAL
 }
@@ -58,6 +60,11 @@ enum ExportStorage {
   S3
 }
 
+enum ManagerNoteType {
+  MANAGER
+  OWNER
+}
+
 model User {
   id           String   @id @default(uuid()) @db.Uuid
   email        String   @unique
@@ -69,11 +76,12 @@ model User {
   updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   master              Master?
-  createdAppointments Appointment[]     @relation("AppointmentCreatedBy")
-  createdBlocks       ScheduleBlock[]   @relation("BlockCreatedBy")
-  managerNotes        ManagerNote[]
-  requestedExports    EmergencyExport[] @relation("ExportRequestedBy")
-  auditLogs           AuditLog[]
+  createdAppointments   Appointment[]       @relation("AppointmentCreatedBy")
+  createdBlocks         ScheduleBlock[]     @relation("BlockCreatedBy")
+  createdExtraWorkWindows ExtraWorkWindow[] @relation("ExtraWorkCreatedBy")
+  managerNotes          ManagerNote[]
+  requestedExports      EmergencyExport[]   @relation("ExportRequestedBy")
+  auditLogs             AuditLog[]
 
   @@map("users")
 }
@@ -97,10 +105,11 @@ model Master {
   updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   user           User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
-  masterServices MasterService[]
-  appointments   Appointment[]
-  scheduleBlocks ScheduleBlock[]
-  bookingLinks   BookingLink[]
+  masterServices   MasterService[]
+  appointments     Appointment[]
+  scheduleBlocks   ScheduleBlock[]
+  extraWorkWindows ExtraWorkWindow[]
+  bookingLinks     BookingLink[]
 
   @@map("masters")
 }
@@ -183,24 +192,29 @@ model MasterService {
 }
 
 model Appointment {
-  id              String            @id @default(uuid()) @db.Uuid
-  masterId        String            @map("master_id") @db.Uuid
-  serviceId       String?           @map("service_id") @db.Uuid
-  startsAt        DateTime          @map("starts_at") @db.Timestamptz
-  endsAt          DateTime          @map("ends_at") @db.Timestamptz
-  clientName      String            @map("client_name")
-  clientPhone     String            @map("client_phone")
-  comment         String?
-  importantNote   String?           @map("important_note")
-  isBold          Boolean           @default(false) @map("is_bold")
-  status          AppointmentStatus @default(SCHEDULED)
-  source          AppointmentSource @default(INTERNAL)
-  promoCode       String?           @map("promo_code")
-  botSessionId    String?           @map("bot_session_id")
-  createdByUserId String?           @map("created_by_user_id") @db.Uuid
-  cancelledAt     DateTime?         @map("cancelled_at") @db.Timestamptz
-  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz
+  id                        String            @id @default(uuid()) @db.Uuid
+  masterId                  String            @map("master_id") @db.Uuid
+  serviceId                 String?           @map("service_id") @db.Uuid
+  startsAt                  DateTime          @map("starts_at") @db.Timestamptz
+  endsAt                    DateTime          @map("ends_at") @db.Timestamptz
+  clientName                String            @map("client_name")
+  clientPhone               String            @map("client_phone")
+  comment                   String?
+  importantNote             String?           @map("important_note")
+  isBold                    Boolean           @default(false) @map("is_bold")
+  serviceDurationMinutes    Int?              @map("service_duration_minutes")
+  breakAfterMinutes         Int?              @map("break_after_minutes")
+  standardDurationMinutes   Int?              @map("standard_duration_minutes")
+  standardBreakAfterMinutes Int?              @map("standard_break_after_minutes")
+  isManualTimeOverride      Boolean           @default(false) @map("is_manual_time_override")
+  status                    AppointmentStatus @default(SCHEDULED)
+  source                    AppointmentSource @default(INTERNAL)
+  promoCode                 String?           @map("promo_code")
+  botSessionId              String?           @map("bot_session_id")
+  createdByUserId           String?           @map("created_by_user_id") @db.Uuid
+  cancelledAt               DateTime?         @map("cancelled_at") @db.Timestamptz
+  createdAt                 DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                 DateTime          @updatedAt @map("updated_at") @db.Timestamptz
 
   master        Master   @relation(fields: [masterId], references: [id], onDelete: Restrict)
   service       Service? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
@@ -214,8 +228,10 @@ model Appointment {
 model ScheduleBlock {
   id              String            @id @default(uuid()) @db.Uuid
   masterId        String?           @map("master_id") @db.Uuid
-  startsAt        DateTime          @map("starts_at") @db.Timestamptz
-  endsAt          DateTime          @map("ends_at") @db.Timestamptz
+  blockDate       DateTime?         @map("block_date") @db.Date
+  startsAt        DateTime?         @map("starts_at") @db.Timestamptz
+  endsAt          DateTime?         @map("ends_at") @db.Timestamptz
+  isFullDay       Boolean           @default(false) @map("is_full_day")
   blockType       ScheduleBlockType @map("block_type")
   internalReason  String?           @map("internal_reason")
   createdByUserId String?           @map("created_by_user_id") @db.Uuid
@@ -226,21 +242,44 @@ model ScheduleBlock {
   createdByUser User?   @relation("BlockCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
 
   @@index([masterId, startsAt, endsAt])
+  @@index([masterId, blockDate])
   @@index([startsAt])
   @@map("schedule_blocks")
 }
 
+model ExtraWorkWindow {
+  id                     String   @id @default(uuid()) @db.Uuid
+  masterId               String   @map("master_id") @db.Uuid
+  workDate               DateTime @map("work_date") @db.Date
+  startsAt               DateTime @map("starts_at") @db.Timestamptz
+  endsAt                 DateTime @map("ends_at") @db.Timestamptz
+  isOnlineBookingEnabled Boolean  @default(false) @map("is_online_booking_enabled")
+  comment                String?
+  createdByUserId        String?  @map("created_by_user_id") @db.Uuid
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  master        Master @relation(fields: [masterId], references: [id], onDelete: Cascade)
+  createdByUser User?  @relation("ExtraWorkCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([masterId, workDate])
+  @@index([startsAt])
+  @@map("extra_work_windows")
+}
+
 model ManagerNote {
-  id              String   @id @default(uuid()) @db.Uuid
-  noteDate        DateTime @map("note_date") @db.Date
+  id              String          @id @default(uuid()) @db.Uuid
+  noteDate        DateTime        @map("note_date") @db.Date
+  noteType        ManagerNoteType @default(MANAGER) @map("note_type")
   content         String
-  createdByUserId String?  @map("created_by_user_id") @db.Uuid
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  createdByUserId String?         @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime        @updatedAt @map("updated_at") @db.Timestamptz
 
   createdByUser User? @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
 
   @@index([noteDate])
+  @@index([noteDate, noteType])
   @@map("manager_notes")
 }
 

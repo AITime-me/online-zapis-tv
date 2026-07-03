@@ -596,7 +596,13 @@ async function main() {
 
   await prisma.appointment.upsert({
     where: { id: "00000000-0000-4000-8000-000000000211" },
-    update: {},
+    update: {
+      standardDurationMinutes: serviceHaircut.durationMinutes,
+      standardBreakAfterMinutes: serviceHaircut.breakAfterMinutes,
+      serviceDurationMinutes: serviceHaircut.durationMinutes,
+      breakAfterMinutes: serviceHaircut.breakAfterMinutes,
+      isManualTimeOverride: false,
+    },
     create: {
       id: "00000000-0000-4000-8000-000000000211",
       masterId: master1.id,
@@ -608,6 +614,11 @@ async function main() {
       comment: "Тестовая запись на сегодня",
       importantNote: "VIP (тест)",
       isBold: true,
+      standardDurationMinutes: serviceHaircut.durationMinutes,
+      standardBreakAfterMinutes: serviceHaircut.breakAfterMinutes,
+      serviceDurationMinutes: serviceHaircut.durationMinutes,
+      breakAfterMinutes: serviceHaircut.breakAfterMinutes,
+      isManualTimeOverride: false,
       status: "SCHEDULED",
       source: "INTERNAL",
       createdByUserId: manager.id,
@@ -616,7 +627,13 @@ async function main() {
 
   await prisma.appointment.upsert({
     where: { id: "00000000-0000-4000-8000-000000000212" },
-    update: {},
+    update: {
+      standardDurationMinutes: serviceManicure.durationMinutes,
+      standardBreakAfterMinutes: serviceManicure.breakAfterMinutes,
+      serviceDurationMinutes: serviceManicure.durationMinutes,
+      breakAfterMinutes: serviceManicure.breakAfterMinutes,
+      isManualTimeOverride: false,
+    },
     create: {
       id: "00000000-0000-4000-8000-000000000212",
       masterId: master2.id,
@@ -626,8 +643,52 @@ async function main() {
       clientName: "Тестовая Ольга",
       clientPhone: "+70000000002",
       comment: "Вторая тестовая запись на сегодня",
+      standardDurationMinutes: serviceManicure.durationMinutes,
+      standardBreakAfterMinutes: serviceManicure.breakAfterMinutes,
+      serviceDurationMinutes: serviceManicure.durationMinutes,
+      breakAfterMinutes: serviceManicure.breakAfterMinutes,
+      isManualTimeOverride: false,
       status: "CONFIRMED",
       source: "ONLINE",
+      createdByUserId: manager.id,
+    },
+  });
+
+  await prisma.appointment.upsert({
+    where: { id: "00000000-0000-4000-8000-000000000213" },
+    update: {},
+    create: {
+      id: "00000000-0000-4000-8000-000000000213",
+      masterId: master2.id,
+      serviceId: servicePmuLips.id,
+      startsAt: studioDate(today.year, today.month, today.day, 10, 0),
+      endsAt: studioDate(today.year, today.month, today.day, 11, 30),
+      clientName: "Тестовая Ольга",
+      clientPhone: "+70000000003",
+      comment: "Ручное переопределение времени (тест)",
+      importantNote: "VIP",
+      isBold: true,
+      standardDurationMinutes: 120,
+      standardBreakAfterMinutes: 15,
+      serviceDurationMinutes: 90,
+      breakAfterMinutes: 0,
+      isManualTimeOverride: true,
+      status: "SCHEDULED",
+      source: "INTERNAL",
+      createdByUserId: manager.id,
+    },
+  });
+
+  await prisma.extraWorkWindow.upsert({
+    where: { id: "00000000-0000-4000-8000-000000000501" },
+    update: {},
+    create: {
+      id: "00000000-0000-4000-8000-000000000501",
+      masterId: master2.id,
+      workDate: today.date,
+      startsAt: studioDate(today.year, today.month, today.day, 8, 0),
+      endsAt: studioDate(today.year, today.month, today.day, 10, 0),
+      isOnlineBookingEnabled: true,
       createdByUserId: manager.id,
     },
   });
@@ -729,6 +790,111 @@ async function main() {
       createdByUserId: manager.id,
     },
   });
+
+  const monthDay5 = new Date(`${today.year}-${String(today.month).padStart(2, "0")}-05T12:00:00+05:00`);
+  const monthDay10 = new Date(`${today.year}-${String(today.month).padStart(2, "0")}-10T12:00:00+05:00`);
+  const monthDay15 = new Date(`${today.year}-${String(today.month).padStart(2, "0")}-15T12:00:00+05:00`);
+
+  if (today.day !== 5) {
+    await prisma.appointment.upsert({
+      where: { id: "00000000-0000-4000-8000-000000000221" },
+      update: {},
+      create: {
+        id: "00000000-0000-4000-8000-000000000221",
+        masterId: master1.id,
+        serviceId: serviceHaircut.id,
+        startsAt: studioDate(today.year, today.month, 5, 14, 0),
+        endsAt: studioDate(today.year, today.month, 5, 15, 0),
+        clientName: "Тестовая Марина",
+        clientPhone: "+70000000004",
+        comment: "Запись на 5-е число месяца (тест)",
+        standardDurationMinutes: serviceHaircut.durationMinutes,
+        standardBreakAfterMinutes: serviceHaircut.breakAfterMinutes,
+        serviceDurationMinutes: serviceHaircut.durationMinutes,
+        breakAfterMinutes: serviceHaircut.breakAfterMinutes,
+        isManualTimeOverride: false,
+        status: "SCHEDULED",
+        source: "PHONE",
+        createdByUserId: manager.id,
+      },
+    });
+  }
+
+  if (today.day !== 10) {
+    await prisma.appointment.upsert({
+      where: { id: "00000000-0000-4000-8000-000000000222" },
+      update: {},
+      create: {
+        id: "00000000-0000-4000-8000-000000000222",
+        masterId: master2.id,
+        serviceId: servicePmuLips.id,
+        startsAt: studioDate(today.year, today.month, 10, 12, 0),
+        endsAt: studioDate(today.year, today.month, 10, 14, 0),
+        clientName: "Тестовая Ольга",
+        clientPhone: "+70000000005",
+        comment: "Курсовая процедура, 10-е число (тест)",
+        standardDurationMinutes: 120,
+        standardBreakAfterMinutes: 15,
+        serviceDurationMinutes: 120,
+        breakAfterMinutes: 15,
+        isManualTimeOverride: false,
+        status: "CONFIRMED",
+        source: "INTERNAL",
+        createdByUserId: manager.id,
+      },
+    });
+
+    await prisma.managerNote.upsert({
+      where: { id: "00000000-0000-4000-8000-000000000412" },
+      update: {},
+      create: {
+        id: "00000000-0000-4000-8000-000000000412",
+        noteDate: monthDay10,
+        content: "Перезвонить клиенту 10-го (тест)",
+        createdByUserId: manager.id,
+      },
+    });
+  }
+
+  if (today.day !== 15) {
+    await prisma.scheduleBlock.upsert({
+      where: { id: "00000000-0000-4000-8000-000000000312" },
+      update: {},
+      create: {
+        id: "00000000-0000-4000-8000-000000000312",
+        masterId: master2.id,
+        startsAt: studioDate(today.year, today.month, 15, 14, 0),
+        endsAt: studioDate(today.year, today.month, 15, 15, 0),
+        blockType: "BREAK",
+        internalReason: "Перерыв 15-го (тест)",
+        createdByUserId: manager.id,
+      },
+    });
+
+    await prisma.managerNote.upsert({
+      where: { id: "00000000-0000-4000-8000-000000000413" },
+      update: {},
+      create: {
+        id: "00000000-0000-4000-8000-000000000413",
+        noteDate: monthDay15,
+        content: "Проверить запись на 15-е (тест)",
+        createdByUserId: manager.id,
+      },
+    });
+  }
+
+  if (today.day !== 5) {
+    await prisma.managerNote.upsert({
+      where: { id: "00000000-0000-4000-8000-000000000414" },
+      update: {},
+      create: {
+        id: "00000000-0000-4000-8000-000000000414",
+        noteDate: monthDay5,
+        content: "Смена менеджера 5-го (тест)",
+        createdByUserId: manager.id,
+      },
+    });
+  }
 
   await prisma.bookingLink.upsert({
     where: { token: "test-bot-token-demo" },

@@ -16,6 +16,10 @@ export function canManageFullSchedule(role: UserRole): boolean {
   return role === "OWNER" || role === "MANAGER";
 }
 
+export function canManageMasters(role: UserRole): boolean {
+  return canManageFullSchedule(role);
+}
+
 export function isMasterRole(role: UserRole): boolean {
   return role === "MASTER";
 }

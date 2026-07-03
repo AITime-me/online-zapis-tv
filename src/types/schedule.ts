@@ -1,5 +1,6 @@
 export type ScheduleDayAppointment = {
   id: string;
+  serviceId: string | null;
   startsAt: string;
   endsAt: string;
   clientName: string;
@@ -8,8 +9,11 @@ export type ScheduleDayAppointment = {
   comment: string | null;
   importantNote: string | null;
   isBold: boolean;
+  isManualTimeOverride: boolean;
   status: string;
   source: string;
+  statusCode: string;
+  sourceCode: string;
 };
 
 export type ScheduleDayBlock = {
@@ -19,6 +23,7 @@ export type ScheduleDayBlock = {
   blockType: string;
   blockTypeLabel: string;
   internalReason: string | null;
+  isFullDay: boolean;
 };
 
 export type ScheduleDayManagerNote = {
@@ -27,12 +32,20 @@ export type ScheduleDayManagerNote = {
   createdAt: string;
 };
 
+export type ScheduleDayExtraWork = {
+  id: string;
+  startsAt: string;
+  endsAt: string;
+  isOnlineBookingEnabled: boolean;
+};
+
 export type ScheduleDayMaster = {
   id: string;
   internalName: string;
   publicName: string;
   appointments: ScheduleDayAppointment[];
   scheduleBlocks: ScheduleDayBlock[];
+  extraWorkWindows?: ScheduleDayExtraWork[];
 };
 
 export type ScheduleDayData = {
