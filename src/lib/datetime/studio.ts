@@ -1,4 +1,9 @@
-import { STUDIO_TIMEZONE } from "@/lib/env";
+import { STUDIO_TIMEZONE as ENV_STUDIO_TIMEZONE } from "@/lib/env";
+import {
+  addDaysToDateKey,
+  formatDateKeyInStudio,
+  isValidDateKey,
+} from "@/lib/datetime/date-key";
 
 const STUDIO_OFFSET = "+05:00";
 
@@ -11,7 +16,7 @@ export type StudioDayRange = {
 
 export function getStudioDayRangeFromDateKey(
   dateKey: string,
-  timezone: string = STUDIO_TIMEZONE,
+  timezone: string = ENV_STUDIO_TIMEZONE,
 ): StudioDayRange {
   if (!isValidDateKey(dateKey)) {
     throw new Error(`Invalid date key: ${dateKey}`);
@@ -25,37 +30,8 @@ export function getStudioDayRangeFromDateKey(
   };
 }
 
-export function isValidDateKey(dateKey: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(dateKey);
-}
-
-export function formatDateKeyInStudio(
-  value: Date,
-  timezone: string = STUDIO_TIMEZONE,
-): string {
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-
-  const parts = formatter.formatToParts(value);
-  const year = parts.find((part) => part.type === "year")!.value;
-  const month = parts.find((part) => part.type === "month")!.value;
-  const day = parts.find((part) => part.type === "day")!.value;
-
-  return `${year}-${month}-${day}`;
-}
-
-export function addDaysToDateKey(dateKey: string, days: number): string {
-  const base = new Date(`${dateKey}T12:00:00${STUDIO_OFFSET}`);
-  const shifted = new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
-  return formatDateKeyInStudio(shifted);
-}
-
 export function getStudioTodayRange(
-  timezone: string = STUDIO_TIMEZONE,
+  timezone: string = ENV_STUDIO_TIMEZONE,
 ): StudioDayRange {
   const formatter = new Intl.DateTimeFormat("en-CA", {
     timeZone: timezone,
@@ -70,17 +46,12 @@ export function getStudioTodayRange(
   const day = parts.find((part) => part.type === "day")!.value;
   const dateKey = `${year}-${month}-${day}`;
 
-  return {
-    dayStart: new Date(`${dateKey}T00:00:00${STUDIO_OFFSET}`),
-    dayEnd: new Date(`${dateKey}T23:59:59.999${STUDIO_OFFSET}`),
-    dateKey,
-    noteDate: new Date(`${dateKey}T12:00:00${STUDIO_OFFSET}`),
-  };
+  return getStudioDayRangeFromDateKey(dateKey, timezone);
 }
 
 export function formatStudioDate(
   value: Date,
-  timezone: string = STUDIO_TIMEZONE,
+  timezone: string = ENV_STUDIO_TIMEZONE,
 ): string {
   return new Intl.DateTimeFormat("ru-RU", {
     timeZone: timezone,
@@ -92,7 +63,7 @@ export function formatStudioDate(
 
 export function formatStudioTime(
   value: Date,
-  timezone: string = STUDIO_TIMEZONE,
+  timezone: string = ENV_STUDIO_TIMEZONE,
 ): string {
   return new Intl.DateTimeFormat("ru-RU", {
     timeZone: timezone,
@@ -103,7 +74,7 @@ export function formatStudioTime(
 
 export function formatExportFileTimestamp(
   value: Date = new Date(),
-  timezone: string = STUDIO_TIMEZONE,
+  timezone: string = ENV_STUDIO_TIMEZONE,
 ): string {
   const formatter = new Intl.DateTimeFormat("en-GB", {
     timeZone: timezone,
@@ -121,3 +92,5 @@ export function formatExportFileTimestamp(
 
   return `${pick("year")}-${pick("month")}-${pick("day")}_${pick("hour")}-${pick("minute")}`;
 }
+
+export { addDaysToDateKey, formatDateKeyInStudio, isValidDateKey };

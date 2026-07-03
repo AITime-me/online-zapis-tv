@@ -3,8 +3,8 @@
 import Link from "next/link";
 import {
   addDaysToDateKey,
-  formatStudioDate,
-} from "@/lib/datetime/studio";
+  formatDateKeyLabel,
+} from "@/lib/datetime/date-key";
 
 export function ScheduleDateSwitcher({
   currentDate,
@@ -24,7 +24,7 @@ export function ScheduleDateSwitcher({
       <div className="text-sm text-zinc-600">
         Дата:{" "}
         <span className="font-medium text-zinc-900">
-          {formatStudioDate(new Date(`${currentDate}T12:00:00+05:00`))}
+          {formatDateKeyLabel(currentDate)}
         </span>
       </div>
 

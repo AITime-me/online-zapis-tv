@@ -1,5 +1,5 @@
 import type { ScheduleDayManagerNote } from "@/types/schedule";
-import { formatStudioTime } from "@/lib/datetime/studio";
+import { formatStudioTime } from "@/lib/datetime/date-key";
 
 export function ManagerColumn({
   notes,

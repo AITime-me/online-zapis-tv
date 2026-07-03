@@ -1,4 +1,4 @@
-import { formatStudioTime } from "@/lib/datetime/studio";
+import { formatStudioTime } from "@/lib/datetime/date-key";
 import type { ScheduleDayBlock } from "@/types/schedule";
 
 export function ScheduleBlockCard({ block }: { block: ScheduleDayBlock }) {
