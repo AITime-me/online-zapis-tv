@@ -40,3 +40,9 @@ export async function requireApiRoles(
 }
 
 export const EXPORT_ALLOWED_ROLES: UserRole[] = ["OWNER", "MANAGER"];
+
+export const INTERNAL_API_ROLES: UserRole[] = ["OWNER", "MANAGER", "MASTER"];
+
+export async function requireInternalApiAuth(): Promise<ApiAuthResult> {
+  return requireApiRoles(INTERNAL_API_ROLES);
+}
