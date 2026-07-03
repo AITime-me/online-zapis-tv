@@ -13,6 +13,7 @@ export type MasterAdminRow = {
   workEnd: string;
   slotMinutes: number;
   breakAfterMinutes: number;
+  usesDefaultWorkHours: boolean;
   sortOrder: number;
   isActive: boolean;
   isPublic: boolean;
@@ -25,10 +26,10 @@ export type MasterWriteInput = {
   internalName: string;
   publicName: string;
   clientDescription?: string | null;
-  workStart?: string;
-  workEnd?: string;
-  slotMinutes?: number;
-  breakAfterMinutes?: number;
+  workStart?: string | null;
+  workEnd?: string | null;
+  slotMinutes?: number | null;
+  breakAfterMinutes?: number | null;
   sortOrder?: number;
   isActive?: boolean;
   isPublic?: boolean;

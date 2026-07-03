@@ -3,21 +3,28 @@ import {
   APPOINTMENT_SOURCE_LABELS,
   APPOINTMENT_STATUS_LABELS,
 } from "@/lib/schedule/labels";
+import { resolveMasterWorkHours } from "@/lib/schedule/master-work-hours";
 import { resolveServiceTimingForMaster } from "@/services/ServiceTimingService";
 
-export async function getScheduleEditorOptions(masterId: string) {
+export async function getScheduleEditorOptions(
+  masterId: string,
+  dateKey: string,
+) {
   const master = await prisma.master.findUnique({
     where: { id: masterId },
     select: {
       id: true,
       workStart: true,
       workEnd: true,
+      usesDefaultWorkHours: true,
     },
   });
 
   if (!master) {
     return null;
   }
+
+  const workHours = resolveMasterWorkHours(master, dateKey);
 
   const masterServices = await prisma.masterService.findMany({
     where: {
@@ -61,8 +68,8 @@ export async function getScheduleEditorOptions(masterId: string) {
 
   return {
     master: {
-      workStart: master.workStart,
-      workEnd: master.workEnd,
+      workStart: workHours.workStart,
+      workEnd: workHours.workEnd,
     },
     services,
     statuses: Object.entries(APPOINTMENT_STATUS_LABELS)

@@ -17,6 +17,7 @@ import {
   APPOINTMENT_STATUS_LABELS,
 } from "@/lib/schedule/labels";
 import { checkMasterIntervalAvailability } from "@/services/MasterAvailabilityService";
+import { resolveMasterWorkHours } from "@/lib/schedule/master-work-hours";
 import { blocksForDayWhere } from "@/services/ScheduleBlockService";
 import {
   calculateAppointmentEndsAt,
@@ -104,6 +105,7 @@ async function loadConflictContext(
       id: true,
       workStart: true,
       workEnd: true,
+      usesDefaultWorkHours: true,
     },
   });
 
@@ -174,11 +176,13 @@ async function assertNoBlockingConflict(
     excludeAppointmentId,
   );
 
+  const workHours = resolveMasterWorkHours(context.master, input.dateKey);
+
   const availability = checkMasterIntervalAvailability({
     masterId: input.masterId,
     dateKey: input.dateKey,
-    standardWorkStart: context.master.workStart,
-    standardWorkEnd: context.master.workEnd,
+    standardWorkStart: workHours.workStart,
+    standardWorkEnd: workHours.workEnd,
     extraWorkWindows: context.extraWorkWindows,
     appointments: context.appointments,
     scheduleBlocks: context.scheduleBlocks.map((block) => ({

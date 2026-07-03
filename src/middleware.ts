@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { canAccessInternalZone } from "@/lib/auth/permissions";
+import { isValidScheduleViewToken } from "@/lib/auth/view-schedule-token";
 
 const EXPORT_ADMIN_ROLES = new Set(["OWNER", "MANAGER"]);
 
@@ -8,6 +9,16 @@ export default auth((req) => {
   const { pathname } = req.nextUrl;
   const isLoggedIn = !!req.auth?.user;
   const role = req.auth?.user?.role;
+
+  if (pathname.startsWith("/view/schedule")) {
+    const token = req.nextUrl.searchParams.get("token");
+    if (!isValidScheduleViewToken(token)) {
+      return new NextResponse("Неверная или отсутствующая ссылка", {
+        status: 401,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      });
+    }
+  }
 
   if (pathname.startsWith("/schedule")) {
     if (!isLoggedIn || !role || !canAccessInternalZone(role)) {
@@ -37,5 +48,5 @@ export default auth((req) => {
 });
 
 export const config = {
-  matcher: ["/schedule/:path*", "/admin/:path*", "/login"],
+  matcher: ["/schedule/:path*", "/admin/:path*", "/login", "/view/schedule"],
 };

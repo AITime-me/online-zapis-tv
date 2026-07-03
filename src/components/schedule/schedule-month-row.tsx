@@ -9,6 +9,10 @@ import {
   formatMonthRowDateParts,
   getWeekdayIndex,
 } from "@/lib/datetime/date-key";
+import {
+  BORDER_DATE,
+  stickyDateBodyClass,
+} from "@/components/schedule/schedule-month-table-styles";
 
 function buildEditorData(
   dateKey: string,
@@ -44,14 +48,16 @@ export function ScheduleMonthRow({
   onCellOpen,
   onManagerCellOpen,
   onOwnerCellOpen,
+  readOnly = false,
 }: {
   day: ScheduleMonthData["days"][number];
   rowIndex: number;
   masters: ScheduleMonthMaster[];
   studioToday: string;
-  onCellOpen: (data: QuickDayEditorData) => void;
-  onManagerCellOpen: (data: QuickManagerEditorData) => void;
-  onOwnerCellOpen: (data: QuickOwnerEditorData) => void;
+  onCellOpen?: (data: QuickDayEditorData) => void;
+  onManagerCellOpen?: (data: QuickManagerEditorData) => void;
+  onOwnerCellOpen?: (data: QuickOwnerEditorData) => void;
+  readOnly?: boolean;
 }) {
   const isToday = day.dateKey === studioToday;
   const weekdayIndex = getWeekdayIndex(day.dateKey);
@@ -70,7 +76,7 @@ export function ScheduleMonthRow({
   return (
     <tr className={`border-b border-[#d0d5da] ${rowBg}`}>
       <td
-        className={`sticky left-0 z-[1] border-r-2 border-[#b8c0c8] px-2 py-1 align-top ${dateCellBg}`}
+        className={`${stickyDateBodyClass(dateCellBg)} border-b border-r-2 ${BORDER_DATE} border-[#d0d5da] px-2 py-1 align-top`}
       >
         <div className="flex flex-col gap-0.5 leading-none">
           <span
@@ -100,21 +106,27 @@ export function ScheduleMonthRow({
 
       <ScheduleMonthManagerCell
         notes={day.managerNotes}
-        onOpen={() =>
-          onManagerCellOpen({
-            dateKey: day.dateKey,
-            notes: day.managerNotes,
-          })
+        onOpen={
+          readOnly
+            ? undefined
+            : () =>
+                onManagerCellOpen?.({
+                  dateKey: day.dateKey,
+                  notes: day.managerNotes,
+                })
         }
       />
 
       <ScheduleMonthOwnerCell
         notes={day.ownerNotes}
-        onOpen={() =>
-          onOwnerCellOpen({
-            dateKey: day.dateKey,
-            notes: day.ownerNotes,
-          })
+        onOpen={
+          readOnly
+            ? undefined
+            : () =>
+                onOwnerCellOpen?.({
+                  dateKey: day.dateKey,
+                  notes: day.ownerNotes,
+                })
         }
       />
 
@@ -122,8 +134,17 @@ export function ScheduleMonthRow({
         <ScheduleMonthCell
           key={master.id}
           items={day.masterCells[master.id] ?? []}
-          onOpen={() =>
-            onCellOpen(buildEditorData(day.dateKey, master, day.masterCells[master.id] ?? []))
+          onOpen={
+            readOnly
+              ? undefined
+              : () =>
+                  onCellOpen?.(
+                    buildEditorData(
+                      day.dateKey,
+                      master,
+                      day.masterCells[master.id] ?? [],
+                    ),
+                  )
           }
         />
       ))}

@@ -97,6 +97,7 @@ model Master {
   workStart              String   @map("work_start")
   workEnd                String   @map("work_end")
   breakAfterMinutes      Int      @default(0) @map("break_after_minutes")
+  usesDefaultWorkHours   Boolean  @default(false) @map("uses_default_work_hours")
   sortOrder              Int      @default(0) @map("sort_order")
   isActive               Boolean  @default(true) @map("is_active")
   isPublic               Boolean  @default(true) @map("is_public")

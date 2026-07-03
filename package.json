@@ -10,7 +10,11 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:seed": "prisma db seed",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "import:services": "tsx scripts/import-services.ts",
+    "import:services:apply": "tsx scripts/import-services.ts --apply",
+    "archive:seed-services": "tsx scripts/archive-seed-services.ts",
+    "archive:seed-services:apply": "tsx scripts/archive-seed-services.ts --apply"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

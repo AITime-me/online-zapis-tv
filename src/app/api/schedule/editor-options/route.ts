@@ -10,6 +10,7 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const masterId = searchParams.get("masterId");
+  const dateKey = searchParams.get("dateKey");
 
   if (!masterId) {
     return NextResponse.json(
@@ -18,7 +19,14 @@ export async function GET(request: Request) {
     );
   }
 
-  const options = await getScheduleEditorOptions(masterId);
+  if (!dateKey) {
+    return NextResponse.json(
+      { ok: false, error: "dateKey is required" },
+      { status: 400 },
+    );
+  }
+
+  const options = await getScheduleEditorOptions(masterId, dateKey);
   if (!options) {
     return NextResponse.json(
       { ok: false, error: "Master not found" },

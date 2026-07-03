@@ -9,25 +9,32 @@ export function ScheduleMonthOwnerCell({
   onOpen,
 }: {
   notes: ScheduleDayManagerNote[];
-  onOpen: () => void;
+  onOpen?: () => void;
 }) {
   const isEmpty = notes.length === 0;
   const preview = notes.slice(0, PREVIEW_LIMIT);
   const restCount = notes.length - preview.length;
+  const isInteractive = Boolean(onOpen);
 
   return (
     <td
-      className="cursor-pointer border-r border-[#d0d5da] px-1.5 py-0.5 align-top hover:bg-[#f3f6f8]"
+      className={`border-b border-r border-[#d0d5da] px-1.5 py-0.5 align-top ${
+        isInteractive ? "cursor-pointer hover:bg-[#f3f6f8]" : ""
+      }`}
       onClick={onOpen}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onOpen();
-        }
-      }}
-      role="button"
-      tabIndex={0}
-      title="Открыть заметки руководителя"
+      onKeyDown={
+        isInteractive
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onOpen?.();
+              }
+            }
+          : undefined
+      }
+      role={isInteractive ? "button" : undefined}
+      tabIndex={isInteractive ? 0 : undefined}
+      title={isInteractive ? "Открыть заметки руководителя" : undefined}
     >
       {isEmpty ? (
         <span className="text-[10px] text-zinc-400">—</span>

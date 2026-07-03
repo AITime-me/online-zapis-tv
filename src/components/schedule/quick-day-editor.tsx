@@ -93,7 +93,7 @@ export function QuickDayEditor({
 
     void (async () => {
       const response = await fetch(
-        `/api/schedule/editor-options?masterId=${data.masterId}`,
+        `/api/schedule/editor-options?masterId=${data.masterId}&dateKey=${data.dateKey}`,
       );
       const payload = await response.json();
       if (response.ok && payload.ok) {
@@ -105,7 +105,7 @@ export function QuickDayEditor({
         });
       }
     })();
-  }, [canEdit, data.masterId]);
+  }, [canEdit, data.dateKey, data.masterId]);
 
   const handleSaveStatus = (
     status: SaveStatus,

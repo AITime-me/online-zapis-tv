@@ -11,26 +11,31 @@ export function ScheduleMonthCell({
   onOpen,
 }: {
   items: ScheduleMonthCellItem[];
-  onOpen: () => void;
+  onOpen?: () => void;
 }) {
   const isFullDayClosed = cellHasFullDayBlock(items);
   const isEmpty = items.length === 0;
+  const isInteractive = Boolean(onOpen);
 
   return (
     <td
-      className={`cursor-pointer border-r border-[#d0d5da] px-1.5 py-0.5 align-top hover:bg-[#e3ecf9] ${
-        isFullDayClosed ? "bg-[#eceff1]" : ""
-      }`}
+      className={`border-b border-r border-[#d0d5da] px-1.5 py-0.5 align-top ${
+        isInteractive ? "cursor-pointer hover:bg-[#e3ecf9]" : ""
+      } ${isFullDayClosed ? "bg-[#eceff1]" : ""}`}
       onClick={onOpen}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onOpen();
-        }
-      }}
-      role="button"
-      tabIndex={0}
-      title={isEmpty ? "Открыть быстрый редактор" : undefined}
+      onKeyDown={
+        isInteractive
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onOpen?.();
+              }
+            }
+          : undefined
+      }
+      role={isInteractive ? "button" : undefined}
+      tabIndex={isInteractive ? 0 : undefined}
+      title={isInteractive && isEmpty ? "Открыть быстрый редактор" : undefined}
     >
       {isEmpty ? (
         <span className="text-[10px] text-zinc-400">—</span>

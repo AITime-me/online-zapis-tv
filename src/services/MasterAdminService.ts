@@ -1,4 +1,10 @@
 import { prisma } from "@/lib/db";
+import {
+  DEFAULT_BREAK_AFTER_MINUTES,
+  DEFAULT_SLOT_MINUTES,
+  DEFAULT_WEEKDAY_WORK_END,
+  DEFAULT_WEEKDAY_WORK_START,
+} from "@/lib/schedule/master-work-hours";
 import type {
   MasterAdminRow,
   MasterReorderInput,
@@ -25,6 +31,7 @@ function mapMaster(
     workEnd: master.workEnd,
     slotMinutes: master.slotMinutes,
     breakAfterMinutes: master.breakAfterMinutes,
+    usesDefaultWorkHours: master.usesDefaultWorkHours,
     sortOrder: master.sortOrder,
     isActive: master.isActive,
     isPublic: master.isPublic,
@@ -55,6 +62,67 @@ function validateRequiredNames(internalName: string, publicName: string) {
   if (!publicName.trim()) {
     throw new MasterAdminValidationError("Укажите публичное имя");
   }
+}
+
+function hasManualWorkHoursInput(input: {
+  workStart?: string | null;
+  workEnd?: string | null;
+}): boolean {
+  const workStart = input.workStart?.trim() ?? "";
+  const workEnd = input.workEnd?.trim() ?? "";
+  return workStart.length > 0 || workEnd.length > 0;
+}
+
+function resolveWorkHoursForWrite(input: {
+  workStart?: string | null;
+  workEnd?: string | null;
+  slotMinutes?: number | null;
+  breakAfterMinutes?: number | null;
+}): {
+  workStart: string;
+  workEnd: string;
+  slotMinutes: number;
+  breakAfterMinutes: number;
+  usesDefaultWorkHours: boolean;
+} {
+  if (!hasManualWorkHoursInput(input)) {
+    return {
+      workStart: DEFAULT_WEEKDAY_WORK_START,
+      workEnd: DEFAULT_WEEKDAY_WORK_END,
+      slotMinutes: input.slotMinutes ?? DEFAULT_SLOT_MINUTES,
+      breakAfterMinutes: input.breakAfterMinutes ?? DEFAULT_BREAK_AFTER_MINUTES,
+      usesDefaultWorkHours: true,
+    };
+  }
+
+  const workStart = input.workStart?.trim() ?? "";
+  const workEnd = input.workEnd?.trim() ?? "";
+
+  if (!workStart || !workEnd) {
+    throw new MasterAdminValidationError(
+      "Укажите и начало, и окончание рабочего времени",
+    );
+  }
+
+  validateTimeRange(workStart, workEnd);
+
+  const slotMinutes = input.slotMinutes ?? DEFAULT_SLOT_MINUTES;
+  if (slotMinutes <= 0) {
+    throw new MasterAdminValidationError("Длительность слота должна быть больше 0");
+  }
+
+  const breakAfterMinutes = input.breakAfterMinutes ?? 0;
+  if (breakAfterMinutes < 0) {
+    throw new MasterAdminValidationError("Перерыв не может быть отрицательным");
+  }
+
+  return {
+    workStart,
+    workEnd,
+    slotMinutes,
+    breakAfterMinutes,
+    usesDefaultWorkHours: false,
+  };
 }
 
 async function assertUserAvailable(userId: string | null | undefined, excludeMasterId?: string) {
@@ -92,14 +160,7 @@ export async function createMaster(input: MasterWriteInput): Promise<MasterAdmin
   const publicName = input.publicName.trim();
   validateRequiredNames(internalName, publicName);
 
-  const workStart = input.workStart ?? "09:00";
-  const workEnd = input.workEnd ?? "18:00";
-  validateTimeRange(workStart, workEnd);
-
-  const slotMinutes = input.slotMinutes ?? 30;
-  if (slotMinutes <= 0) {
-    throw new MasterAdminValidationError("Длительность слота должна быть больше 0");
-  }
+  const workHours = resolveWorkHoursForWrite(input);
 
   await assertUserAvailable(input.userId ?? null);
 
@@ -114,10 +175,11 @@ export async function createMaster(input: MasterWriteInput): Promise<MasterAdmin
       internalName,
       publicName,
       clientDescription: input.clientDescription?.trim() || null,
-      workStart,
-      workEnd,
-      slotMinutes,
-      breakAfterMinutes: input.breakAfterMinutes ?? 0,
+      workStart: workHours.workStart,
+      workEnd: workHours.workEnd,
+      slotMinutes: workHours.slotMinutes,
+      breakAfterMinutes: workHours.breakAfterMinutes,
+      usesDefaultWorkHours: workHours.usesDefaultWorkHours,
       sortOrder,
       isActive: input.isActive ?? true,
       isPublic: input.isPublic ?? true,
@@ -155,14 +217,33 @@ export async function updateMaster(
   const publicName = input.publicName?.trim() ?? existing.publicName;
   validateRequiredNames(internalName, publicName);
 
-  const workStart = input.workStart ?? existing.workStart;
-  const workEnd = input.workEnd ?? existing.workEnd;
-  validateTimeRange(workStart, workEnd);
+  const workHoursInputProvided =
+    input.workStart !== undefined ||
+    input.workEnd !== undefined ||
+    input.slotMinutes !== undefined ||
+    input.breakAfterMinutes !== undefined;
 
-  const slotMinutes = input.slotMinutes ?? existing.slotMinutes;
-  if (slotMinutes <= 0) {
-    throw new MasterAdminValidationError("Длительность слота должна быть больше 0");
-  }
+  const workHours = workHoursInputProvided
+    ? resolveWorkHoursForWrite({
+        workStart:
+          input.workStart !== undefined ? input.workStart : existing.workStart,
+        workEnd: input.workEnd !== undefined ? input.workEnd : existing.workEnd,
+        slotMinutes:
+          input.slotMinutes !== undefined
+            ? input.slotMinutes
+            : existing.slotMinutes,
+        breakAfterMinutes:
+          input.breakAfterMinutes !== undefined
+            ? input.breakAfterMinutes
+            : existing.breakAfterMinutes,
+      })
+    : {
+        workStart: existing.workStart,
+        workEnd: existing.workEnd,
+        slotMinutes: existing.slotMinutes,
+        breakAfterMinutes: existing.breakAfterMinutes,
+        usesDefaultWorkHours: existing.usesDefaultWorkHours,
+      };
 
   if (input.userId !== undefined) {
     await assertUserAvailable(input.userId, id);
@@ -177,10 +258,11 @@ export async function updateMaster(
         input.clientDescription !== undefined
           ? input.clientDescription?.trim() || null
           : undefined,
-      workStart,
-      workEnd,
-      slotMinutes,
-      breakAfterMinutes: input.breakAfterMinutes,
+      workStart: workHours.workStart,
+      workEnd: workHours.workEnd,
+      slotMinutes: workHours.slotMinutes,
+      breakAfterMinutes: workHours.breakAfterMinutes,
+      usesDefaultWorkHours: workHours.usesDefaultWorkHours,
       sortOrder: input.sortOrder,
       isActive: input.isActive,
       isPublic: input.isPublic,
