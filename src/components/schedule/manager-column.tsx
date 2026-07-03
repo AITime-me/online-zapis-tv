@@ -3,34 +3,32 @@ import { formatStudioTime } from "@/lib/datetime/date-key";
 
 export function ManagerColumn({
   notes,
+  className = "",
 }: {
   notes: ScheduleDayManagerNote[];
+  className?: string;
 }) {
   return (
-    <section className="flex w-72 shrink-0 flex-col gap-3">
-      <header className="sticky top-0 z-10 rounded bg-zinc-900 px-3 py-2 text-sm font-medium text-white">
-        Менеджер
-      </header>
-
-      <div className="flex flex-col gap-3">
-        {notes.length === 0 ? (
-          <p className="rounded border border-dashed border-zinc-300 p-4 text-sm text-zinc-500">
-            Нет заметок
-          </p>
-        ) : (
-          notes.map((note) => (
-            <article
-              key={note.id}
-              className="rounded border border-zinc-200 bg-white p-3 text-sm shadow-sm"
-            >
-              <div className="text-xs text-zinc-500">
-                {formatStudioTime(new Date(note.createdAt))}
-              </div>
-              <div className="mt-2 whitespace-pre-wrap">{note.content}</div>
-            </article>
-          ))
-        )}
-      </div>
+    <section className={`flex flex-col bg-white ${className}`}>
+      {notes.length === 0 ? (
+        <p className="px-2 py-2 text-[11px] italic text-zinc-400">
+          Нет заметок
+        </p>
+      ) : (
+        notes.map((note) => (
+          <div
+            key={note.id}
+            className="border-b border-[#e8eaed] px-2 py-1 text-xs leading-snug last:border-b-0"
+          >
+            <span className="tabular-nums text-[10px] text-zinc-500">
+              {formatStudioTime(new Date(note.createdAt))}
+            </span>
+            <span className="ml-1.5 whitespace-pre-wrap text-zinc-800">
+              {note.content}
+            </span>
+          </div>
+        ))
+      )}
     </section>
   );
 }

@@ -10,29 +10,38 @@ export function AppointmentCard({
 
   return (
     <article
-      className={`rounded border border-zinc-200 bg-white p-3 text-sm shadow-sm ${
-        appointment.isBold ? "font-semibold" : ""
+      className={`border-b border-[#e8eaed] px-2 py-1 text-xs leading-snug last:border-b-0 ${
+        appointment.isBold ? "font-bold" : ""
       }`}
     >
-      <div className="text-xs text-zinc-500">{timeLabel}</div>
-      <div className="mt-1">{appointment.clientName}</div>
-      {appointment.serviceName ? (
-        <div className="mt-1 text-zinc-700">{appointment.serviceName}</div>
-      ) : null}
+      <div className="tabular-nums text-[10px] font-normal text-zinc-500">
+        {timeLabel}
+      </div>
+
+      <div className="text-zinc-900">
+        {appointment.clientName}
+        {appointment.serviceName ? (
+          <span className="font-normal text-zinc-600">
+            {" "}
+            · {appointment.serviceName}
+          </span>
+        ) : null}
+      </div>
+
       {appointment.importantNote ? (
-        <div className="mt-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-900">
+        <div className="mt-0.5 bg-amber-50 px-1 py-px text-[10px] leading-tight text-amber-900">
           ⚠ {appointment.importantNote}
         </div>
       ) : null}
+
       {appointment.comment ? (
-        <div className="mt-2 text-xs text-zinc-600 line-clamp-2">
+        <div className="mt-0.5 line-clamp-2 text-[10px] font-normal text-zinc-500">
           {appointment.comment}
         </div>
       ) : null}
-      <div className="mt-2 flex flex-wrap gap-2 text-xs text-zinc-500">
-        <span>{appointment.status}</span>
-        <span>•</span>
-        <span>{appointment.source}</span>
+
+      <div className="mt-0.5 text-[10px] font-normal text-zinc-400">
+        {appointment.status} · {appointment.source}
       </div>
     </article>
   );

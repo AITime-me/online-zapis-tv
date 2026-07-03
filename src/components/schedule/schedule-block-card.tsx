@@ -5,14 +5,16 @@ export function ScheduleBlockCard({ block }: { block: ScheduleDayBlock }) {
   const timeLabel = `${formatStudioTime(new Date(block.startsAt))} – ${formatStudioTime(new Date(block.endsAt))}`;
 
   return (
-    <article className="rounded border border-zinc-400 bg-zinc-100 p-3 text-sm text-zinc-800">
-      <div className="text-xs font-medium uppercase tracking-wide text-zinc-600">
-        Блок
+    <article className="border-b border-[#e8eaed] bg-[#f1f3f4] px-2 py-1 text-xs leading-snug last:border-b-0">
+      <div className="flex items-baseline gap-1.5">
+        <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
+          Блок
+        </span>
+        <span className="tabular-nums text-[10px] text-zinc-500">{timeLabel}</span>
       </div>
-      <div className="mt-1 text-xs text-zinc-600">{timeLabel}</div>
-      <div className="mt-1 font-medium">{block.blockTypeLabel}</div>
+      <div className="text-zinc-700">{block.blockTypeLabel}</div>
       {block.internalReason ? (
-        <div className="mt-2 text-xs text-zinc-700">{block.internalReason}</div>
+        <div className="text-[10px] text-zinc-500">{block.internalReason}</div>
       ) : null}
     </article>
   );

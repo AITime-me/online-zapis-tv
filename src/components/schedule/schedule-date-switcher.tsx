@@ -20,25 +20,22 @@ export function ScheduleDateSwitcher({
   ];
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="text-sm text-zinc-600">
-        Дата:{" "}
-        <span className="font-medium text-zinc-900">
-          {formatDateKeyLabel(currentDate)}
-        </span>
-      </div>
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+      <span className="text-xs text-zinc-600">
+        {formatDateKeyLabel(currentDate)}
+      </span>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex gap-0.5">
         {buttons.map((button) => {
           const isActive = button.date === currentDate;
           return (
             <Link
               key={button.date}
               href={`/schedule?date=${button.date}`}
-              className={`rounded px-3 py-1.5 text-sm ${
+              className={`px-2 py-0.5 text-xs leading-tight ${
                 isActive
-                  ? "bg-zinc-900 text-white"
-                  : "border border-zinc-300 text-zinc-700 hover:bg-zinc-50"
+                  ? "bg-[#1a73e8] font-medium text-white"
+                  : "border border-[#dadce0] bg-white text-zinc-700 hover:bg-[#f1f3f4]"
               }`}
             >
               {button.label}

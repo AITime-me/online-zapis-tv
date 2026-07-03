@@ -26,20 +26,20 @@ export default async function SchedulePage({ searchParams }: SchedulePageProps) 
   const data = await getScheduleDayData(dateKey);
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-[1600px] flex-col gap-6 p-4 md:p-6">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Расписание</h1>
-          <p className="mt-1 text-sm text-zinc-600">
+    <main className="flex min-h-screen flex-col bg-[#f8f9fa] p-2 md:p-3">
+      <header className="mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-[#dadce0] bg-white px-2 py-1.5">
+        <div className="flex items-baseline gap-2">
+          <h1 className="text-sm font-semibold text-zinc-900">Расписание</h1>
+          <span className="text-xs text-zinc-500">
             {user.name} · {ROLE_LABELS[user.role]}
-          </p>
+          </span>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2">
           {(user.role === "OWNER" || user.role === "MANAGER") && (
             <Link
               href="/admin/emergency-export"
-              className="text-sm text-zinc-600 underline"
+              className="text-xs text-[#1a73e8] hover:underline"
             >
               Аварийная выгрузка
             </Link>
