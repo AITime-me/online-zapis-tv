@@ -37,6 +37,8 @@ cp .env.example .env
 - `APP_TIMEZONE=Asia/Yekaterinburg` — часовой пояс студии (UTC+5)
 - `EXPORT_STORAGE=local` — локальное хранение аварийных выгрузок
 - `EXPORT_LOCAL_DIR=./exports/emergency` — папка для XLSX
+- `AUTH_SECRET` — секрет сессии Auth.js (локально можно dev-значение)
+- `AUTH_URL=http://localhost:3000` — базовый URL приложения
 
 ### 3. Запустить PostgreSQL 17
 
@@ -81,9 +83,23 @@ npm run dev
 
 Seed не содержит реальных персональных данных.
 
-- Пользователи: `owner@example.local`, `manager@example.local`, `master1@example.local`, `master2@example.local`
-- Пароль (для будущей авторизации на Шаге 2): `dev-password`
-- Token-ссылка бота (тест): `test-bot-token-demo` → страница `/book/t/test-bot-token-demo`
+### Тестовые пользователи (вход во внутреннюю зону)
+
+| Email | Пароль | Роль |
+|-------|--------|------|
+| `owner@example.local` | `password123` | Владелец |
+| `manager@example.local` | `password123` | Менеджер |
+| `master@example.local` | `password123` | Мастер |
+
+Страница входа: http://localhost:3000/login
+
+После входа открывается защищённая страница: http://localhost:3000/schedule
+
+Неавторизованный пользователь при переходе на `/schedule` перенаправляется на `/login`.
+
+Дополнительные тестовые мастера в seed: `master2@example.local`, `master3@example.local` (пароль тот же).
+
+Token-ссылка бота (тест): `test-bot-token-demo` → страница `/book/t/test-bot-token-demo` (Шаг позже)
 
 ## Аварийная выгрузка
 

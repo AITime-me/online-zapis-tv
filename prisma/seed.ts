@@ -16,6 +16,23 @@ function studioDate(
   return new Date(iso);
 }
 
+function getStudioToday() {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: STUDIO_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = formatter.formatToParts(new Date());
+  const year = Number(parts.find((part) => part.type === "year")!.value);
+  const month = Number(parts.find((part) => part.type === "month")!.value);
+  const day = Number(parts.find((part) => part.type === "day")!.value);
+  const date = new Date(
+    `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T12:00:00+05:00`,
+  );
+  return { year, month, day, date };
+}
+
 async function upsertSynonym(
   serviceId: string,
   synonym: string,
@@ -32,11 +49,11 @@ async function upsertSynonym(
 }
 
 async function main() {
-  const passwordHash = await bcrypt.hash("dev-password", 10);
+  const passwordHash = await bcrypt.hash("password123", 10);
 
   const owner = await prisma.user.upsert({
     where: { email: "owner@example.local" },
-    update: {},
+    update: { passwordHash, isActive: true },
     create: {
       email: "owner@example.local",
       passwordHash,
@@ -47,7 +64,7 @@ async function main() {
 
   const manager = await prisma.user.upsert({
     where: { email: "manager@example.local" },
-    update: {},
+    update: { passwordHash, isActive: true },
     create: {
       email: "manager@example.local",
       passwordHash,
@@ -57,19 +74,19 @@ async function main() {
   });
 
   const masterUser1 = await prisma.user.upsert({
-    where: { email: "master1@example.local" },
-    update: {},
+    where: { email: "master@example.local" },
+    update: { passwordHash, isActive: true },
     create: {
-      email: "master1@example.local",
+      email: "master@example.local",
       passwordHash,
       role: "MASTER",
-      name: "Тестовый мастер 1",
+      name: "Тестовый мастер",
     },
   });
 
   const masterUser2 = await prisma.user.upsert({
     where: { email: "master2@example.local" },
-    update: {},
+    update: { passwordHash, isActive: true },
     create: {
       email: "master2@example.local",
       passwordHash,
@@ -80,7 +97,7 @@ async function main() {
 
   const masterUser3 = await prisma.user.upsert({
     where: { email: "master3@example.local" },
-    update: {},
+    update: { passwordHash, isActive: true },
     create: {
       email: "master3@example.local",
       passwordHash,
@@ -573,8 +590,72 @@ async function main() {
     },
   });
 
+  const today = getStudioToday();
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
+
+  await prisma.appointment.upsert({
+    where: { id: "00000000-0000-4000-8000-000000000211" },
+    update: {},
+    create: {
+      id: "00000000-0000-4000-8000-000000000211",
+      masterId: master1.id,
+      serviceId: serviceHaircut.id,
+      startsAt: studioDate(today.year, today.month, today.day, 11, 0),
+      endsAt: studioDate(today.year, today.month, today.day, 12, 0),
+      clientName: "Тестовая Марина",
+      clientPhone: "+70000000001",
+      comment: "Тестовая запись на сегодня",
+      importantNote: "VIP (тест)",
+      isBold: true,
+      status: "SCHEDULED",
+      source: "INTERNAL",
+      createdByUserId: manager.id,
+    },
+  });
+
+  await prisma.appointment.upsert({
+    where: { id: "00000000-0000-4000-8000-000000000212" },
+    update: {},
+    create: {
+      id: "00000000-0000-4000-8000-000000000212",
+      masterId: master2.id,
+      serviceId: serviceManicure.id,
+      startsAt: studioDate(today.year, today.month, today.day, 15, 30),
+      endsAt: studioDate(today.year, today.month, today.day, 17, 0),
+      clientName: "Тестовая Ольга",
+      clientPhone: "+70000000002",
+      comment: "Вторая тестовая запись на сегодня",
+      status: "CONFIRMED",
+      source: "ONLINE",
+      createdByUserId: manager.id,
+    },
+  });
+
+  await prisma.scheduleBlock.upsert({
+    where: { id: "00000000-0000-4000-8000-000000000311" },
+    update: {},
+    create: {
+      id: "00000000-0000-4000-8000-000000000311",
+      masterId: master1.id,
+      startsAt: studioDate(today.year, today.month, today.day, 13, 0),
+      endsAt: studioDate(today.year, today.month, today.day, 14, 0),
+      blockType: "BREAK",
+      internalReason: "Обед (тест, сегодня)",
+      createdByUserId: manager.id,
+    },
+  });
+
+  await prisma.managerNote.upsert({
+    where: { id: "00000000-0000-4000-8000-000000000411" },
+    update: { noteDate: today.date, content: "Заметка менеджера на сегодня (тест)" },
+    create: {
+      id: "00000000-0000-4000-8000-000000000411",
+      noteDate: today.date,
+      content: "Заметка менеджера на сегодня (тест)",
+      createdByUserId: manager.id,
+    },
+  });
 
   const appointmentStart = studioDate(
     tomorrow.getFullYear(),
