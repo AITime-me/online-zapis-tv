@@ -134,6 +134,7 @@ export function ScheduleMonthRow({
         <ScheduleMonthCell
           key={master.id}
           items={day.masterCells[master.id] ?? []}
+          cellTestId={`schedule-cell-${day.dateKey}-${master.id}`}
           onOpen={
             readOnly
               ? undefined

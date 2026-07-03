@@ -17,6 +17,8 @@ type SchedulePageProps = {
   searchParams: Promise<{ view?: string; month?: string; date?: string }>;
 };
 
+export const dynamic = "force-dynamic";
+
 export default async function SchedulePage({ searchParams }: SchedulePageProps) {
   const user = await requireAuth();
   const params = await searchParams;

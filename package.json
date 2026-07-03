@@ -14,7 +14,12 @@
     "import:services": "tsx scripts/import-services.ts",
     "import:services:apply": "tsx scripts/import-services.ts --apply",
     "archive:seed-services": "tsx scripts/archive-seed-services.ts",
-    "archive:seed-services:apply": "tsx scripts/archive-seed-services.ts --apply"
+    "archive:seed-services:apply": "tsx scripts/archive-seed-services.ts --apply",
+    "test:e2e:schedule": "playwright test tests/schedule-refresh.spec.ts",
+    "test:e2e:schedule-edit": "playwright test tests/schedule-edit-refresh.spec.ts",
+    "test:e2e:schedule-polling": "playwright test tests/schedule-view-polling.spec.ts",
+    "test:e2e:admin-services": "playwright test tests/admin-services-search.spec.ts",
+    "test:e2e": "playwright test"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -30,6 +35,7 @@
     "zod": "^4.1.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

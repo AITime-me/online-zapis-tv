@@ -9,9 +9,11 @@ import {
 export function ScheduleMonthCell({
   items,
   onOpen,
+  cellTestId,
 }: {
   items: ScheduleMonthCellItem[];
   onOpen?: () => void;
+  cellTestId?: string;
 }) {
   const isFullDayClosed = cellHasFullDayBlock(items);
   const isEmpty = items.length === 0;
@@ -19,6 +21,7 @@ export function ScheduleMonthCell({
 
   return (
     <td
+      data-testid={cellTestId}
       className={`border-b border-r border-[#d0d5da] px-1.5 py-0.5 align-top ${
         isInteractive ? "cursor-pointer hover:bg-[#e3ecf9]" : ""
       } ${isFullDayClosed ? "bg-[#eceff1]" : ""}`}

@@ -1,20 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ScheduleDayAppointment } from "@/types/schedule";
 import {
   diffMinutes,
   formatStudioTimeInput,
   parseStudioDateTime,
 } from "@/lib/datetime/date-key";
-
-export type EditorServiceOption = {
-  id: string;
-  publicName: string;
-  durationMinutes: number;
-  breakAfterMinutes: number;
-  totalBusyMinutes: number;
-};
+import type { EditorServiceOption } from "@/services/ScheduleEditorOptionsService";
 
 export type EditorOptions = {
   master: { workStart: string; workEnd: string };
@@ -35,6 +28,16 @@ type AppointmentFormState = {
   importantNote: string;
   isBold: boolean;
 };
+
+function formatEditorServicePrice(service: EditorServiceOption): string | null {
+  if (service.priceFrom != null && service.priceTo != null) {
+    return `${service.priceFrom}–${service.priceTo} ₽`;
+  }
+  if (service.priceFrom != null) {
+    return `от ${service.priceFrom} ₽`;
+  }
+  return null;
+}
 
 function toFormState(appointment: ScheduleDayAppointment): AppointmentFormState {
   return {
@@ -57,6 +60,63 @@ function addMinutesToTime(dateKey: string, time: string, minutes: number): strin
   return formatStudioTimeInput(result);
 }
 
+function buildServiceOptions(
+  bookable: EditorServiceOption[],
+  appointment: ScheduleDayAppointment,
+  dateKey: string,
+): EditorServiceOption[] {
+  if (!appointment.serviceId) {
+    return bookable;
+  }
+
+  if (bookable.some((service) => service.id === appointment.serviceId)) {
+    return bookable;
+  }
+
+  const durationMinutes = Math.max(
+    diffMinutes(
+      parseStudioDateTime(dateKey, formatStudioTimeInput(appointment.startsAt)),
+      parseStudioDateTime(dateKey, formatStudioTimeInput(appointment.endsAt)),
+    ),
+    1,
+  );
+
+  return [
+    {
+      id: appointment.serviceId,
+      publicName: `${appointment.serviceName ?? "Услуга"} (текущая, недоступна для новых записей)`,
+      durationMinutes,
+      breakAfterMinutes: 0,
+      totalBusyMinutes: durationMinutes,
+      priceFrom: null,
+      priceTo: null,
+      unavailable: true,
+    },
+    ...bookable,
+  ];
+}
+
+function ServiceMeta({ service }: { service: EditorServiceOption | undefined }) {
+  if (!service) {
+    return null;
+  }
+
+  const priceLabel = formatEditorServicePrice(service);
+
+  return (
+    <p className="mt-1 text-[10px] text-zinc-500">
+      Длительность: {service.durationMinutes} мин
+      {service.breakAfterMinutes > 0
+        ? ` · перерыв: ${service.breakAfterMinutes} мин`
+        : ""}
+      {priceLabel ? ` · ${priceLabel}` : ""}
+      {service.unavailable
+        ? " · недоступна для новых записей"
+        : ""}
+    </p>
+  );
+}
+
 export function AppointmentEditorForm({
   appointment,
   dateKey,
@@ -72,8 +132,8 @@ export function AppointmentEditorForm({
   masterId: string;
   options: EditorOptions;
   canEdit: boolean;
-  onSaved: () => void;
-  onCancelled: () => void;
+  onSaved: () => void | Promise<void>;
+  onCancelled: () => void | Promise<void>;
   onSaveStatus: (status: "idle" | "saving" | "saved" | "error", message?: string) => void;
 }) {
   const [form, setForm] = useState<AppointmentFormState>(() =>
@@ -84,11 +144,16 @@ export function AppointmentEditorForm({
   const formRef = useRef(form);
   formRef.current = form;
 
+  const serviceOptions = useMemo(
+    () => buildServiceOptions(options.services, appointment, dateKey),
+    [appointment, dateKey, options.services],
+  );
+
   useEffect(() => {
     setForm(toFormState(appointment));
   }, [appointment]);
 
-  const selectedService = options.services.find(
+  const selectedService = serviceOptions.find(
     (service) => service.id === form.serviceId,
   );
 
@@ -98,7 +163,9 @@ export function AppointmentEditorForm({
   );
 
   const shorterThanStandard =
-    selectedService != null && actualMinutes < selectedService.totalBusyMinutes;
+    selectedService != null &&
+    !selectedService.unavailable &&
+    actualMinutes < selectedService.durationMinutes;
 
   const save = useCallback(async () => {
     if (!canEdit) {
@@ -134,7 +201,13 @@ export function AppointmentEditorForm({
       }
 
       onSaveStatus("saved");
-      onSaved();
+      if (process.env.NODE_ENV === "development") {
+        console.log("[schedule] appointment saved", {
+          id: appointment.id,
+          action: "patch",
+        });
+      }
+      await onSaved();
     } catch (saveError) {
       const message =
         saveError instanceof Error ? saveError.message : "Ошибка сохранения";
@@ -159,34 +232,42 @@ export function AppointmentEditorForm({
     }, 500);
   }, [save]);
 
+  const applyServiceTiming = (
+    state: AppointmentFormState,
+    service: EditorServiceOption | undefined,
+  ): AppointmentFormState => {
+    if (!service || service.unavailable) {
+      return state;
+    }
+
+    return {
+      ...state,
+      endTime: addMinutesToTime(
+        dateKey,
+        state.startTime,
+        service.durationMinutes,
+      ),
+    };
+  };
+
   const updateField = <K extends keyof AppointmentFormState>(
     key: K,
     value: AppointmentFormState[K],
   ) => {
     setForm((current) => {
-      const next = { ...current, [key]: value };
+      let next = { ...current, [key]: value };
 
       if (key === "serviceId" && typeof value === "string") {
-        const service = options.services.find((item) => item.id === value);
-        if (service) {
-          next.endTime = addMinutesToTime(
-            dateKey,
-            next.startTime,
-            service.totalBusyMinutes,
-          );
-        }
+        const service = serviceOptions.find((item) => item.id === value);
+        next = applyServiceTiming(next, service);
       }
 
       if (key === "startTime" && typeof value === "string" && next.serviceId) {
-        const service = options.services.find(
+        const service = serviceOptions.find(
           (item) => item.id === next.serviceId,
         );
-        if (service) {
-          next.endTime = addMinutesToTime(
-            dateKey,
-            value,
-            service.totalBusyMinutes,
-          );
+        if (service && !service.unavailable) {
+          next = applyServiceTiming({ ...next, startTime: value }, service);
         }
       }
 
@@ -219,7 +300,7 @@ export function AppointmentEditorForm({
         throw new Error(payload.error ?? "Ошибка отмены");
       }
       onSaveStatus("saved");
-      onCancelled();
+      await onCancelled();
     } catch (cancelError) {
       const message =
         cancelError instanceof Error ? cancelError.message : "Ошибка отмены";
@@ -269,7 +350,7 @@ export function AppointmentEditorForm({
 
       {shorterThanStandard ? (
         <p className="mt-1 text-[10px] text-amber-800">
-          Фактическое время короче стандартного для этой услуги
+          Фактическое время короче стандартной длительности услуги
         </p>
       ) : null}
 
@@ -282,12 +363,17 @@ export function AppointmentEditorForm({
           className="border border-[#dadce0] px-1 py-0.5"
         >
           <option value="">—</option>
-          {options.services.map((service) => (
-            <option key={service.id} value={service.id}>
+          {serviceOptions.map((service) => (
+            <option
+              key={service.id}
+              value={service.id}
+              disabled={service.unavailable && service.id !== form.serviceId}
+            >
               {service.publicName}
             </option>
           ))}
         </select>
+        <ServiceMeta service={selectedService} />
       </label>
 
       <label className="mt-2 flex flex-col gap-0.5">
@@ -397,17 +483,14 @@ export function NewAppointmentForm({
   dateKey: string;
   masterId: string;
   options: EditorOptions;
-  onCreated: () => void;
+  onCreated: () => void | Promise<void>;
   onSaveStatus: (status: "idle" | "saving" | "saved" | "error", message?: string) => void;
   onCancel: () => void;
 }) {
-  const defaultService = options.services[0];
   const [form, setForm] = useState<AppointmentFormState>({
     startTime: options.master.workStart,
-    endTime: defaultService
-      ? addMinutesToTime(dateKey, options.master.workStart, defaultService.totalBusyMinutes)
-      : "10:00",
-    serviceId: defaultService?.id ?? "",
+    endTime: addMinutesToTime(dateKey, options.master.workStart, 30),
+    serviceId: "",
     clientName: "",
     clientPhone: "+70000000000",
     status: "SCHEDULED",
@@ -421,12 +504,14 @@ export function NewAppointmentForm({
   const selectedService = options.services.find(
     (service) => service.id === form.serviceId,
   );
+
   const actualMinutes = diffMinutes(
     parseStudioDateTime(dateKey, form.startTime),
     parseStudioDateTime(dateKey, form.endTime),
   );
+
   const shorterThanStandard =
-    selectedService != null && actualMinutes < selectedService.totalBusyMinutes;
+    selectedService != null && actualMinutes < selectedService.durationMinutes;
 
   const handleCreate = async () => {
     onSaveStatus("saving");
@@ -449,8 +534,14 @@ export function NewAppointmentForm({
       if (!response.ok) {
         throw new Error(payload.error ?? "Ошибка создания");
       }
+      if (process.env.NODE_ENV === "development") {
+        console.log("[schedule] appointment saved", {
+          id: payload.appointment?.id,
+          action: "post",
+        });
+      }
       onSaveStatus("saved");
-      onCreated();
+      await onCreated();
     } catch (createError) {
       const message =
         createError instanceof Error ? createError.message : "Ошибка создания";
@@ -478,7 +569,7 @@ export function NewAppointmentForm({
                   ...current,
                   startTime,
                   endTime: service
-                    ? addMinutesToTime(dateKey, startTime, service.totalBusyMinutes)
+                    ? addMinutesToTime(dateKey, startTime, service.durationMinutes)
                     : current.endTime,
                 };
               });
@@ -501,7 +592,7 @@ export function NewAppointmentForm({
 
       {shorterThanStandard ? (
         <p className="mt-1 text-[10px] text-amber-800">
-          Фактическое время короче стандартного для этой услуги
+          Фактическое время короче стандартной длительности услуги
         </p>
       ) : null}
 
@@ -516,19 +607,24 @@ export function NewAppointmentForm({
               ...current,
               serviceId,
               endTime: service
-                ? addMinutesToTime(dateKey, current.startTime, service.totalBusyMinutes)
+                ? addMinutesToTime(
+                    dateKey,
+                    current.startTime,
+                    service.durationMinutes,
+                  )
                 : current.endTime,
             }));
           }}
           className="border border-[#dadce0] px-1 py-0.5"
         >
-          <option value="">—</option>
+          <option value="">Выберите услугу</option>
           {options.services.map((service) => (
             <option key={service.id} value={service.id}>
               {service.publicName}
             </option>
           ))}
         </select>
+        <ServiceMeta service={selectedService} />
       </label>
 
       <label className="mt-2 flex flex-col gap-0.5">

@@ -5,6 +5,10 @@ export type TimeInterval = {
   endsAt: Date;
 };
 
+export type BusyInterval = TimeInterval & {
+  breakAfterMinutes?: number | null;
+};
+
 export type ScheduleBlockInterval = TimeInterval & {
   isFullDay?: boolean;
 };
@@ -15,9 +19,9 @@ export type MasterAvailabilityInput = {
   standardWorkStart: string;
   standardWorkEnd: string;
   extraWorkWindows: TimeInterval[];
-  appointments: Array<TimeInterval & { status: AppointmentStatus }>;
+  appointments: Array<BusyInterval & { status: AppointmentStatus }>;
   scheduleBlocks: ScheduleBlockInterval[];
-  candidateInterval: TimeInterval;
+  candidateInterval: BusyInterval;
 };
 
 export type MasterAvailabilityResult = {
@@ -26,6 +30,15 @@ export type MasterAvailabilityResult = {
     type: "appointment" | "block" | "full_day_block" | "outside_work_hours";
   }>;
 };
+
+export function toBusyInterval(interval: BusyInterval): TimeInterval {
+  const breakMinutes = Math.max(0, interval.breakAfterMinutes ?? 0);
+
+  return {
+    startsAt: interval.startsAt,
+    endsAt: new Date(interval.endsAt.getTime() + breakMinutes * 60_000),
+  };
+}
 
 function intervalsOverlap(left: TimeInterval, right: TimeInterval): boolean {
   return left.startsAt < right.endsAt && right.startsAt < left.endsAt;
@@ -67,10 +80,12 @@ export function checkMasterIntervalAvailability(
     conflicts.push({ type: "outside_work_hours" });
   }
 
+  const candidateBusy = toBusyInterval(input.candidateInterval);
+
   const activeAppointments = input.appointments.filter(
     (appointment) =>
       appointment.status !== "CANCELLED" &&
-      intervalsOverlap(appointment, input.candidateInterval),
+      intervalsOverlap(toBusyInterval(appointment), candidateBusy),
   );
 
   if (activeAppointments.length > 0) {
@@ -79,7 +94,7 @@ export function checkMasterIntervalAvailability(
 
   const intervalBlocks = input.scheduleBlocks.filter((block) => !block.isFullDay);
   const overlappingBlocks = intervalBlocks.filter((block) =>
-    intervalsOverlap(block, input.candidateInterval),
+    intervalsOverlap(block, candidateBusy),
   );
 
   if (overlappingBlocks.length > 0) {

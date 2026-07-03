@@ -1,25 +1,46 @@
 "use client";
 
 import Link from "next/link";
+import { useCallback } from "react";
 import { addMonthsToMonthKey, formatMonthTitle } from "@/lib/datetime/date-key";
+import {
+  fetchViewScheduleMonth,
+  useScheduleMonthAutoRefresh,
+} from "@/hooks/use-schedule-month-auto-refresh";
 import type { ScheduleMonthData } from "@/types/schedule-month";
 import { ScheduleMonthTable } from "@/components/schedule/schedule-month-table";
 
 export function ScheduleReadonlyMonthView({
-  data,
+  data: initialData,
   token,
 }: {
   data: ScheduleMonthData;
   token: string;
 }) {
-  const prevMonth = addMonthsToMonthKey(data.month, -1);
-  const nextMonth = addMonthsToMonthKey(data.month, 1);
+  const fetchMonth = useCallback(
+    (month: string) => fetchViewScheduleMonth(month, token),
+    [token],
+  );
+
+  const { monthData, scheduleRevision } = useScheduleMonthAutoRefresh({
+    initialData,
+    fetchMonth,
+    pollingEnabled: true,
+    debugLog: false,
+  });
+
+  const prevMonth = addMonthsToMonthKey(monthData.month, -1);
+  const nextMonth = addMonthsToMonthKey(monthData.month, 1);
 
   const buildHref = (month: string) =>
     `/view/schedule?token=${encodeURIComponent(token)}&month=${month}`;
 
   return (
-    <div className="flex flex-col gap-2">
+    <div
+      className="flex flex-col gap-2"
+      data-testid="schedule-readonly-month-view"
+      data-revision={scheduleRevision}
+    >
       <div className="flex items-center gap-1">
         <Link
           href={buildHref(prevMonth)}
@@ -29,7 +50,7 @@ export function ScheduleReadonlyMonthView({
           ‹
         </Link>
         <span className="min-w-[120px] text-center text-xs font-medium text-zinc-900">
-          {formatMonthTitle(data.month)}
+          {formatMonthTitle(monthData.month)}
         </span>
         <Link
           href={buildHref(nextMonth)}
@@ -39,7 +60,7 @@ export function ScheduleReadonlyMonthView({
           ›
         </Link>
       </div>
-      <ScheduleMonthTable data={data} readOnly />
+      <ScheduleMonthTable data={monthData} readOnly />
     </div>
   );
 }

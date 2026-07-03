@@ -59,6 +59,7 @@ export function ScheduleMonthTable({
             {data.masters.map((master) => (
               <th
                 key={master.id}
+                data-master-id={master.id}
                 className={`${STICKY_COLUMN_HEADER} ${MASTER_COL} border-b-2 border-r ${BORDER_INNER} px-1.5 py-1.5 last:border-r-0`}
               >
                 <div className="text-[10px] font-semibold leading-tight text-zinc-900">

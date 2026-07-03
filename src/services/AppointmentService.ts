@@ -24,8 +24,11 @@ import {
   resolveServiceTimingForMaster,
 } from "@/services/ServiceTimingService";
 
+const APPOINTMENT_BUSY_CONFLICT_MESSAGE =
+  "У мастера уже есть запись или перерыв в это время.";
+
 export class AppointmentConflictError extends Error {
-  constructor(message = "Это время уже занято") {
+  constructor(message = APPOINTMENT_BUSY_CONFLICT_MESSAGE) {
     super(message);
     this.name = "AppointmentConflictError";
   }
@@ -128,6 +131,7 @@ async function loadConflictContext(
         id: true,
         startsAt: true,
         endsAt: true,
+        breakAfterMinutes: true,
         status: true,
       },
     }),
@@ -159,6 +163,21 @@ async function loadConflictContext(
   };
 }
 
+async function resolveBreakAfterMinutesForInput(
+  input: AppointmentWriteInput,
+): Promise<number> {
+  if (!input.serviceId) {
+    return 0;
+  }
+
+  const timing = await resolveServiceTimingForMaster(
+    input.masterId,
+    input.serviceId,
+  );
+
+  return timing?.breakAfterMinutes ?? 0;
+}
+
 async function assertNoBlockingConflict(
   input: AppointmentWriteInput,
   excludeAppointmentId?: string,
@@ -170,11 +189,10 @@ async function assertNoBlockingConflict(
     throw new AppointmentValidationError("Окончание должно быть позже начала");
   }
 
-  const context = await loadConflictContext(
-    input.masterId,
-    input.dateKey,
-    excludeAppointmentId,
-  );
+  const [context, candidateBreakAfterMinutes] = await Promise.all([
+    loadConflictContext(input.masterId, input.dateKey, excludeAppointmentId),
+    resolveBreakAfterMinutesForInput(input),
+  ]);
 
   const workHours = resolveMasterWorkHours(context.master, input.dateKey);
 
@@ -184,13 +202,22 @@ async function assertNoBlockingConflict(
     standardWorkStart: workHours.workStart,
     standardWorkEnd: workHours.workEnd,
     extraWorkWindows: context.extraWorkWindows,
-    appointments: context.appointments,
+    appointments: context.appointments.map((appointment) => ({
+      startsAt: appointment.startsAt,
+      endsAt: appointment.endsAt,
+      breakAfterMinutes: appointment.breakAfterMinutes ?? 0,
+      status: appointment.status,
+    })),
     scheduleBlocks: context.scheduleBlocks.map((block) => ({
       startsAt: block.startsAt ?? new Date(0),
       endsAt: block.endsAt ?? new Date(0),
       isFullDay: block.isFullDay,
     })),
-    candidateInterval: { startsAt, endsAt },
+    candidateInterval: {
+      startsAt,
+      endsAt,
+      breakAfterMinutes: candidateBreakAfterMinutes,
+    },
   });
 
   if (availability.conflicts.some((c) => c.type === "full_day_block")) {
@@ -202,7 +229,7 @@ async function assertNoBlockingConflict(
   }
 
   if (availability.conflicts.some((c) => c.type === "appointment")) {
-    throw new AppointmentConflictError("Это время уже занято");
+    throw new AppointmentConflictError(APPOINTMENT_BUSY_CONFLICT_MESSAGE);
   }
 }
 
@@ -228,21 +255,26 @@ async function resolveTimingFields(
     if (timing) {
       standardDurationMinutes = timing.durationMinutes;
       standardBreakAfterMinutes = timing.breakAfterMinutes;
-      const standardEndsAt = calculateAppointmentEndsAt(
+      const durationOnlyEndsAt = new Date(
+        startsAt.getTime() + timing.durationMinutes * 60_000,
+      );
+      const withBreakEndsAt = calculateAppointmentEndsAt(
         startsAt,
         timing.durationMinutes,
         timing.breakAfterMinutes,
       );
 
-      if (
-        endsAt.getTime() !== standardEndsAt.getTime() ||
-        totalMinutes !== timing.totalBusyMinutes
-      ) {
+      if (endsAt.getTime() === durationOnlyEndsAt.getTime()) {
+        serviceDurationMinutes = timing.durationMinutes;
+        breakAfterMinutes = timing.breakAfterMinutes;
+        isManualTimeOverride = false;
+      } else if (endsAt.getTime() === withBreakEndsAt.getTime()) {
+        serviceDurationMinutes = timing.durationMinutes;
+        breakAfterMinutes = timing.breakAfterMinutes;
+        isManualTimeOverride = false;
+      } else {
         isManualTimeOverride = true;
         serviceDurationMinutes = totalMinutes;
-        breakAfterMinutes = 0;
-      } else {
-        serviceDurationMinutes = timing.durationMinutes;
         breakAfterMinutes = timing.breakAfterMinutes;
       }
     }

@@ -11,6 +11,7 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const masterId = searchParams.get("masterId");
   const dateKey = searchParams.get("dateKey");
+  const includeServiceId = searchParams.get("includeServiceId");
 
   if (!masterId) {
     return NextResponse.json(
@@ -26,7 +27,11 @@ export async function GET(request: Request) {
     );
   }
 
-  const options = await getScheduleEditorOptions(masterId, dateKey);
+  const options = await getScheduleEditorOptions(
+    masterId,
+    dateKey,
+    includeServiceId,
+  );
   if (!options) {
     return NextResponse.json(
       { ok: false, error: "Master not found" },

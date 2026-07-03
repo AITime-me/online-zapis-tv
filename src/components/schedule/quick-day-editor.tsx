@@ -1,11 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   formatDateKeyLabel,
   formatStudioTimeRange,
 } from "@/lib/datetime/date-key";
+import type { CellSyncPayload } from "@/lib/schedule/month-data-patch";
 import type { QuickDayEditorData } from "@/types/schedule-month";
 import {
   AppointmentEditorForm,
@@ -26,12 +26,15 @@ export function QuickDayEditor({
   data: initialData,
   canEdit,
   onClose,
+  onCellSynced,
+  onScheduleChange,
 }: {
   data: QuickDayEditorData;
   canEdit: boolean;
   onClose: () => void;
+  onCellSynced?: (payload: CellSyncPayload) => void;
+  onScheduleChange?: () => void | Promise<void>;
 }) {
-  const router = useRouter();
   const [data, setData] = useState(initialData);
   const [options, setOptions] = useState<EditorOptions | null>(null);
   const [showNewAppointment, setShowNewAppointment] = useState(false);
@@ -70,10 +73,11 @@ export function QuickDayEditor({
   const refreshCell = useCallback(async () => {
     const response = await fetch(
       `/api/schedule/cell?masterId=${data.masterId}&date=${data.dateKey}`,
+      { cache: "no-store" },
     );
     const payload = await response.json();
     if (response.ok && payload.ok) {
-      setData({
+      const cellData = {
         dateKey: payload.dateKey,
         masterId: payload.masterId,
         masterInternalName: payload.masterInternalName,
@@ -81,10 +85,40 @@ export function QuickDayEditor({
         appointments: payload.appointments,
         scheduleBlocks: payload.scheduleBlocks,
         extraWorkWindows: payload.extraWorkWindows,
+      };
+      setData(cellData);
+
+      if (process.env.NODE_ENV === "development") {
+        console.log("[schedule] refreshCell:onCellSynced", {
+          dateKey: cellData.dateKey,
+          masterId: cellData.masterId,
+          appointments: cellData.appointments.length,
+        });
+      }
+
+      onCellSynced?.({
+        dateKey: cellData.dateKey,
+        masterId: cellData.masterId,
+        appointments: cellData.appointments,
+        scheduleBlocks: cellData.scheduleBlocks,
+        extraWorkWindows: cellData.extraWorkWindows,
       });
     }
-    router.refresh();
-  }, [data.dateKey, data.masterId, router]);
+
+    if (process.env.NODE_ENV === "development") {
+      console.log("[schedule] refreshCell:before onScheduleChange", {
+        dateKey: data.dateKey,
+        masterId: data.masterId,
+        appointments: payload.appointments?.length,
+      });
+    }
+
+    await onScheduleChange?.();
+
+    if (process.env.NODE_ENV === "development") {
+      console.log("[schedule] refreshCell:after onScheduleChange");
+    }
+  }, [data.dateKey, data.masterId, onCellSynced, onScheduleChange]);
 
   useEffect(() => {
     if (!canEdit) {
@@ -387,8 +421,12 @@ export function QuickDayEditor({
                         masterId={data.masterId}
                         options={options}
                         canEdit={canEdit}
-                        onSaved={() => void refreshCell()}
-                        onCancelled={() => void refreshCell()}
+                        onSaved={async () => {
+                          await refreshCell();
+                        }}
+                        onCancelled={async () => {
+                          await refreshCell();
+                        }}
                         onSaveStatus={handleSaveStatus}
                       />
                     ) : (
