@@ -5,12 +5,8 @@ import { bookingTheme } from "@/components/booking/booking-theme";
 import {
   BookingPromotionBadge,
   BookingPromotionCardNote,
-  BookingPromotionGeneralNotice,
 } from "@/components/booking/booking-promotion-ui";
-import {
-  BOOKING_PROMOTIONS_GENERAL_NOTICE,
-  getServiceCardPromotions,
-} from "@/lib/booking/promotions";
+import { getServiceCardPromotions } from "@/lib/booking/promotions";
 import type {
   BookingCatalogCategory,
   BookingCatalogService,
@@ -147,8 +143,6 @@ export function BookingServiceStep({
             Сначала категория — затем услуга
           </p>
         </header>
-
-        <BookingPromotionGeneralNotice text={BOOKING_PROMOTIONS_GENERAL_NOTICE} />
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {categories.map((category) => (

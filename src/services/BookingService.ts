@@ -22,6 +22,7 @@ export type BookingCatalogService = {
   durationMinutes: number;
   breakAfterMinutes: number;
   priceLabel: string | null;
+  categoryName?: string | null;
 };
 
 export type BookingCatalogCategory = {
@@ -296,6 +297,90 @@ export async function listMastersForService(
   return withTiming
     .filter((entry) => entry.timing != null)
     .map((entry) => entry.master);
+}
+
+export async function listBookableMasters(): Promise<BookingCatalogMaster[]> {
+  return prisma.master.findMany({
+    where: {
+      isActive: true,
+      isOnlineBookingEnabled: true,
+      isPublic: true,
+      masterServices: {
+        some: {
+          isEnabled: true,
+          isOnlineBookingEnabled: true,
+          service: {
+            isActive: true,
+            isOnlineBookingEnabled: true,
+            id: { notIn: [...SEED_TEST_SERVICE_IDS] },
+          },
+        },
+      },
+    },
+    orderBy: { sortOrder: "asc" },
+    select: {
+      id: true,
+      publicName: true,
+      clientDescription: true,
+      photoUrl: true,
+    },
+  });
+}
+
+export async function listServicesForMaster(
+  masterId: string,
+): Promise<BookingCatalogService[]> {
+  const masterServices = await prisma.masterService.findMany({
+    where: {
+      masterId,
+      isEnabled: true,
+      isOnlineBookingEnabled: true,
+      service: {
+        isActive: true,
+        isOnlineBookingEnabled: true,
+        id: { notIn: [...SEED_TEST_SERVICE_IDS] },
+      },
+    },
+    include: {
+      service: {
+        select: {
+          id: true,
+          publicName: true,
+          clientDescription: true,
+          durationMinutes: true,
+          breakAfterMinutes: true,
+          priceFrom: true,
+          priceTo: true,
+          category: { select: { name: true } },
+        },
+      },
+    },
+    orderBy: [{ sortOrder: "asc" }, { service: { publicName: "asc" } }],
+  });
+
+  const services: BookingCatalogService[] = [];
+
+  for (const entry of masterServices) {
+    const timing = await resolveServiceTimingForMaster(masterId, entry.serviceId);
+    if (!timing) {
+      continue;
+    }
+
+    services.push({
+      id: entry.service.id,
+      publicName: entry.service.publicName,
+      clientDescription: entry.service.clientDescription,
+      durationMinutes: timing.durationMinutes,
+      breakAfterMinutes: timing.breakAfterMinutes,
+      priceLabel: formatPriceLabel(
+        entry.service.priceFrom,
+        entry.service.priceTo,
+      ),
+      categoryName: entry.service.category.name,
+    });
+  }
+
+  return services;
 }
 
 export async function getAvailableTimeSlots(

@@ -9,10 +9,25 @@ import {
   normalizeBookingMonthKey,
 } from "@/lib/datetime/date-key";
 import { BookingServiceStep } from "@/components/booking/booking-service-step";
+import { BookingConsultationCard } from "@/components/booking/booking-consultation-card";
+import {
+  BookingMasterFirstStep,
+  type MasterFirstView,
+} from "@/components/booking/booking-master-first-step";
+import {
+  BookingPathToggle,
+  type BookingPathMode,
+} from "@/components/booking/booking-path-toggle";
 import { BookingSuccessScreen } from "@/components/booking/booking-success-screen";
-import { BookingPromotionConfirmBlock } from "@/components/booking/booking-promotion-ui";
+import {
+  BookingPromotionConfirmBlock,
+  BookingPromotionGeneralNotice,
+} from "@/components/booking/booking-promotion-ui";
 import { bookingTheme } from "@/components/booking/booking-theme";
-import { getConfirmStepPromotions } from "@/lib/booking/promotions";
+import {
+  BOOKING_PROMOTIONS_GENERAL_NOTICE,
+  getConfirmStepPromotions,
+} from "@/lib/booking/promotions";
 import type {
   BookingCatalogCategory,
   BookingCatalogMaster,
@@ -72,8 +87,15 @@ function findCategoryIdForService(
 
 export function BookingWizard() {
   const [step, setStep] = useState<Step>("service");
+  const [bookingPath, setBookingPath] = useState<BookingPathMode>("by-service");
   const [categories, setCategories] = useState<BookingCatalogCategory[]>([]);
   const [masters, setMasters] = useState<BookingCatalogMaster[]>([]);
+  const [allMasters, setAllMasters] = useState<BookingCatalogMaster[]>([]);
+  const [masterServices, setMasterServices] = useState<BookingCatalogService[]>(
+    [],
+  );
+  const [masterFirstView, setMasterFirstView] =
+    useState<MasterFirstView>("masters");
   const [availableDays, setAvailableDays] = useState<string[]>([]);
   const [slots, setSlots] = useState<string[]>([]);
   const [monthKey, setMonthKey] = useState<string>("");
@@ -148,6 +170,36 @@ export function BookingWizard() {
     }
   }, []);
 
+  const loadAllMasters = useCallback(async () => {
+    setStepLoading(true);
+    setError(null);
+    try {
+      const data = await fetchJson<{ masters: BookingCatalogMaster[] }>(
+        "/api/booking/masters",
+      );
+      setAllMasters(data.masters);
+    } catch {
+      setError("Не удалось загрузить мастеров. Попробуйте обновить страницу.");
+    } finally {
+      setStepLoading(false);
+    }
+  }, []);
+
+  const loadMasterServices = useCallback(async (masterId: string) => {
+    setStepLoading(true);
+    setError(null);
+    try {
+      const data = await fetchJson<{ services: BookingCatalogService[] }>(
+        `/api/booking/services?masterId=${encodeURIComponent(masterId)}`,
+      );
+      setMasterServices(data.services);
+    } catch {
+      setError("Не удалось загрузить услуги. Попробуйте обновить страницу.");
+    } finally {
+      setStepLoading(false);
+    }
+  }, []);
+
   const loadAvailableDays = useCallback(
     async (masterId: string, serviceId: string, month?: string | null) => {
       const monthParam = normalizeBookingMonthKey(month);
@@ -196,6 +248,37 @@ export function BookingWizard() {
     [],
   );
 
+  const resetBookingProgress = () => {
+    setSelection({
+      service: null,
+      master: null,
+      dateKey: null,
+      startTime: null,
+      name: "",
+      phone: "",
+    });
+    setMasters([]);
+    setMasterServices([]);
+    setMasterFirstView("masters");
+    setAvailableDays([]);
+    setSlots([]);
+    setSelectedCategoryId(null);
+    setError(null);
+  };
+
+  const switchBookingPath = (mode: BookingPathMode) => {
+    if (mode === bookingPath) {
+      return;
+    }
+    setBookingPath(mode);
+    setStep("service");
+    resetBookingProgress();
+    setServiceStepKey((key) => key + 1);
+    if (mode === "by-master") {
+      void loadAllMasters();
+    }
+  };
+
   const selectService = (service: BookingCatalogService) => {
     setSelection({
       service,
@@ -210,6 +293,40 @@ export function BookingWizard() {
     setSlots([]);
     setStep("master");
     void loadMasters(service.id);
+  };
+
+  const selectMasterFirst = (master: BookingCatalogMaster) => {
+    setSelection({
+      service: null,
+      master,
+      dateKey: null,
+      startTime: null,
+      name: "",
+      phone: "",
+    });
+    setMasterServices([]);
+    setAvailableDays([]);
+    setSlots([]);
+    setMasterFirstView("services");
+    void loadMasterServices(master.id);
+  };
+
+  const selectServiceFromMaster = (service: BookingCatalogService) => {
+    const masterId = selection.master?.id;
+    setSelection((prev) => ({
+      ...prev,
+      service,
+      dateKey: null,
+      startTime: null,
+      name: "",
+      phone: "",
+    }));
+    setAvailableDays([]);
+    setSlots([]);
+    setStep("date");
+    if (masterId) {
+      void loadAvailableDays(masterId, service.id, monthKey);
+    }
   };
 
   const selectMaster = (master: BookingCatalogMaster) => {
@@ -319,6 +436,7 @@ export function BookingWizard() {
     }
     const categoryName =
       selectedCategoryName ??
+      selection.service.categoryName ??
       (() => {
         const categoryId = findCategoryIdForService(
           categories,
@@ -450,15 +568,42 @@ export function BookingWizard() {
         }}
       >
         {step === "service" && (
-          <BookingServiceStep
-            key={serviceStepKey}
-            categories={categories}
-            initialView={selectedCategoryId ? "services" : "categories"}
-            initialCategoryId={selectedCategoryId}
-            onCategoryOpen={setSelectedCategoryId}
-            onBackToCategories={() => setSelectedCategoryId(null)}
-            onSelectService={selectService}
-          />
+          <div className="space-y-6">
+            <BookingPathToggle
+              value={bookingPath}
+              onChange={switchBookingPath}
+            />
+            <BookingPromotionGeneralNotice
+              text={BOOKING_PROMOTIONS_GENERAL_NOTICE}
+            />
+            {bookingPath === "by-service" ? (
+              <BookingServiceStep
+                key={serviceStepKey}
+                categories={categories}
+                initialView={selectedCategoryId ? "services" : "categories"}
+                initialCategoryId={selectedCategoryId}
+                onCategoryOpen={setSelectedCategoryId}
+                onBackToCategories={() => setSelectedCategoryId(null)}
+                onSelectService={selectService}
+              />
+            ) : (
+              <BookingMasterFirstStep
+                masters={allMasters}
+                services={masterServices}
+                selectedMaster={selection.master}
+                view={masterFirstView}
+                loading={stepLoading}
+                onSelectMaster={selectMasterFirst}
+                onSelectService={selectServiceFromMaster}
+                onBackToMasters={() => {
+                  setMasterFirstView("masters");
+                  setSelection((prev) => ({ ...prev, service: null }));
+                  setMasterServices([]);
+                }}
+              />
+            )}
+            <BookingConsultationCard />
+          </div>
         )}
 
         {step === "master" && (
@@ -528,7 +673,14 @@ export function BookingWizard() {
               </h2>
               <button
                 type="button"
-                onClick={() => setStep("master")}
+                onClick={() => {
+                  if (bookingPath === "by-master") {
+                    setStep("service");
+                    setMasterFirstView("services");
+                    return;
+                  }
+                  setStep("master");
+                }}
                 className="text-xs text-zinc-500 hover:text-zinc-800"
               >
                 ← Назад
