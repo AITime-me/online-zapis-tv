@@ -87,6 +87,19 @@ export function isValidMonthKey(monthKey: string): boolean {
   return month >= 1 && month <= 12;
 }
 
+/** Текущий месяц студии в формате YYYY-MM (client-safe). */
+export function formatBookingMonthKey(value: Date = new Date()): string {
+  return formatDateKeyInStudio(value).slice(0, 7);
+}
+
+/** Гарантирует YYYY-MM с ведущим нулём или возвращает текущий месяц студии. */
+export function normalizeBookingMonthKey(monthKey?: string | null): string {
+  if (monthKey && isValidMonthKey(monthKey)) {
+    return monthKey;
+  }
+  return formatBookingMonthKey();
+}
+
 export function getDaysInMonthKey(monthKey: string): string[] {
   const year = Number(monthKey.slice(0, 4));
   const month = Number(monthKey.slice(5, 7));

@@ -299,6 +299,28 @@ export async function createAppointment(
   input: AppointmentWriteInput,
   createdByUserId: string,
 ): Promise<AppointmentDto> {
+  return createAppointmentRecord(input, createdByUserId);
+}
+
+export async function createOnlineAppointment(
+  input: Omit<AppointmentWriteInput, "status" | "source"> & {
+    serviceId: string;
+  },
+): Promise<AppointmentDto> {
+  return createAppointmentRecord(
+    {
+      ...input,
+      status: "SCHEDULED",
+      source: "ONLINE",
+    },
+    null,
+  );
+}
+
+async function createAppointmentRecord(
+  input: AppointmentWriteInput,
+  createdByUserId: string | null,
+): Promise<AppointmentDto> {
   await assertNoBlockingConflict(input);
 
   const startsAt = parseStudioDateTime(input.dateKey, input.startTime);

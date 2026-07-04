@@ -26,3 +26,23 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@keyframes booking-confetti-fall {
+  0% {
+    transform: translate3d(0, -8vh, 0) rotate(0deg);
+    opacity: 0;
+  }
+  8% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate3d(var(--drift, 0px), 105vh, 0) rotate(540deg);
+    opacity: 0;
+  }
+}
+
+.booking-confetti-particle {
+  animation-name: booking-confetti-fall;
+  animation-timing-function: ease-in-out;
+  animation-fill-mode: forwards;
+}
