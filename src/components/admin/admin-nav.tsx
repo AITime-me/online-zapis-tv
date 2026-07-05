@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 type AdminNavLinksProps = {
-  current?: "masters" | "services" | "export";
+  current?: "masters" | "services" | "export" | "booking-requests";
 };
 
 const linkClass = "text-[#1a73e8] hover:underline";
@@ -24,6 +24,12 @@ export function AdminNavLinks({ current }: AdminNavLinksProps) {
         className={current === "services" ? activeClass : linkClass}
       >
         Услуги
+      </Link>
+      <Link
+        href="/admin/booking-requests"
+        className={current === "booking-requests" ? activeClass : linkClass}
+      >
+        Заявки
       </Link>
       <Link
         href="/admin/emergency-export"

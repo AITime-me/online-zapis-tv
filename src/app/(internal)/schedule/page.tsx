@@ -4,9 +4,8 @@ import { ROLE_LABELS } from "@/lib/auth/permissions";
 import { LogoutButton } from "@/components/auth/logout-button";
 import { ScheduleDayView } from "@/components/schedule/schedule-day-view";
 import { ScheduleMonthView } from "@/components/schedule/schedule-month-view";
-import { isValidMonthKey } from "@/lib/datetime/date-key";
+import { normalizeMonthKey } from "@/lib/datetime/date-layer";
 import {
-  getStudioCurrentMonthKey,
   getStudioTodayRange,
   isValidDateKey,
 } from "@/lib/datetime/studio";
@@ -81,10 +80,7 @@ export default async function SchedulePage({ searchParams }: SchedulePageProps) 
     );
   }
 
-  const monthKey =
-    params.month && isValidMonthKey(params.month)
-      ? params.month
-      : getStudioCurrentMonthKey();
+  const monthKey = normalizeMonthKey(params.month);
   const monthData = await getScheduleMonthData(monthKey);
 
   return (

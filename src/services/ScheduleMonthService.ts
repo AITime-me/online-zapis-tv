@@ -1,12 +1,17 @@
 import { ManagerNoteType } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { formatDateKeyInStudio } from "@/lib/datetime/date-key";
+import {
+  formatDateKeyInStudio,
+  getStudioNow,
+  normalizeMonthKey,
+} from "@/lib/datetime/date-layer";
 import { getStudioMonthRangeFromMonthKey } from "@/lib/datetime/studio";
 import {
   APPOINTMENT_SOURCE_LABELS,
   APPOINTMENT_STATUS_LABELS,
   getBlockDisplayLabel,
 } from "@/lib/schedule/labels";
+import { compareScheduleMonthCellItems } from "@/lib/schedule/datetime-guards";
 import type {
   ScheduleMonthCellItem,
   ScheduleMonthData,
@@ -66,17 +71,15 @@ function mapExtraWork(
 }
 
 function sortCellItems(items: ScheduleMonthCellItem[]): ScheduleMonthCellItem[] {
-  return [...items].sort(
-    (left, right) =>
-      new Date(left.startsAt).getTime() - new Date(right.startsAt).getTime(),
-  );
+  return [...items].sort(compareScheduleMonthCellItems);
 }
 
 export async function getScheduleMonthData(
   monthKey: string,
 ): Promise<ScheduleMonthData> {
+  const normalizedMonthKey = normalizeMonthKey(monthKey);
   const { days, monthStart, monthEnd } =
-    getStudioMonthRangeFromMonthKey(monthKey);
+    getStudioMonthRangeFromMonthKey(normalizedMonthKey);
 
   const [masters, managerNotes, appointments, scheduleBlocks, extraWorkWindows] =
     await Promise.all([
@@ -214,8 +217,8 @@ export async function getScheduleMonthData(
   });
 
   return {
-    month: monthKey,
-    studioToday: formatDateKeyInStudio(new Date()),
+    month: normalizedMonthKey,
+    studioToday: formatDateKeyInStudio(getStudioNow()),
     masters,
     days: monthDays,
   };

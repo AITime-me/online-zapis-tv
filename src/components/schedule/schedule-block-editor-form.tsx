@@ -3,12 +3,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ScheduleDayBlock } from "@/types/schedule";
 import {
-  BLOCK_TYPE_LABELS,
-  FULL_DAY_BLOCK_LABELS,
   FULL_DAY_BLOCK_TYPES,
   INTERVAL_BLOCK_TYPES,
 } from "@/lib/schedule/labels";
-import { formatStudioTimeInput } from "@/lib/datetime/date-key";
+import {
+  getEditorBlockTypeLabel,
+  getEditorFullDayClosureLabel,
+} from "@/lib/schedule/editor-field-labels";
+import { toScheduleTimeInput } from "@/lib/schedule/editor-options";
+import { EditorField } from "@/components/schedule/editor-field";
 
 type BlockFormState = {
   startTime: string;
@@ -18,8 +21,10 @@ type BlockFormState = {
 
 function toFormState(block: ScheduleDayBlock): BlockFormState {
   return {
-    startTime: block.startsAt ? formatStudioTimeInput(block.startsAt) : "14:00",
-    endTime: block.endsAt ? formatStudioTimeInput(block.endsAt) : "15:00",
+    startTime: block.startsAt
+      ? toScheduleTimeInput(block.startsAt, "14:00")
+      : "14:00",
+    endTime: block.endsAt ? toScheduleTimeInput(block.endsAt, "15:00") : "15:00",
     blockType: block.blockType,
   };
 }
@@ -152,9 +157,9 @@ export function ScheduleBlockEditorForm({
   return (
     <article className="border border-[#e8eaed] bg-[#f1f3f4] p-2 text-xs">
       <div className="grid grid-cols-2 gap-2">
-        <label className="flex flex-col gap-0.5">
-          <span className="text-[10px] text-zinc-500">Начало</span>
+        <EditorField field="startTime" htmlFor={`block-${block.id}-start`}>
           <input
+            id={`block-${block.id}-start`}
             type="time"
             value={form.startTime}
             onChange={(event) => {
@@ -164,10 +169,10 @@ export function ScheduleBlockEditorForm({
             onBlur={() => void save()}
             className="border border-[#dadce0] px-1 py-0.5"
           />
-        </label>
-        <label className="flex flex-col gap-0.5">
-          <span className="text-[10px] text-zinc-500">Окончание</span>
+        </EditorField>
+        <EditorField field="endTime" htmlFor={`block-${block.id}-end`}>
           <input
+            id={`block-${block.id}-end`}
             type="time"
             value={form.endTime}
             onChange={(event) => {
@@ -177,12 +182,16 @@ export function ScheduleBlockEditorForm({
             onBlur={() => void save()}
             className="border border-[#dadce0] px-1 py-0.5"
           />
-        </label>
+        </EditorField>
       </div>
 
-      <label className="mt-2 flex flex-col gap-0.5">
-        <span className="text-[10px] text-zinc-500">Тип блока</span>
+      <EditorField
+        field="blockType"
+        htmlFor={`block-${block.id}-type`}
+        className="mt-2 flex flex-col gap-0.5"
+      >
         <select
+          id={`block-${block.id}-type`}
           value={form.blockType}
           onChange={(event) => {
             setForm((current) => ({ ...current, blockType: event.target.value }));
@@ -193,11 +202,11 @@ export function ScheduleBlockEditorForm({
         >
           {INTERVAL_BLOCK_TYPES.map((type) => (
             <option key={type} value={type}>
-              {BLOCK_TYPE_LABELS[type]}
+              {getEditorBlockTypeLabel(type)}
             </option>
           ))}
         </select>
-      </label>
+      </EditorField>
 
       {error ? <p className="mt-2 text-[10px] text-red-600">{error}</p> : null}
 
@@ -268,9 +277,9 @@ export function NewIntervalBlockForm({
     <div className="border border-[#dadce0] bg-[#f8f9fa] p-2 text-xs">
       <p className="mb-2 font-medium">+ Интервал</p>
       <div className="grid grid-cols-2 gap-2">
-        <label className="flex flex-col gap-0.5">
-          <span className="text-[10px] text-zinc-500">Начало</span>
+        <EditorField field="startTime" htmlFor="new-interval-start">
           <input
+            id="new-interval-start"
             type="time"
             value={form.startTime}
             onChange={(event) =>
@@ -278,10 +287,10 @@ export function NewIntervalBlockForm({
             }
             className="border border-[#dadce0] px-1 py-0.5"
           />
-        </label>
-        <label className="flex flex-col gap-0.5">
-          <span className="text-[10px] text-zinc-500">Окончание</span>
+        </EditorField>
+        <EditorField field="endTime" htmlFor="new-interval-end">
           <input
+            id="new-interval-end"
             type="time"
             value={form.endTime}
             onChange={(event) =>
@@ -289,11 +298,15 @@ export function NewIntervalBlockForm({
             }
             className="border border-[#dadce0] px-1 py-0.5"
           />
-        </label>
+        </EditorField>
       </div>
-      <label className="mt-2 flex flex-col gap-0.5">
-        <span className="text-[10px] text-zinc-500">Тип</span>
+      <EditorField
+        field="blockType"
+        htmlFor="new-interval-type"
+        className="mt-2 flex flex-col gap-0.5"
+      >
         <select
+          id="new-interval-type"
           value={form.blockType}
           onChange={(event) =>
             setForm((current) => ({ ...current, blockType: event.target.value }))
@@ -302,11 +315,11 @@ export function NewIntervalBlockForm({
         >
           {INTERVAL_BLOCK_TYPES.map((type) => (
             <option key={type} value={type}>
-              {BLOCK_TYPE_LABELS[type]}
+              {getEditorBlockTypeLabel(type)}
             </option>
           ))}
         </select>
-      </label>
+      </EditorField>
       {error ? <p className="mt-2 text-[10px] text-red-600">{error}</p> : null}
       <div className="mt-2 flex gap-2">
         <button
@@ -379,20 +392,24 @@ export function FullDayBlockForm({
   return (
     <div className="border border-[#dadce0] bg-[#f8f9fa] p-2 text-xs">
       <p className="mb-2 font-medium">Закрыть день полностью</p>
-      <label className="flex flex-col gap-0.5">
-        <span className="text-[10px] text-zinc-500">Тип закрытия</span>
+      <EditorField
+        field="closureType"
+        htmlFor="new-full-day-type"
+        className="flex flex-col gap-0.5"
+      >
         <select
+          id="new-full-day-type"
           value={blockType}
           onChange={(event) => setBlockType(event.target.value)}
           className="border border-[#dadce0] px-1 py-0.5"
         >
           {FULL_DAY_BLOCK_TYPES.map((type) => (
             <option key={type} value={type}>
-              {FULL_DAY_BLOCK_LABELS[type]}
+              {getEditorFullDayClosureLabel(type)}
             </option>
           ))}
         </select>
-      </label>
+      </EditorField>
       {error ? <p className="mt-2 text-[10px] text-red-600">{error}</p> : null}
       <div className="mt-2 flex gap-2">
         <button

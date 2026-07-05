@@ -14,6 +14,10 @@ import {
 import { env, STUDIO_TIMEZONE } from "@/lib/env";
 import { prisma } from "@/lib/db";
 import {
+  addMinutesSafe,
+  getStudioNow,
+} from "@/lib/datetime/date-layer";
+import {
   formatExportFileTimestamp,
   formatStudioDate,
   formatStudioTime,
@@ -141,7 +145,7 @@ export class EmergencyExportService {
         data: {
           status: EmergencyExportStatus.SUCCESS,
           filePath,
-          completedAt: new Date(),
+          completedAt: getStudioNow(),
         },
       });
 
@@ -170,7 +174,7 @@ export class EmergencyExportService {
         data: {
           status: EmergencyExportStatus.FAILED,
           errorMessage: message,
-          completedAt: new Date(),
+          completedAt: getStudioNow(),
         },
       });
 
@@ -250,7 +254,7 @@ export class EmergencyExportService {
     for (const block of blocks) {
       rows.push({
         sortAt: block.isFullDay
-          ? new Date(noteDate.getTime() + 12 * 60 * 60 * 1000)
+          ? addMinutesSafe(noteDate, 12 * 60) ?? noteDate
           : block.startsAt!,
         values: [
           formatStudioDate(block.isFullDay ? noteDate : block.startsAt!),
@@ -272,7 +276,7 @@ export class EmergencyExportService {
 
     for (const note of managerNotes) {
       rows.push({
-        sortAt: new Date(note.noteDate.getTime() + 23 * 60 * 60 * 1000),
+        sortAt: addMinutesSafe(note.noteDate, 23 * 60) ?? note.noteDate,
         values: [
           formatStudioDate(note.noteDate),
           "Менеджер",

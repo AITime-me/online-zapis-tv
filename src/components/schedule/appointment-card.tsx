@@ -1,4 +1,4 @@
-import { formatStudioTime } from "@/lib/datetime/date-key";
+import { formatStudioTime } from "@/lib/datetime/date-layer";
 import type { ScheduleDayAppointment } from "@/types/schedule";
 
 export function AppointmentCard({
@@ -6,7 +6,7 @@ export function AppointmentCard({
 }: {
   appointment: ScheduleDayAppointment;
 }) {
-  const timeLabel = `${formatStudioTime(new Date(appointment.startsAt))} – ${formatStudioTime(new Date(appointment.endsAt))}`;
+  const timeLabel = `${formatStudioTime(appointment.startsAt)} – ${formatStudioTime(appointment.endsAt)}`;
 
   return (
     <article

@@ -7,6 +7,7 @@ import type {
   ScheduleMonthData,
   ScheduleMonthExtraWork,
 } from "@/types/schedule-month";
+import { compareScheduleMonthCellItems } from "@/lib/schedule/datetime-guards";
 
 export type CellSyncPayload = {
   dateKey: string;
@@ -17,10 +18,7 @@ export type CellSyncPayload = {
 };
 
 function sortCellItems(items: ScheduleMonthCellItem[]): ScheduleMonthCellItem[] {
-  return [...items].sort(
-    (left, right) =>
-      new Date(left.startsAt).getTime() - new Date(right.startsAt).getTime(),
-  );
+  return [...items].sort(compareScheduleMonthCellItems);
 }
 
 export function cellPayloadToMonthItems(

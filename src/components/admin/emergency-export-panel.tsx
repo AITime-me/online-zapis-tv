@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { getStudioNow, normalizeDate } from "@/lib/datetime/date-layer";
 
 type ExportStatus = {
   id: string;
@@ -23,7 +24,7 @@ function formatDateTime(value: string | null | undefined): string {
     timeZone: "Asia/Yekaterinburg",
     dateStyle: "short",
     timeStyle: "short",
-  }).format(new Date(value));
+  }).format(normalizeDate(value) ?? getStudioNow());
 }
 
 export function EmergencyExportPanel({

@@ -1,26 +1,38 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import {
   formatDateKeyLabel,
   formatStudioTimeRange,
-} from "@/lib/datetime/date-key";
+} from "@/lib/datetime/date-layer";
+import {
+  normalizeEditorOptions,
+  type EditorOptions,
+} from "@/lib/schedule/editor-options";
 import type { CellSyncPayload } from "@/lib/schedule/month-data-patch";
 import type { QuickDayEditorData } from "@/types/schedule-month";
 import {
   AppointmentEditorForm,
   NewAppointmentForm,
-  type EditorOptions,
 } from "@/components/schedule/appointment-editor-form";
 import {
   FullDayBlockForm,
   NewIntervalBlockForm,
   ScheduleBlockEditorForm,
 } from "@/components/schedule/schedule-block-editor-form";
+import { EditorCheckboxField, EditorField } from "@/components/schedule/editor-field";
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 
 type ClosureFormMode = "none" | "interval" | "fullDay";
+
+type QuickDayEditorProps = {
+  data: QuickDayEditorData;
+  canEdit: boolean;
+  onClose: () => void;
+  onCellSynced?: (payload: CellSyncPayload) => void;
+  onScheduleChange?: () => void | Promise<void>;
+};
 
 export function QuickDayEditor({
   data: initialData,
@@ -28,13 +40,10 @@ export function QuickDayEditor({
   onClose,
   onCellSynced,
   onScheduleChange,
-}: {
-  data: QuickDayEditorData;
-  canEdit: boolean;
-  onClose: () => void;
-  onCellSynced?: (payload: CellSyncPayload) => void;
-  onScheduleChange?: () => void | Promise<void>;
-}) {
+}: QuickDayEditorProps) {
+  const extraWorkStartId = useId();
+  const extraWorkEndId = useId();
+  const extraWorkOnlineId = useId();
   const [data, setData] = useState(initialData);
   const [options, setOptions] = useState<EditorOptions | null>(null);
   const [showNewAppointment, setShowNewAppointment] = useState(false);
@@ -131,12 +140,14 @@ export function QuickDayEditor({
       );
       const payload = await response.json();
       if (response.ok && payload.ok) {
-        setOptions({
-          master: payload.master,
-          services: payload.services,
-          statuses: payload.statuses,
-          sources: payload.sources,
-        });
+        setOptions(
+          normalizeEditorOptions({
+            master: payload.master,
+            services: payload.services,
+            statuses: payload.statuses,
+            sources: payload.sources,
+          }),
+        );
       }
     })();
   }, [canEdit, data.dateKey, data.masterId]);
@@ -309,9 +320,9 @@ export function QuickDayEditor({
             <div className="mb-3 border border-[#dadce0] bg-[#f8f9fa] p-2 text-xs">
               <p className="mb-2 font-medium">Новое доп. время</p>
               <div className="grid grid-cols-2 gap-2">
-                <label className="flex flex-col gap-0.5">
-                  <span className="text-[10px] text-zinc-500">Начало</span>
+                <EditorField field="startTime" htmlFor={extraWorkStartId}>
                   <input
+                    id={extraWorkStartId}
                     type="time"
                     value={extraForm.startTime}
                     onChange={(event) =>
@@ -322,10 +333,10 @@ export function QuickDayEditor({
                     }
                     className="border border-[#dadce0] px-1 py-0.5"
                   />
-                </label>
-                <label className="flex flex-col gap-0.5">
-                  <span className="text-[10px] text-zinc-500">Окончание</span>
+                </EditorField>
+                <EditorField field="endTime" htmlFor={extraWorkEndId}>
                   <input
+                    id={extraWorkEndId}
                     type="time"
                     value={extraForm.endTime}
                     onChange={(event) =>
@@ -336,10 +347,11 @@ export function QuickDayEditor({
                     }
                     className="border border-[#dadce0] px-1 py-0.5"
                   />
-                </label>
+                </EditorField>
               </div>
-              <label className="mt-2 flex items-center gap-2 text-[10px]">
+              <EditorCheckboxField field="onlineBooking" htmlFor={extraWorkOnlineId}>
                 <input
+                  id={extraWorkOnlineId}
                   type="checkbox"
                   checked={extraForm.isOnlineBookingEnabled}
                   onChange={(event) =>
@@ -349,8 +361,7 @@ export function QuickDayEditor({
                     }))
                   }
                 />
-                Доступно онлайн
-              </label>
+              </EditorCheckboxField>
               {extraError ? (
                 <p className="mt-2 text-[10px] text-red-600">{extraError}</p>
               ) : null}

@@ -4,7 +4,7 @@ import {
   formatDateKeyInStudio,
   formatStudioTimeInput,
   parseStudioDateTime,
-} from "@/lib/datetime/date-key";
+} from "@/lib/datetime/date-layer";
 import { getStudioDayRangeFromDateKey } from "@/lib/datetime/studio";
 import {
   FULL_DAY_BLOCK_TYPES,

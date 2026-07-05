@@ -1,4 +1,8 @@
-import { parseStudioDateTime } from "@/lib/datetime/date-key";
+import {
+  addMinutesSafe,
+  getStudioNow,
+  parseStudioDateTime,
+} from "@/lib/datetime/date-layer";
 import { bookingStudio } from "@/components/booking/booking-config";
 
 export type BookingCalendarEvent = {
@@ -37,8 +41,8 @@ function escapeIcsText(value: string): string {
 
 export function buildBookingIcsContent(event: BookingCalendarEvent): string {
   const startsAt = parseStudioDateTime(event.dateKey, event.startTime);
-  const endsAt = new Date(startsAt.getTime() + event.durationMinutes * 60_000);
-  const now = new Date();
+  const endsAt = addMinutesSafe(startsAt, event.durationMinutes) ?? startsAt;
+  const now = getStudioNow();
   const uid = `${event.dateKey}-${event.startTime.replace(":", "")}-${Math.random().toString(36).slice(2, 10)}@tvoe-vremya`;
 
   const lines = [

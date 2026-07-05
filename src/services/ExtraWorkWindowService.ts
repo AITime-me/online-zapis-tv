@@ -2,7 +2,7 @@ import { prisma } from "@/lib/db";
 import {
   formatDateKeyInStudio,
   parseStudioDateTime,
-} from "@/lib/datetime/date-key";
+} from "@/lib/datetime/date-layer";
 import { getStudioDayRangeFromDateKey } from "@/lib/datetime/studio";
 import { getBlockDisplayLabel } from "@/lib/schedule/labels";
 import { blocksForDayWhere } from "@/services/ScheduleBlockService";

@@ -1,12 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { BookingBackButton } from "@/components/booking/booking-back-button";
 import { bookingTheme } from "@/components/booking/booking-theme";
 import {
   BookingPromotionBadge,
   BookingPromotionCardNote,
 } from "@/components/booking/booking-promotion-ui";
-import { getServiceCardPromotions } from "@/lib/booking/promotions";
+import { EMPTY_PROMOTION, getServiceCardPromotion } from "@/lib/booking/promotions";
 import type {
   BookingCatalogCategory,
   BookingCatalogService,
@@ -21,6 +22,7 @@ type BookingServiceStepProps = {
   onCategoryOpen?: (categoryId: string) => void;
   onBackToCategories?: () => void;
   onSelectService: (service: BookingCatalogService) => void;
+  onManagerOnlyService: (service: BookingCatalogService) => void;
 };
 
 function formatDuration(minutes: number): string {
@@ -76,6 +78,7 @@ export function BookingServiceStep({
   onCategoryOpen,
   onBackToCategories,
   onSelectService,
+  onManagerOnlyService,
 }: BookingServiceStepProps) {
   const [view, setView] = useState<ServiceView>(initialView);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(
@@ -187,28 +190,9 @@ export function BookingServiceStep({
 
   return (
     <div className="space-y-5">
-      <button
-        type="button"
-        onClick={backToCategories}
-        className="inline-flex min-h-12 items-center gap-1.5 text-base font-medium transition hover:opacity-80"
-        style={{ color: bookingTheme.greenMuted }}
-      >
-        <svg
-          aria-hidden
-          className="h-5 w-5"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={1.5}
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M15 19l-7-7 7-7"
-          />
-        </svg>
+      <BookingBackButton onClick={backToCategories}>
         Назад к категориям
-      </button>
+      </BookingBackButton>
 
       <header className="space-y-1">
         <p
@@ -249,12 +233,71 @@ export function BookingServiceStep({
       ) : (
         <ul className="space-y-4">
           {filteredServices.map((service) => {
-            const promotions = getServiceCardPromotions({
-              serviceId: service.id,
-              categoryName: selectedCategory?.name,
-            });
-            const primaryPromotion = promotions[0];
-            const hasPromotion = Boolean(primaryPromotion);
+            const isManagerOnly = service.bookingMode === "MANAGER_ONLY";
+            const promo = isManagerOnly
+              ? EMPTY_PROMOTION
+              : getServiceCardPromotion({
+                  serviceId: service.id,
+                  categoryName: selectedCategory?.name,
+                });
+            const hasPromotion = promo.isActive;
+
+            if (isManagerOnly) {
+              return (
+                <li
+                  key={service.id}
+                  className="rounded-2xl border p-5"
+                  style={{
+                    borderColor: bookingTheme.border,
+                    backgroundColor: bookingTheme.surface,
+                    opacity: 0.92,
+                  }}
+                >
+                  <div className="space-y-3">
+                    <div>
+                      <h3
+                        className="text-lg font-semibold leading-snug md:text-xl"
+                        style={{ color: bookingTheme.greenMuted }}
+                      >
+                        {service.publicName}
+                      </h3>
+                      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-base">
+                        {service.priceLabel && (
+                          <span className="text-[#9ca3af]">
+                            {service.priceLabel}
+                          </span>
+                        )}
+                        <span
+                          className="text-sm font-medium"
+                          style={{ color: bookingTheme.goldMuted }}
+                        >
+                          {formatDuration(service.durationMinutes)}
+                        </span>
+                      </div>
+                      <p
+                        className="mt-3 text-sm font-medium"
+                        style={{ color: bookingTheme.goldMuted }}
+                      >
+                        Запись через менеджера студии
+                      </p>
+                      {service.clientDescription && (
+                        <p className="mt-3 text-base leading-relaxed text-[#6b7280]">
+                          {service.clientDescription}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onManagerOnlyService(service)}
+                      className="min-h-12 w-full rounded-xl px-5 py-3 text-base font-medium text-white transition hover:opacity-95 active:scale-[0.99] sm:w-auto sm:min-w-[180px]"
+                      style={{ backgroundColor: bookingTheme.green }}
+                    >
+                      Оставить заявку
+                    </button>
+                  </div>
+                </li>
+              );
+            }
 
             return (
             <li
@@ -271,9 +314,9 @@ export function BookingServiceStep({
             >
               <div className="space-y-3">
                 <div>
-                  {primaryPromotion && (
+                  {promo.isActive && (
                     <div className="mb-3">
-                      <BookingPromotionBadge text={primaryPromotion.badgeText} />
+                      <BookingPromotionBadge text={promo.badgeText} />
                     </div>
                   )}
                   <h3
@@ -293,8 +336,8 @@ export function BookingServiceStep({
                       {formatDuration(service.durationMinutes)}
                     </span>
                   </div>
-                  {primaryPromotion?.cardShortText && (
-                    <BookingPromotionCardNote text={primaryPromotion.cardShortText} />
+                  {promo.note && (
+                    <BookingPromotionCardNote text={promo.note} />
                   )}
                   {service.clientDescription && (
                     <p className="mt-3 text-base leading-relaxed text-[#6b7280]">

@@ -1,4 +1,4 @@
-import { getWeekdayIndex } from "@/lib/datetime/date-key";
+import { getWeekdayIndex } from "@/lib/datetime/date-layer";
 
 export const DEFAULT_WEEKDAY_WORK_START = "09:00";
 export const DEFAULT_WEEKDAY_WORK_END = "20:00";

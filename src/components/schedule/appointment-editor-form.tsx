@@ -3,18 +3,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ScheduleDayAppointment } from "@/types/schedule";
 import {
+  addMinutesSafe,
   diffMinutes,
-  formatStudioTimeInput,
   parseStudioDateTime,
-} from "@/lib/datetime/date-key";
+} from "@/lib/datetime/date-layer";
+import {
+  toScheduleTimeInput,
+  type EditorOptions,
+} from "@/lib/schedule/editor-options";
+import type { ScheduleEditorFieldKey } from "@/lib/schedule/editor-field-labels";
 import type { EditorServiceOption } from "@/services/ScheduleEditorOptionsService";
+import { EditorCheckboxField, EditorField } from "@/components/schedule/editor-field";
 
-export type EditorOptions = {
-  master: { workStart: string; workEnd: string };
-  services: EditorServiceOption[];
-  statuses: { value: string; label: string }[];
-  sources: { value: string; label: string }[];
-};
+export type { EditorOptions };
 
 type AppointmentFormState = {
   startTime: string;
@@ -41,8 +42,8 @@ function formatEditorServicePrice(service: EditorServiceOption): string | null {
 
 function toFormState(appointment: ScheduleDayAppointment): AppointmentFormState {
   return {
-    startTime: formatStudioTimeInput(appointment.startsAt),
-    endTime: formatStudioTimeInput(appointment.endsAt),
+    startTime: toScheduleTimeInput(appointment.startsAt, "09:00"),
+    endTime: toScheduleTimeInput(appointment.endsAt, "10:00"),
     serviceId: appointment.serviceId ?? "",
     clientName: appointment.clientName,
     clientPhone: appointment.clientPhone,
@@ -56,8 +57,8 @@ function toFormState(appointment: ScheduleDayAppointment): AppointmentFormState 
 
 function addMinutesToTime(dateKey: string, time: string, minutes: number): string {
   const base = parseStudioDateTime(dateKey, time);
-  const result = new Date(base.getTime() + minutes * 60_000);
-  return formatStudioTimeInput(result);
+  const result = addMinutesSafe(base, minutes);
+  return toScheduleTimeInput(result, time);
 }
 
 function buildServiceOptions(
@@ -75,8 +76,8 @@ function buildServiceOptions(
 
   const durationMinutes = Math.max(
     diffMinutes(
-      parseStudioDateTime(dateKey, formatStudioTimeInput(appointment.startsAt)),
-      parseStudioDateTime(dateKey, formatStudioTimeInput(appointment.endsAt)),
+      parseStudioDateTime(dateKey, toScheduleTimeInput(appointment.startsAt, "09:00")),
+      parseStudioDateTime(dateKey, toScheduleTimeInput(appointment.endsAt, "10:00")),
     ),
     1,
   );
@@ -148,6 +149,9 @@ export function AppointmentEditorForm({
     () => buildServiceOptions(options.services, appointment, dateKey),
     [appointment, dateKey, options.services],
   );
+
+  const fieldId = (name: ScheduleEditorFieldKey) =>
+    `appointment-${appointment.id}-${name}`;
 
   useEffect(() => {
     setForm(toFormState(appointment));
@@ -326,26 +330,26 @@ export function AppointmentEditorForm({
   return (
     <article className="border border-[#e8eaed] p-2 text-xs">
       <div className="grid grid-cols-2 gap-2">
-        <label className="flex flex-col gap-0.5">
-          <span className="text-[10px] text-zinc-500">Начало</span>
+        <EditorField field="startTime" htmlFor={fieldId("startTime")}>
           <input
+            id={fieldId("startTime")}
             type="time"
             value={form.startTime}
             onChange={(event) => updateField("startTime", event.target.value)}
             onBlur={handleBlur}
             className="border border-[#dadce0] px-1 py-0.5"
           />
-        </label>
-        <label className="flex flex-col gap-0.5">
-          <span className="text-[10px] text-zinc-500">Окончание</span>
+        </EditorField>
+        <EditorField field="endTime" htmlFor={fieldId("endTime")}>
           <input
+            id={fieldId("endTime")}
             type="time"
             value={form.endTime}
             onChange={(event) => updateField("endTime", event.target.value)}
             onBlur={handleBlur}
             className="border border-[#dadce0] px-1 py-0.5"
           />
-        </label>
+        </EditorField>
       </div>
 
       {shorterThanStandard ? (
@@ -354,9 +358,13 @@ export function AppointmentEditorForm({
         </p>
       ) : null}
 
-      <label className="mt-2 flex flex-col gap-0.5">
-        <span className="text-[10px] text-zinc-500">Услуга</span>
+      <EditorField
+        field="service"
+        htmlFor={fieldId("service")}
+        className="mt-2 flex flex-col gap-0.5"
+      >
         <select
+          id={fieldId("service")}
           value={form.serviceId}
           onChange={(event) => updateField("serviceId", event.target.value)}
           onBlur={handleBlur}
@@ -374,32 +382,40 @@ export function AppointmentEditorForm({
           ))}
         </select>
         <ServiceMeta service={selectedService} />
-      </label>
+      </EditorField>
 
-      <label className="mt-2 flex flex-col gap-0.5">
-        <span className="text-[10px] text-zinc-500">Клиент</span>
+      <EditorField
+        field="clientName"
+        htmlFor={fieldId("clientName")}
+        className="mt-2 flex flex-col gap-0.5"
+      >
         <input
+          id={fieldId("clientName")}
           value={form.clientName}
           onChange={(event) => updateField("clientName", event.target.value)}
           onBlur={handleBlur}
           className="border border-[#dadce0] px-1 py-0.5"
         />
-      </label>
+      </EditorField>
 
-      <label className="mt-2 flex flex-col gap-0.5">
-        <span className="text-[10px] text-zinc-500">Телефон</span>
+      <EditorField
+        field="clientPhone"
+        htmlFor={fieldId("clientPhone")}
+        className="mt-2 flex flex-col gap-0.5"
+      >
         <input
+          id={fieldId("clientPhone")}
           value={form.clientPhone}
           onChange={(event) => updateField("clientPhone", event.target.value)}
           onBlur={handleBlur}
           className="border border-[#dadce0] px-1 py-0.5"
         />
-      </label>
+      </EditorField>
 
       <div className="mt-2 grid grid-cols-2 gap-2">
-        <label className="flex flex-col gap-0.5">
-          <span className="text-[10px] text-zinc-500">Статус</span>
+        <EditorField field="status" htmlFor={fieldId("status")}>
           <select
+            id={fieldId("status")}
             value={form.status}
             onChange={(event) => updateField("status", event.target.value)}
             onBlur={handleBlur}
@@ -411,10 +427,10 @@ export function AppointmentEditorForm({
               </option>
             ))}
           </select>
-        </label>
-        <label className="flex flex-col gap-0.5">
-          <span className="text-[10px] text-zinc-500">Источник</span>
+        </EditorField>
+        <EditorField field="source" htmlFor={fieldId("source")}>
           <select
+            id={fieldId("source")}
             value={form.source}
             onChange={(event) => updateField("source", event.target.value)}
             onBlur={handleBlur}
@@ -426,38 +442,46 @@ export function AppointmentEditorForm({
               </option>
             ))}
           </select>
-        </label>
+        </EditorField>
       </div>
 
-      <label className="mt-2 flex flex-col gap-0.5">
-        <span className="text-[10px] text-zinc-500">Комментарий</span>
+      <EditorField
+        field="comment"
+        htmlFor={fieldId("comment")}
+        className="mt-2 flex flex-col gap-0.5"
+      >
         <textarea
+          id={fieldId("comment")}
           value={form.comment}
           onChange={(event) => updateField("comment", event.target.value)}
           onBlur={handleBlur}
           rows={2}
           className="border border-[#dadce0] px-1 py-0.5"
         />
-      </label>
+      </EditorField>
 
-      <label className="mt-2 flex flex-col gap-0.5">
-        <span className="text-[10px] text-zinc-500">Важная пометка</span>
+      <EditorField
+        field="importantNote"
+        htmlFor={fieldId("importantNote")}
+        className="mt-2 flex flex-col gap-0.5"
+      >
         <input
+          id={fieldId("importantNote")}
           value={form.importantNote}
           onChange={(event) => updateField("importantNote", event.target.value)}
           onBlur={handleBlur}
           className="border border-[#dadce0] px-1 py-0.5"
         />
-      </label>
+      </EditorField>
 
-      <label className="mt-2 flex items-center gap-2 text-[10px]">
+      <EditorCheckboxField field="isBold" htmlFor={fieldId("isBold")}>
         <input
+          id={fieldId("isBold")}
           type="checkbox"
           checked={form.isBold}
           onChange={(event) => updateField("isBold", event.target.checked)}
         />
-        Жирное выделение
-      </label>
+      </EditorCheckboxField>
 
       {error ? <p className="mt-2 text-[10px] text-red-600">{error}</p> : null}
 
@@ -513,6 +537,8 @@ export function NewAppointmentForm({
   const shorterThanStandard =
     selectedService != null && actualMinutes < selectedService.durationMinutes;
 
+  const fieldId = (name: ScheduleEditorFieldKey) => `new-appointment-${name}`;
+
   const handleCreate = async () => {
     onSaveStatus("saving");
     setError(null);
@@ -554,9 +580,9 @@ export function NewAppointmentForm({
     <div className="border border-[#dadce0] bg-[#f8f9fa] p-2 text-xs">
       <p className="mb-2 font-medium">Новая запись</p>
       <div className="grid grid-cols-2 gap-2">
-        <label className="flex flex-col gap-0.5">
-          <span className="text-[10px] text-zinc-500">Начало</span>
+        <EditorField field="startTime" htmlFor={fieldId("startTime")}>
           <input
+            id={fieldId("startTime")}
             type="time"
             value={form.startTime}
             onChange={(event) => {
@@ -576,10 +602,10 @@ export function NewAppointmentForm({
             }}
             className="border border-[#dadce0] px-1 py-0.5"
           />
-        </label>
-        <label className="flex flex-col gap-0.5">
-          <span className="text-[10px] text-zinc-500">Окончание</span>
+        </EditorField>
+        <EditorField field="endTime" htmlFor={fieldId("endTime")}>
           <input
+            id={fieldId("endTime")}
             type="time"
             value={form.endTime}
             onChange={(event) =>
@@ -587,7 +613,7 @@ export function NewAppointmentForm({
             }
             className="border border-[#dadce0] px-1 py-0.5"
           />
-        </label>
+        </EditorField>
       </div>
 
       {shorterThanStandard ? (
@@ -596,9 +622,13 @@ export function NewAppointmentForm({
         </p>
       ) : null}
 
-      <label className="mt-2 flex flex-col gap-0.5">
-        <span className="text-[10px] text-zinc-500">Услуга</span>
+      <EditorField
+        field="service"
+        htmlFor={fieldId("service")}
+        className="mt-2 flex flex-col gap-0.5"
+      >
         <select
+          id={fieldId("service")}
           value={form.serviceId}
           onChange={(event) => {
             const serviceId = event.target.value;
@@ -625,34 +655,42 @@ export function NewAppointmentForm({
           ))}
         </select>
         <ServiceMeta service={selectedService} />
-      </label>
+      </EditorField>
 
-      <label className="mt-2 flex flex-col gap-0.5">
-        <span className="text-[10px] text-zinc-500">Клиент</span>
+      <EditorField
+        field="clientName"
+        htmlFor={fieldId("clientName")}
+        className="mt-2 flex flex-col gap-0.5"
+      >
         <input
+          id={fieldId("clientName")}
           value={form.clientName}
           onChange={(event) =>
             setForm((current) => ({ ...current, clientName: event.target.value }))
           }
           className="border border-[#dadce0] px-1 py-0.5"
         />
-      </label>
+      </EditorField>
 
-      <label className="mt-2 flex flex-col gap-0.5">
-        <span className="text-[10px] text-zinc-500">Телефон</span>
+      <EditorField
+        field="clientPhone"
+        htmlFor={fieldId("clientPhone")}
+        className="mt-2 flex flex-col gap-0.5"
+      >
         <input
+          id={fieldId("clientPhone")}
           value={form.clientPhone}
           onChange={(event) =>
             setForm((current) => ({ ...current, clientPhone: event.target.value }))
           }
           className="border border-[#dadce0] px-1 py-0.5"
         />
-      </label>
+      </EditorField>
 
       <div className="mt-2 grid grid-cols-2 gap-2">
-        <label className="flex flex-col gap-0.5">
-          <span className="text-[10px] text-zinc-500">Статус</span>
+        <EditorField field="status" htmlFor={fieldId("status")}>
           <select
+            id={fieldId("status")}
             value={form.status}
             onChange={(event) =>
               setForm((current) => ({ ...current, status: event.target.value }))
@@ -665,10 +703,10 @@ export function NewAppointmentForm({
               </option>
             ))}
           </select>
-        </label>
-        <label className="flex flex-col gap-0.5">
-          <span className="text-[10px] text-zinc-500">Источник</span>
+        </EditorField>
+        <EditorField field="source" htmlFor={fieldId("source")}>
           <select
+            id={fieldId("source")}
             value={form.source}
             onChange={(event) =>
               setForm((current) => ({ ...current, source: event.target.value }))
@@ -681,12 +719,16 @@ export function NewAppointmentForm({
               </option>
             ))}
           </select>
-        </label>
+        </EditorField>
       </div>
 
-      <label className="mt-2 flex flex-col gap-0.5">
-        <span className="text-[10px] text-zinc-500">Комментарий</span>
+      <EditorField
+        field="comment"
+        htmlFor={fieldId("comment")}
+        className="mt-2 flex flex-col gap-0.5"
+      >
         <textarea
+          id={fieldId("comment")}
           value={form.comment}
           onChange={(event) =>
             setForm((current) => ({ ...current, comment: event.target.value }))
@@ -694,11 +736,15 @@ export function NewAppointmentForm({
           rows={2}
           className="border border-[#dadce0] px-1 py-0.5"
         />
-      </label>
+      </EditorField>
 
-      <label className="mt-2 flex flex-col gap-0.5">
-        <span className="text-[10px] text-zinc-500">Важная пометка</span>
+      <EditorField
+        field="importantNote"
+        htmlFor={fieldId("importantNote")}
+        className="mt-2 flex flex-col gap-0.5"
+      >
         <input
+          id={fieldId("importantNote")}
           value={form.importantNote}
           onChange={(event) =>
             setForm((current) => ({
@@ -708,18 +754,18 @@ export function NewAppointmentForm({
           }
           className="border border-[#dadce0] px-1 py-0.5"
         />
-      </label>
+      </EditorField>
 
-      <label className="mt-2 flex items-center gap-2 text-[10px]">
+      <EditorCheckboxField field="isBold" htmlFor={fieldId("isBold")}>
         <input
+          id={fieldId("isBold")}
           type="checkbox"
           checked={form.isBold}
           onChange={(event) =>
             setForm((current) => ({ ...current, isBold: event.target.checked }))
           }
         />
-        Жирное выделение
-      </label>
+      </EditorCheckboxField>
 
       {error ? <p className="mt-2 text-[10px] text-red-600">{error}</p> : null}
 

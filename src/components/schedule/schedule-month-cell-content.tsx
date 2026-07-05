@@ -1,5 +1,5 @@
 import type { ScheduleMonthCellItem } from "@/types/schedule-month";
-import { formatStudioTimeRange } from "@/lib/datetime/date-key";
+import { formatStudioTimeRange } from "@/lib/datetime/date-layer";
 
 export function formatMonthCellLine(item: ScheduleMonthCellItem): {
   text: string;
@@ -23,7 +23,7 @@ export function formatMonthCellLine(item: ScheduleMonthCellItem): {
   }
 
   if (item.kind === "block") {
-    if (item.isFullDay) {
+    if (item.isFullDay || !item.startsAt || !item.endsAt) {
       return {
         text: item.blockTypeLabel,
         isBold: true,
@@ -46,7 +46,10 @@ export function formatMonthCellLine(item: ScheduleMonthCellItem): {
     };
   }
 
-  const time = formatStudioTimeRange(item.startsAt, item.endsAt);
+  const time =
+    item.startsAt && item.endsAt
+      ? formatStudioTimeRange(item.startsAt, item.endsAt)
+      : "—";
   return {
     text: `+ ${time}`,
     isBold: false,

@@ -283,6 +283,11 @@ export function MasterForm({
         </label>
       </div>
 
+      <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">
+        Если «Онлайн-запись» выключена, мастер будет виден клиенту, но запись
+        будет доступна только через менеджера.
+      </p>
+
       {error ? <p className="mt-3 text-xs text-red-600">{error}</p> : null}
 
       <div className="mt-4 flex gap-2">

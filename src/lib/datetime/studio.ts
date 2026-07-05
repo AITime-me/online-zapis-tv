@@ -2,11 +2,14 @@ import { STUDIO_TIMEZONE as ENV_STUDIO_TIMEZONE } from "@/lib/env";
 import {
   addDaysToDateKey,
   formatDateKeyInStudio,
+  formatStudioDateKey,
   getDaysInMonthKey,
+  getStudioNow,
   isValidDateKey,
-} from "@/lib/datetime/date-key";
-
-const STUDIO_OFFSET = "+05:00";
+  normalizeMonthKey,
+  parseStudioDateKey,
+  parseStudioDateKeyEndOfDay,
+} from "@/lib/datetime/date-layer";
 
 export type StudioDayRange = {
   dayStart: Date;
@@ -24,10 +27,10 @@ export function getStudioDayRangeFromDateKey(
   }
 
   return {
-    dayStart: new Date(`${dateKey}T00:00:00${STUDIO_OFFSET}`),
-    dayEnd: new Date(`${dateKey}T23:59:59.999${STUDIO_OFFSET}`),
+    dayStart: parseStudioDateKey(dateKey, "00:00") ?? getStudioNow(),
+    dayEnd: parseStudioDateKeyEndOfDay(dateKey) ?? getStudioNow(),
     dateKey,
-    noteDate: new Date(`${dateKey}T12:00:00${STUDIO_OFFSET}`),
+    noteDate: parseStudioDateKey(dateKey, "12:00") ?? getStudioNow(),
   };
 }
 
@@ -41,7 +44,7 @@ export function getStudioTodayRange(
     day: "2-digit",
   });
 
-  const parts = formatter.formatToParts(new Date());
+  const parts = formatter.formatToParts(getStudioNow());
   const year = parts.find((part) => part.type === "year")!.value;
   const month = parts.find((part) => part.type === "month")!.value;
   const day = parts.find((part) => part.type === "day")!.value;
@@ -74,7 +77,7 @@ export function formatStudioTime(
 }
 
 export function formatExportFileTimestamp(
-  value: Date = new Date(),
+  value: Date = getStudioNow(),
   timezone: string = ENV_STUDIO_TIMEZONE,
 ): string {
   const formatter = new Intl.DateTimeFormat("en-GB", {
@@ -106,14 +109,17 @@ export function getStudioMonthRangeFromMonthKey(
   monthKey: string,
   timezone: string = ENV_STUDIO_TIMEZONE,
 ) {
-  const days = getDaysInMonthKey(monthKey);
+  const normalizedMonthKey = normalizeMonthKey(monthKey);
+  const days = getDaysInMonthKey(normalizedMonthKey);
   const firstDay = days[0]!;
   const lastDay = days[days.length - 1]!;
 
   return {
-    monthKey,
+    monthKey: normalizedMonthKey,
     days,
     monthStart: getStudioDayRangeFromDateKey(firstDay, timezone).dayStart,
     monthEnd: getStudioDayRangeFromDateKey(lastDay, timezone).dayEnd,
   };
 }
+
+export { formatStudioDateKey };

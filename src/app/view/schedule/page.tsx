@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import { isValidScheduleViewToken } from "@/lib/auth/view-schedule-token";
-import { isValidMonthKey } from "@/lib/datetime/date-key";
-import { getStudioCurrentMonthKey } from "@/lib/datetime/studio";
+import { normalizeMonthKey } from "@/lib/datetime/date-layer";
 import { ScheduleReadonlyMonthView } from "@/components/schedule/schedule-readonly-month-view";
 import { getScheduleMonthData } from "@/services/ScheduleMonthService";
 
@@ -18,10 +17,7 @@ export default async function ViewSchedulePage({
     notFound();
   }
 
-  const monthKey =
-    params.month && isValidMonthKey(params.month)
-      ? params.month
-      : getStudioCurrentMonthKey();
+  const monthKey = normalizeMonthKey(params.month);
   const monthData = await getScheduleMonthData(monthKey);
 
   return (

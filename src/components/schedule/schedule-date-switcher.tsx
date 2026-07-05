@@ -4,7 +4,7 @@ import Link from "next/link";
 import {
   addDaysToDateKey,
   formatDateKeyLabel,
-} from "@/lib/datetime/date-key";
+} from "@/lib/datetime/date-layer";
 
 export function ScheduleDateSwitcher({
   currentDate,

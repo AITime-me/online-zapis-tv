@@ -1,7 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { addMonthsToMonthKey, formatMonthTitle } from "@/lib/datetime/date-key";
+import {
+  addMonthsToMonthKey,
+  formatMonthTitle,
+  normalizeMonthKey,
+} from "@/lib/datetime/date-layer";
 
 export function ScheduleViewSwitcher({
   view,
@@ -12,8 +16,10 @@ export function ScheduleViewSwitcher({
   month: string;
   date?: string;
 }) {
-  const prevMonth = addMonthsToMonthKey(month, -1);
-  const nextMonth = addMonthsToMonthKey(month, 1);
+  const safeMonth = normalizeMonthKey(month);
+  const prevMonth = addMonthsToMonthKey(safeMonth, -1);
+  const nextMonth = addMonthsToMonthKey(safeMonth, 1);
+  const safeDate = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : `${safeMonth}-01`;
 
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -26,7 +32,7 @@ export function ScheduleViewSwitcher({
           ‹
         </Link>
         <span className="min-w-[120px] text-center text-xs font-medium text-zinc-900">
-          {formatMonthTitle(month)}
+          {formatMonthTitle(safeMonth)}
         </span>
         <Link
           href={`/schedule?view=month&month=${nextMonth}`}
@@ -39,7 +45,7 @@ export function ScheduleViewSwitcher({
 
       <div className="flex gap-0.5">
         <Link
-          href={`/schedule?view=month&month=${month}`}
+          href={`/schedule?view=month&month=${safeMonth}`}
           className={`px-2 py-0.5 text-xs ${
             view === "month"
               ? "bg-[#1a73e8] font-medium text-white"
@@ -49,7 +55,7 @@ export function ScheduleViewSwitcher({
           Месяц
         </Link>
         <Link
-          href={`/schedule?view=day&date=${date ?? month + "-01"}`}
+          href={`/schedule?view=day&date=${safeDate}`}
           className={`px-2 py-0.5 text-xs ${
             view === "day"
               ? "bg-[#1a73e8] font-medium text-white"

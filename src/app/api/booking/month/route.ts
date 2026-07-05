@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { isValidMonthKey } from "@/lib/datetime/date-key";
-import { getStudioCurrentMonthKey } from "@/lib/datetime/studio";
+import { normalizeMonthKey } from "@/lib/datetime/date-layer";
 import { getScheduleMonthData } from "@/services/ScheduleMonthService";
 
 export const dynamic = "force-dynamic";
@@ -8,14 +7,7 @@ export const revalidate = 0;
 
 export async function GET(request: Request) {
   const monthParam = new URL(request.url).searchParams.get("month");
-  const monthKey = monthParam ?? getStudioCurrentMonthKey();
-
-  if (!isValidMonthKey(monthKey)) {
-    return NextResponse.json(
-      { ok: false, error: "Invalid month format. Use YYYY-MM." },
-      { status: 400 },
-    );
-  }
+  const monthKey = normalizeMonthKey(monthParam);
 
   const data = await getScheduleMonthData(monthKey);
   return NextResponse.json({ ok: true, ...data });

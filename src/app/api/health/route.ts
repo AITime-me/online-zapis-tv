@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { toIsoString } from "@/lib/datetime/date-layer";
 import { STUDIO_TIMEZONE } from "@/lib/env";
 
 export async function GET() {
@@ -10,7 +11,7 @@ export async function GET() {
       ok: true,
       database: "connected",
       timezone: STUDIO_TIMEZONE,
-      timestamp: new Date().toISOString(),
+      timestamp: toIsoString(),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Database connection failed";
@@ -20,7 +21,7 @@ export async function GET() {
         ok: false,
         database: "disconnected",
         error: message,
-        timestamp: new Date().toISOString(),
+        timestamp: toIsoString(),
       },
       { status: 503 },
     );

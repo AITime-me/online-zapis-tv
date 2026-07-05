@@ -1,11 +1,12 @@
-import { formatStudioTimeRange } from "@/lib/datetime/date-key";
+import { formatStudioTimeRange } from "@/lib/datetime/date-layer";
+import { compareScheduleTimestamps } from "@/lib/schedule/datetime-guards";
 import type { ScheduleDayMaster } from "@/types/schedule";
 import { AppointmentCard } from "@/components/schedule/appointment-card";
 import { ScheduleBlockCard } from "@/components/schedule/schedule-block-card";
 
 type MasterColumnItem =
   | { kind: "appointment"; sortAt: string; appointment: ScheduleDayMaster["appointments"][number] }
-  | { kind: "block"; sortAt: string; block: ScheduleDayMaster["scheduleBlocks"][number] }
+  | { kind: "block"; sortAt: string; block: ScheduleDayMaster["scheduleBlocks"][number]; isFullDay: boolean }
   | { kind: "extraWork"; sortAt: string; extraWork: NonNullable<ScheduleDayMaster["extraWorkWindows"]>[number] };
 
 export function MasterColumn({
@@ -30,10 +31,15 @@ export function MasterColumn({
       kind: "block" as const,
       sortAt: block.startsAt,
       block,
+      isFullDay: block.isFullDay,
     })),
-  ].sort(
-    (left, right) =>
-      new Date(left.sortAt).getTime() - new Date(right.sortAt).getTime(),
+  ].sort((left, right) =>
+    compareScheduleTimestamps(
+      left.sortAt,
+      right.sortAt,
+      left.kind === "block" ? { fullDay: left.isFullDay } : undefined,
+      right.kind === "block" ? { fullDay: right.isFullDay } : undefined,
+    ),
   );
 
   return (

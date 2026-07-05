@@ -1,4 +1,9 @@
 import type { AppointmentStatus } from "@prisma/client";
+import {
+  addMinutesSafe,
+  getStudioNow,
+  parseStudioDateKey,
+} from "@/lib/datetime/date-layer";
 
 export type TimeInterval = {
   startsAt: Date;
@@ -36,7 +41,7 @@ export function toBusyInterval(interval: BusyInterval): TimeInterval {
 
   return {
     startsAt: interval.startsAt,
-    endsAt: new Date(interval.endsAt.getTime() + breakMinutes * 60_000),
+    endsAt: addMinutesSafe(interval.endsAt, breakMinutes) ?? interval.endsAt,
   };
 }
 
@@ -45,7 +50,7 @@ function intervalsOverlap(left: TimeInterval, right: TimeInterval): boolean {
 }
 
 function parseWorkTimeOnDate(dateKey: string, time: string): Date {
-  return new Date(`${dateKey}T${time}:00+05:00`);
+  return parseStudioDateKey(dateKey, time) ?? getStudioNow();
 }
 
 export function checkMasterIntervalAvailability(

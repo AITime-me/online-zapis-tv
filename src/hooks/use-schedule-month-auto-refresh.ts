@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { countMonthAppointments } from "@/lib/schedule/month-data-patch";
+import { normalizeMonthKey, toIsoString } from "@/lib/datetime/date-layer";
 import type { ScheduleMonthData } from "@/types/schedule-month";
 
 export const SCHEDULE_AUTO_REFRESH_INTERVAL_MS = 30_000;
@@ -62,7 +63,11 @@ export function useScheduleMonthAutoRefresh({
 
   const refreshSchedule = useCallback(
     async (source: ScheduleRefreshSource = "manual"): Promise<RefreshResult> => {
-      const month = monthKeyRef.current;
+      const month = normalizeMonthKey(monthKeyRef.current || initialData.month);
+
+      if (month !== monthKeyRef.current) {
+        monthKeyRef.current = month;
+      }
 
       if (debugLog) {
         console.log("[schedule] refresh:start", { source, month });
@@ -80,8 +85,9 @@ export function useScheduleMonthAutoRefresh({
         }
 
         setMonthData(data);
+        monthKeyRef.current = normalizeMonthKey(data.month || month);
         setScheduleRevision((revision) => revision + 1);
-        const updatedAt = new Date().toISOString();
+        const updatedAt = toIsoString();
         setLastRefreshAt(updatedAt);
         setLastSource(source);
         setLastError(null);
@@ -106,7 +112,7 @@ export function useScheduleMonthAutoRefresh({
         return { ok: false, error: errorMessage };
       }
     },
-    [debugLog],
+    [debugLog, initialData.month],
   );
 
   useEffect(() => {

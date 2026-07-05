@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { isValidScheduleViewToken } from "@/lib/auth/view-schedule-token";
-import { isValidMonthKey } from "@/lib/datetime/date-key";
-import { getStudioCurrentMonthKey } from "@/lib/datetime/studio";
+import { normalizeMonthKey } from "@/lib/datetime/date-layer";
 import { getScheduleMonthData } from "@/services/ScheduleMonthService";
 
 export const dynamic = "force-dynamic";
@@ -18,16 +17,7 @@ export async function GET(request: Request) {
     );
   }
 
-  const monthParam = searchParams.get("month");
-  const monthKey = monthParam ?? getStudioCurrentMonthKey();
-
-  if (!isValidMonthKey(monthKey)) {
-    return NextResponse.json(
-      { ok: false, error: "Invalid month format. Use YYYY-MM." },
-      { status: 400 },
-    );
-  }
-
+  const monthKey = normalizeMonthKey(searchParams.get("month"));
   const data = await getScheduleMonthData(monthKey);
 
   return NextResponse.json({ ok: true, ...data });

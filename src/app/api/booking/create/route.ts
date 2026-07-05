@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
-import { isValidDateKey } from "@/lib/datetime/date-key";
+import { isValidDateKey } from "@/lib/datetime/date-layer";
+import {
+  getFirstClientDataError,
+  hasClientDataErrors,
+  validateClientData,
+  type ClientDataInput,
+} from "@/lib/booking/client-validation";
 import {
   AppointmentConflictError,
   AppointmentValidationError,
@@ -16,22 +22,37 @@ type CreateBookingBody = {
   startTime?: string;
   name?: string;
   phone?: string;
+  consent?: boolean;
 };
 
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as CreateBookingBody;
+    const clientName = typeof body.name === "string" ? body.name.trim() : "";
+    const clientPhone = typeof body.phone === "string" ? body.phone.trim() : "";
 
-    if (
-      !body.serviceId ||
-      !body.masterId ||
-      !body.date ||
-      !body.startTime ||
-      !body.name ||
-      !body.phone
-    ) {
+    if (!body.serviceId || !body.masterId || !body.date || !body.startTime) {
       return NextResponse.json(
         { ok: false, error: "Заполните все поля" },
+        { status: 400 },
+      );
+    }
+
+    const clientData: ClientDataInput = {
+      clientName,
+      clientPhone,
+      consent: body.consent === true,
+    };
+
+    const fieldErrors = validateClientData(clientData);
+
+    if (hasClientDataErrors(fieldErrors)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: getFirstClientDataError(fieldErrors),
+          fieldErrors,
+        },
         { status: 400 },
       );
     }
@@ -48,8 +69,8 @@ export async function POST(request: Request) {
       masterId: body.masterId,
       date: body.date,
       startTime: body.startTime,
-      name: body.name,
-      phone: body.phone,
+      name: clientName,
+      phone: clientPhone,
     });
 
     return NextResponse.json({ ok: true, appointment });

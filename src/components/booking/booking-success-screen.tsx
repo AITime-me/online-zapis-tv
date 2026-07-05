@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { formatDateKeyLabel } from "@/lib/datetime/date-key";
+import { formatDateKeyLabel } from "@/lib/datetime/date-layer";
 import { downloadBookingIcs } from "@/lib/booking/calendar-ics";
 import {
   bookingStudio,

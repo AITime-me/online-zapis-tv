@@ -8,7 +8,7 @@ import { ScheduleMonthCell } from "@/components/schedule/schedule-month-cell";
 import {
   formatMonthRowDateParts,
   getWeekdayIndex,
-} from "@/lib/datetime/date-key";
+} from "@/lib/datetime/date-layer";
 import {
   BORDER_DATE,
   stickyDateBodyClass,

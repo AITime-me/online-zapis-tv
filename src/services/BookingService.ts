@@ -1,9 +1,12 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import {
+  addMinutesSafe,
   formatStudioTimeInput,
+  getEpochDate,
+  getStudioNow,
   parseStudioDateTime,
-} from "@/lib/datetime/date-key";
+} from "@/lib/datetime/date-layer";
 import { getStudioDayRangeFromDateKey, getStudioMonthRangeFromMonthKey } from "@/lib/datetime/studio";
 import { resolveMasterWorkHours } from "@/lib/schedule/master-work-hours";
 import { SEED_TEST_SERVICE_IDS } from "@/lib/services/seed-test-service-ids";
@@ -14,6 +17,14 @@ import {
 import { checkMasterIntervalAvailability } from "@/services/MasterAvailabilityService";
 import { blocksForDayWhere } from "@/services/ScheduleBlockService";
 import { resolveServiceTimingForMaster } from "@/services/ServiceTimingService";
+import { validateClientContactFields } from "@/lib/booking/client-validation";
+import {
+  formatPriceDisplay,
+  fromPriceBounds,
+  getBasePrice,
+} from "@/lib/pricing/price-layer";
+
+export type BookingServiceMode = "ONLINE" | "MANAGER_ONLY";
 
 export type BookingCatalogService = {
   id: string;
@@ -22,7 +33,11 @@ export type BookingCatalogService = {
   durationMinutes: number;
   breakAfterMinutes: number;
   priceLabel: string | null;
+  basePrice: number | null;
   categoryName?: string | null;
+  bookingMode: BookingServiceMode;
+  managerMasterId: string | null;
+  managerMasterName: string | null;
 };
 
 export type BookingCatalogCategory = {
@@ -36,6 +51,7 @@ export type BookingCatalogMaster = {
   publicName: string;
   clientDescription: string | null;
   photoUrl: string | null;
+  isOnlineBookingEnabled: boolean;
 };
 
 export type OnlineBookingInput = {
@@ -54,29 +70,29 @@ function decimalToNumber(value: Prisma.Decimal | null | undefined): number | nul
   return Number(value);
 }
 
-function formatPriceLabel(
+function resolveServicePrice(
   priceFrom: Prisma.Decimal | null,
   priceTo: Prisma.Decimal | null,
-): string | null {
-  const from = decimalToNumber(priceFrom);
-  const to = decimalToNumber(priceTo);
+): { priceLabel: string | null; basePrice: number | null } {
+  const parsed = fromPriceBounds(
+    decimalToNumber(priceFrom),
+    decimalToNumber(priceTo),
+  );
 
-  if (from != null && to != null) {
-    return `${from}–${to} ₽`;
+  if (!parsed) {
+    return { priceLabel: null, basePrice: null };
   }
-  if (from != null) {
-    return `от ${from} ₽`;
-  }
-  if (to != null) {
-    return `до ${to} ₽`;
-  }
-  return null;
+
+  return {
+    priceLabel: formatPriceDisplay(parsed.min, parsed.max),
+    basePrice: getBasePrice(parsed),
+  };
 }
 
 function addMinutesToTime(dateKey: string, time: string, minutes: number): string {
   const base = parseStudioDateTime(dateKey, time);
-  const result = new Date(base.getTime() + minutes * 60_000);
-  return formatStudioTimeInput(result);
+  const result = addMinutesSafe(base, minutes);
+  return formatStudioTimeInput(result ?? base);
 }
 
 function compareTimeStrings(left: string, right: string): number {
@@ -187,7 +203,8 @@ function isSlotAvailable(
   context: NonNullable<Awaited<ReturnType<typeof loadSlotContext>>>,
 ): boolean {
   const startsAt = parseStudioDateTime(dateKey, startTime);
-  const endsAt = new Date(startsAt.getTime() + durationMinutes * 60_000);
+  const endsAt = addMinutesSafe(startsAt, durationMinutes) ?? startsAt;
+  const epoch = getEpochDate();
 
   const availability = checkMasterIntervalAvailability({
     masterId: context.master.id,
@@ -202,8 +219,8 @@ function isSlotAvailable(
       status: appointment.status,
     })),
     scheduleBlocks: context.scheduleBlocks.map((block) => ({
-      startsAt: block.startsAt ?? new Date(0),
-      endsAt: block.endsAt ?? new Date(0),
+      startsAt: block.startsAt ?? epoch,
+      endsAt: block.endsAt ?? epoch,
       isFullDay: block.isFullDay,
     })),
     candidateInterval: {
@@ -216,6 +233,117 @@ function isSlotAvailable(
   return availability.isAvailable;
 }
 
+type ServiceBookingModeResult = {
+  bookingMode: BookingServiceMode;
+  managerMasterId: string | null;
+  managerMasterName: string | null;
+};
+
+async function canBookServiceOnline(
+  serviceId: string,
+  service: { isOnlineBookingEnabled: boolean },
+  link: {
+    isEnabled: boolean;
+    isOnlineBookingEnabled: boolean;
+    masterId: string;
+    master: { isOnlineBookingEnabled: boolean };
+  },
+): Promise<boolean> {
+  if (
+    !service.isOnlineBookingEnabled ||
+    !link.isEnabled ||
+    !link.isOnlineBookingEnabled ||
+    !link.master.isOnlineBookingEnabled
+  ) {
+    return false;
+  }
+
+  const timing = await resolveServiceTimingForMaster(link.masterId, serviceId);
+  return timing != null;
+}
+
+async function resolveServiceBookingModes(
+  serviceIds: string[],
+): Promise<Map<string, ServiceBookingModeResult>> {
+  const result = new Map<string, ServiceBookingModeResult>();
+
+  if (serviceIds.length === 0) {
+    return result;
+  }
+
+  const [services, links] = await Promise.all([
+    prisma.service.findMany({
+      where: { id: { in: serviceIds } },
+      select: { id: true, isActive: true, isOnlineBookingEnabled: true },
+    }),
+    prisma.masterService.findMany({
+      where: {
+        serviceId: { in: serviceIds },
+        isEnabled: true,
+        master: { isActive: true, isPublic: true },
+      },
+      include: {
+        master: {
+          select: {
+            id: true,
+            publicName: true,
+            isOnlineBookingEnabled: true,
+            sortOrder: true,
+          },
+        },
+      },
+      orderBy: [{ master: { sortOrder: "asc" } }],
+    }),
+  ]);
+
+  const serviceById = new Map(services.map((service) => [service.id, service]));
+  const linksByServiceId = new Map<string, typeof links>();
+
+  for (const link of links) {
+    const bucket = linksByServiceId.get(link.serviceId) ?? [];
+    bucket.push(link);
+    linksByServiceId.set(link.serviceId, bucket);
+  }
+
+  for (const serviceId of serviceIds) {
+    const service = serviceById.get(serviceId);
+    const serviceLinks = linksByServiceId.get(serviceId) ?? [];
+
+    if (!service?.isActive) {
+      continue;
+    }
+
+    let hasOnlinePath = false;
+    for (const link of serviceLinks) {
+      if (await canBookServiceOnline(serviceId, service, link)) {
+        hasOnlinePath = true;
+        break;
+      }
+    }
+
+    if (hasOnlinePath) {
+      result.set(serviceId, {
+        bookingMode: "ONLINE",
+        managerMasterId: null,
+        managerMasterName: null,
+      });
+      continue;
+    }
+
+    const managerLink =
+      serviceLinks.find((link) => !link.master.isOnlineBookingEnabled) ??
+      serviceLinks[0];
+
+    result.set(serviceId, {
+      bookingMode: "MANAGER_ONLY",
+      managerMasterId: managerLink?.master.id ?? null,
+      managerMasterName: managerLink?.master.publicName ?? null,
+    });
+  }
+
+  return result;
+}
+
 export async function getBookingCatalog(): Promise<{
   categories: BookingCatalogCategory[];
 }> {
@@ -226,7 +354,6 @@ export async function getBookingCatalog(): Promise<{
       services: {
         where: {
           isActive: true,
-          isOnlineBookingEnabled: true,
           isPublic: true,
           id: { notIn: [...SEED_TEST_SERVICE_IDS] },
         },
@@ -244,21 +371,38 @@ export async function getBookingCatalog(): Promise<{
     },
   });
 
+  const serviceIds = categories.flatMap((category) =>
+    category.services.map((service) => service.id),
+  );
+  const bookingModes = await resolveServiceBookingModes(serviceIds);
+
+  const defaultManagerOnly: ServiceBookingModeResult = {
+    bookingMode: "MANAGER_ONLY",
+    managerMasterId: null,
+    managerMasterName: null,
+  };
+
   return {
     categories: categories
-      .filter((category) => category.services.length > 0)
       .map((category) => ({
         id: category.id,
         name: category.name,
-        services: category.services.map((service) => ({
-          id: service.id,
-          publicName: service.publicName,
-          clientDescription: service.clientDescription,
-          durationMinutes: service.durationMinutes,
-          breakAfterMinutes: service.breakAfterMinutes,
-          priceLabel: formatPriceLabel(service.priceFrom, service.priceTo),
-        })),
-      })),
+        services: category.services.map((service) => {
+          const price = resolveServicePrice(service.priceFrom, service.priceTo);
+          return {
+            id: service.id,
+            publicName: service.publicName,
+            clientDescription: service.clientDescription,
+            durationMinutes: service.durationMinutes,
+            breakAfterMinutes: service.breakAfterMinutes,
+            priceLabel: price.priceLabel,
+            basePrice: price.basePrice,
+            categoryName: category.name,
+            ...(bookingModes.get(service.id) ?? defaultManagerOnly),
+          };
+        }),
+      }))
+      .filter((category) => category.services.length > 0),
   };
 }
 
@@ -284,6 +428,7 @@ export async function listMastersForService(
       publicName: true,
       clientDescription: true,
       photoUrl: true,
+      isOnlineBookingEnabled: true,
     },
   });
 
@@ -303,19 +448,7 @@ export async function listBookableMasters(): Promise<BookingCatalogMaster[]> {
   return prisma.master.findMany({
     where: {
       isActive: true,
-      isOnlineBookingEnabled: true,
       isPublic: true,
-      masterServices: {
-        some: {
-          isEnabled: true,
-          isOnlineBookingEnabled: true,
-          service: {
-            isActive: true,
-            isOnlineBookingEnabled: true,
-            id: { notIn: [...SEED_TEST_SERVICE_IDS] },
-          },
-        },
-      },
     },
     orderBy: { sortOrder: "asc" },
     select: {
@@ -323,6 +456,7 @@ export async function listBookableMasters(): Promise<BookingCatalogMaster[]> {
       publicName: true,
       clientDescription: true,
       photoUrl: true,
+      isOnlineBookingEnabled: true,
     },
   });
 }
@@ -366,17 +500,23 @@ export async function listServicesForMaster(
       continue;
     }
 
+    const price = resolveServicePrice(
+      entry.service.priceFrom,
+      entry.service.priceTo,
+    );
+
     services.push({
       id: entry.service.id,
       publicName: entry.service.publicName,
       clientDescription: entry.service.clientDescription,
       durationMinutes: timing.durationMinutes,
       breakAfterMinutes: timing.breakAfterMinutes,
-      priceLabel: formatPriceLabel(
-        entry.service.priceFrom,
-        entry.service.priceTo,
-      ),
+      priceLabel: price.priceLabel,
+      basePrice: price.basePrice,
       categoryName: entry.service.category.name,
+      bookingMode: "ONLINE",
+      managerMasterId: null,
+      managerMasterName: null,
     });
   }
 
@@ -400,7 +540,7 @@ export async function getAvailableTimeSlots(
   const slotStep = Math.max(5, context.master.slotMinutes);
   const slots: string[] = [];
   const minStartTime =
-    dateKey === studioToday ? formatStudioTimeInput(new Date()) : "00:00";
+    dateKey === studioToday ? formatStudioTimeInput(getStudioNow()) : "00:00";
 
   let current = workStart;
   while (compareTimeStrings(current, workEnd) < 0) {
@@ -459,13 +599,14 @@ export async function getAvailableDaysInMonth(
 export async function createOnlineBooking(input: OnlineBookingInput) {
   const name = input.name.trim();
   const phone = input.phone.trim();
+  const fieldErrors = validateClientContactFields(name, phone);
 
-  if (!name) {
-    throw new AppointmentValidationError("Укажите имя");
+  if (fieldErrors.name) {
+    throw new AppointmentValidationError(fieldErrors.name);
   }
 
-  if (!phone) {
-    throw new AppointmentValidationError("Укажите телефон");
+  if (fieldErrors.phone) {
+    throw new AppointmentValidationError(fieldErrors.phone);
   }
 
   const timing = await assertOnlineBookable(input.masterId, input.serviceId);

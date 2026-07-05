@@ -1,5 +1,5 @@
 import type { ScheduleDayManagerNote } from "@/types/schedule";
-import { formatStudioTime } from "@/lib/datetime/date-key";
+import { formatStudioTime } from "@/lib/datetime/date-layer";
 
 export function ManagerColumn({
   notes,
@@ -21,7 +21,7 @@ export function ManagerColumn({
             className="border-b border-[#e8eaed] px-2 py-1 text-xs leading-snug last:border-b-0"
           >
             <span className="tabular-nums text-[10px] text-zinc-500">
-              {formatStudioTime(new Date(note.createdAt))}
+              {formatStudioTime(note.createdAt)}
             </span>
             <span className="ml-1.5 whitespace-pre-wrap text-zinc-800">
               {note.content}

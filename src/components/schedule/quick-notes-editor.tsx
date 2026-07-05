@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import type { ManagerNoteType } from "@prisma/client";
 import { useRouter } from "next/navigation";
-import { formatDateKeyLabel } from "@/lib/datetime/date-key";
+import { formatDateKeyLabel } from "@/lib/datetime/date-layer";
 import type { ScheduleDayManagerNote } from "@/types/schedule";
 import {
   ManagerNoteEditorForm,

@@ -5,11 +5,18 @@ import {
   addMonthsToMonthKey,
   formatDateKeyLabel,
   formatMonthTitle,
+  formatStudioTimeRange,
+  getDaysInMonthKey,
   getWeekdayIndex,
-  normalizeBookingMonthKey,
-} from "@/lib/datetime/date-key";
+  normalizeMonthKey,
+} from "@/lib/datetime/date-layer";
+import { BookingBackButton } from "@/components/booking/booking-back-button";
 import { BookingServiceStep } from "@/components/booking/booking-service-step";
 import { BookingConsultationCard } from "@/components/booking/booking-consultation-card";
+import {
+  BookingManagerRequestForm,
+  type BookingRequestFormType,
+} from "@/components/booking/booking-manager-request-form";
 import {
   BookingMasterFirstStep,
   type MasterFirstView,
@@ -19,14 +26,24 @@ import {
   type BookingPathMode,
 } from "@/components/booking/booking-path-toggle";
 import { BookingSuccessScreen } from "@/components/booking/booking-success-screen";
+import { BookingClientFields } from "@/components/booking/booking-client-fields";
+import { BookingLegalConfirmNotice } from "@/components/booking/booking-legal-links";
 import {
   BookingPromotionConfirmBlock,
   BookingPromotionGeneralNotice,
+  BookingRulesPriceSummary,
 } from "@/components/booking/booking-promotion-ui";
+import {
+  buildFullPhoneNumber,
+  isClientDataValid,
+  type ClientDataFieldErrors,
+  type PhoneCountryCode,
+  validateClientData,
+} from "@/lib/booking/client-validation";
 import { bookingTheme } from "@/components/booking/booking-theme";
 import {
   BOOKING_PROMOTIONS_GENERAL_NOTICE,
-  getConfirmStepPromotions,
+  evaluateBookingRules,
 } from "@/lib/booking/promotions";
 import type {
   BookingCatalogCategory,
@@ -42,7 +59,16 @@ type BookingSelection = {
   dateKey: string | null;
   startTime: string | null;
   name: string;
-  phone: string;
+  countryCode: PhoneCountryCode;
+  phoneLocal: string;
+  consent: boolean;
+};
+
+const EMPTY_CLIENT_FIELDS = {
+  name: "",
+  countryCode: "+7" as PhoneCountryCode,
+  phoneLocal: "",
+  consent: false,
 };
 
 const STEPS: { id: Step; label: string }[] = [
@@ -108,14 +134,20 @@ export function BookingWizard() {
     null,
   );
   const [serviceStepKey, setServiceStepKey] = useState(0);
+  const [requestForm, setRequestForm] = useState<{
+    type: BookingRequestFormType;
+    master: BookingCatalogMaster | null;
+  } | null>(null);
   const [selection, setSelection] = useState<BookingSelection>({
     service: null,
     master: null,
     dateKey: null,
     startTime: null,
-    name: "",
-    phone: "",
+    ...EMPTY_CLIENT_FIELDS,
   });
+  const [clientFieldErrors, setClientFieldErrors] = useState<ClientDataFieldErrors>(
+    {},
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -202,7 +234,7 @@ export function BookingWizard() {
 
   const loadAvailableDays = useCallback(
     async (masterId: string, serviceId: string, month?: string | null) => {
-      const monthParam = normalizeBookingMonthKey(month);
+      const monthParam = normalizeMonthKey(month);
       setStepLoading(true);
       setError(null);
       try {
@@ -254,9 +286,9 @@ export function BookingWizard() {
       master: null,
       dateKey: null,
       startTime: null,
-      name: "",
-      phone: "",
+      ...EMPTY_CLIENT_FIELDS,
     });
+    setClientFieldErrors({});
     setMasters([]);
     setMasterServices([]);
     setMasterFirstView("masters");
@@ -264,6 +296,24 @@ export function BookingWizard() {
     setSlots([]);
     setSelectedCategoryId(null);
     setError(null);
+  };
+
+  const openManagerOnlyServiceRequest = (service: BookingCatalogService) => {
+    if (!service.managerMasterId) {
+      setRequestForm({ type: "CONSULTATION_REQUEST", master: null });
+      return;
+    }
+
+    setRequestForm({
+      type: "MANAGER_REQUEST",
+      master: {
+        id: service.managerMasterId,
+        publicName: service.managerMasterName ?? service.publicName,
+        clientDescription: null,
+        photoUrl: null,
+        isOnlineBookingEnabled: false,
+      },
+    });
   };
 
   const switchBookingPath = (mode: BookingPathMode) => {
@@ -280,13 +330,17 @@ export function BookingWizard() {
   };
 
   const selectService = (service: BookingCatalogService) => {
+    if (service.bookingMode === "MANAGER_ONLY") {
+      openManagerOnlyServiceRequest(service);
+      return;
+    }
+
     setSelection({
       service,
       master: null,
       dateKey: null,
       startTime: null,
-      name: "",
-      phone: "",
+      ...EMPTY_CLIENT_FIELDS,
     });
     setMasters([]);
     setAvailableDays([]);
@@ -296,13 +350,15 @@ export function BookingWizard() {
   };
 
   const selectMasterFirst = (master: BookingCatalogMaster) => {
+    if (!master.isOnlineBookingEnabled) {
+      return;
+    }
     setSelection({
       service: null,
       master,
       dateKey: null,
       startTime: null,
-      name: "",
-      phone: "",
+      ...EMPTY_CLIENT_FIELDS,
     });
     setMasterServices([]);
     setAvailableDays([]);
@@ -318,8 +374,7 @@ export function BookingWizard() {
       service,
       dateKey: null,
       startTime: null,
-      name: "",
-      phone: "",
+      ...EMPTY_CLIENT_FIELDS,
     }));
     setAvailableDays([]);
     setSlots([]);
@@ -373,6 +428,26 @@ export function BookingWizard() {
     );
   };
 
+  const fullPhone = useMemo(
+    () =>
+      buildFullPhoneNumber(selection.countryCode, selection.phoneLocal),
+    [selection.countryCode, selection.phoneLocal],
+  );
+
+  const clientData = useMemo(
+    () => ({
+      clientName: selection.name,
+      clientPhone: fullPhone,
+      consent: selection.consent,
+    }),
+    [fullPhone, selection.consent, selection.name],
+  );
+
+  const canSubmitBooking = useMemo(
+    () => isClientDataValid(clientData) && !submitting,
+    [clientData, submitting],
+  );
+
   const submitBooking = async () => {
     if (
       !selection.service ||
@@ -380,6 +455,13 @@ export function BookingWizard() {
       !selection.dateKey ||
       !selection.startTime
     ) {
+      return;
+    }
+
+    const validationErrors = validateClientData(clientData);
+    setClientFieldErrors(validationErrors);
+
+    if (validationErrors.name || validationErrors.phone || validationErrors.consent) {
       return;
     }
 
@@ -394,12 +476,20 @@ export function BookingWizard() {
           masterId: selection.master.id,
           date: selection.dateKey,
           startTime: selection.startTime,
-          name: selection.name,
-          phone: selection.phone,
+          name: selection.name.trim(),
+          phone: fullPhone,
+          consent: true,
         }),
       });
-      const data = (await response.json()) as { ok?: boolean; error?: string };
+      const data = (await response.json()) as {
+        ok?: boolean;
+        error?: string;
+        fieldErrors?: ClientDataFieldErrors;
+      };
       if (!response.ok || !data.ok) {
+        if (data.fieldErrors) {
+          setClientFieldErrors(data.fieldErrors);
+        }
         throw new Error(data.error ?? "Не удалось создать запись");
       }
       setStep("success");
@@ -430,9 +520,9 @@ export function BookingWizard() {
     );
   }, [categories, selectedCategoryId]);
 
-  const confirmPromotions = useMemo(() => {
+  const confirmPromoContext = useMemo(() => {
     if (!selection.service) {
-      return [];
+      return null;
     }
     const categoryName =
       selectedCategoryName ??
@@ -448,11 +538,30 @@ export function BookingWizard() {
           : null;
       })();
 
-    return getConfirmStepPromotions({
+    return {
       serviceId: selection.service.id,
+      categoryId: selectedCategoryId ?? findCategoryIdForService(
+        categories,
+        selection.service.id,
+      ),
       categoryName,
-    });
+      basePrice: selection.service.basePrice,
+    };
   }, [categories, selectedCategoryId, selectedCategoryName, selection.service]);
+
+  const bookingRulesResult = useMemo(() => {
+    if (!selection.service || !confirmPromoContext) {
+      return null;
+    }
+
+    return evaluateBookingRules({
+      serviceId: confirmPromoContext.serviceId,
+      categoryId: confirmPromoContext.categoryId,
+      categoryName: confirmPromoContext.categoryName,
+      basePrice: confirmPromoContext.basePrice,
+      isFirstVisit: true,
+    });
+  }, [confirmPromoContext, selection.service]);
 
   const calendarDays = useMemo(() => {
     if (!monthKey) {
@@ -460,17 +569,15 @@ export function BookingWizard() {
     }
     const firstDateKey = `${monthKey}-01`;
     const startWeekday = (getWeekdayIndex(firstDateKey) + 6) % 7;
-    const [year, month] = monthKey.split("-").map(Number);
-    const daysInMonth = new Date(year, month, 0).getDate();
+    const monthDays = getDaysInMonthKey(monthKey);
     const cells: Array<{ dateKey: string | null; label: string }> = [];
 
     for (let i = 0; i < startWeekday; i += 1) {
       cells.push({ dateKey: null, label: "" });
     }
 
-    for (let day = 1; day <= daysInMonth; day += 1) {
-      const dateKey = `${monthKey}-${String(day).padStart(2, "0")}`;
-      cells.push({ dateKey, label: String(day) });
+    for (const dateKey of monthDays) {
+      cells.push({ dateKey, label: String(Number(dateKey.slice(8, 10))) });
     }
 
     return cells;
@@ -520,6 +627,12 @@ export function BookingWizard() {
 
   return (
     <div className="space-y-4">
+      <BookingManagerRequestForm
+        open={requestForm != null}
+        type={requestForm?.type ?? "MANAGER_REQUEST"}
+        master={requestForm?.master}
+        onClose={() => setRequestForm(null)}
+      />
       <nav className="flex flex-wrap gap-2">
         {STEPS.map((entry, index) => {
           const isActive = entry.id === step;
@@ -585,6 +698,7 @@ export function BookingWizard() {
                 onCategoryOpen={setSelectedCategoryId}
                 onBackToCategories={() => setSelectedCategoryId(null)}
                 onSelectService={selectService}
+                onManagerOnlyService={openManagerOnlyServiceRequest}
               />
             ) : (
               <BookingMasterFirstStep
@@ -600,9 +714,19 @@ export function BookingWizard() {
                   setSelection((prev) => ({ ...prev, service: null }));
                   setMasterServices([]);
                 }}
+                onManagerRequest={(master) =>
+                  setRequestForm({ type: "MANAGER_REQUEST", master })
+                }
               />
             )}
-            <BookingConsultationCard />
+            <BookingConsultationCard
+              onRequestClick={() =>
+                setRequestForm({
+                  type: "CONSULTATION_REQUEST",
+                  master: null,
+                })
+              }
+            />
           </div>
         )}
 
@@ -612,8 +736,7 @@ export function BookingWizard() {
               <h2 className="text-base font-semibold text-zinc-900">
                 Выберите мастера
               </h2>
-              <button
-                type="button"
+              <BookingBackButton
                 onClick={() => {
                   const categoryId =
                     selectedCategoryId ??
@@ -629,11 +752,9 @@ export function BookingWizard() {
                   setServiceStepKey((key) => key + 1);
                   setStep("service");
                 }}
-                className="min-h-12 text-sm font-medium transition hover:opacity-80"
-                style={{ color: bookingTheme.greenMuted }}
               >
-                ← Назад
-              </button>
+                Назад
+              </BookingBackButton>
             </div>
             {stepLoading ? (
               <p className="text-sm text-zinc-500">Загрузка…</p>
@@ -671,8 +792,7 @@ export function BookingWizard() {
               <h2 className="text-base font-semibold text-zinc-900">
                 Выберите дату
               </h2>
-              <button
-                type="button"
+              <BookingBackButton
                 onClick={() => {
                   if (bookingPath === "by-master") {
                     setStep("service");
@@ -681,10 +801,9 @@ export function BookingWizard() {
                   }
                   setStep("master");
                 }}
-                className="text-xs text-zinc-500 hover:text-zinc-800"
               >
-                ← Назад
-              </button>
+                Назад
+              </BookingBackButton>
             </div>
             {monthKey && (
               <div className="flex items-center justify-between">
@@ -763,13 +882,9 @@ export function BookingWizard() {
               <h2 className="text-base font-semibold text-zinc-900">
                 Выберите время
               </h2>
-              <button
-                type="button"
-                onClick={() => setStep("date")}
-                className="text-xs text-zinc-500 hover:text-zinc-800"
-              >
-                ← Назад
-              </button>
+              <BookingBackButton onClick={() => setStep("date")}>
+                Назад
+              </BookingBackButton>
             </div>
             {selection.dateKey && (
               <p className="text-sm text-zinc-600">
@@ -805,13 +920,9 @@ export function BookingWizard() {
               <h2 className="text-base font-semibold text-zinc-900">
                 Подтверждение
               </h2>
-              <button
-                type="button"
-                onClick={() => setStep("time")}
-                className="text-xs text-zinc-500 hover:text-zinc-800"
-              >
-                ← Назад
-              </button>
+              <BookingBackButton onClick={() => setStep("time")}>
+                Назад
+              </BookingBackButton>
             </div>
             <dl className="space-y-2 rounded-lg bg-zinc-50 p-4 text-sm">
               <div className="flex justify-between gap-4">
@@ -820,14 +931,9 @@ export function BookingWizard() {
                   {selection.service?.publicName}
                 </dd>
               </div>
-              {selection.service?.priceLabel && (
-                <div className="flex justify-between gap-4">
-                  <dt className="text-zinc-500">Цена</dt>
-                  <dd className="text-right font-medium text-zinc-900">
-                    {selection.service.priceLabel}
-                  </dd>
-                </div>
-              )}
+              {bookingRulesResult ? (
+                <BookingRulesPriceSummary rulesResult={bookingRulesResult} />
+              ) : null}
               <div className="flex justify-between gap-4">
                 <dt className="text-zinc-500">Мастер</dt>
                 <dd className="text-right font-medium text-zinc-900">
@@ -842,42 +948,45 @@ export function BookingWizard() {
                 </dd>
               </div>
             </dl>
-            <BookingPromotionConfirmBlock promotions={confirmPromotions} />
-            <div className="space-y-3">
-              <label className="block text-sm">
-                <span className="mb-1 block text-zinc-700">Ваше имя</span>
-                <input
-                  type="text"
-                  value={selection.name}
-                  onChange={(event) =>
-                    setSelection((prev) => ({
-                      ...prev,
-                      name: event.target.value,
-                    }))
-                  }
-                  className="w-full rounded-lg border border-[#dadce0] px-3 py-2 text-sm outline-none focus:border-zinc-400"
-                  placeholder="Как к вам обращаться"
-                />
-              </label>
-              <label className="block text-sm">
-                <span className="mb-1 block text-zinc-700">Телефон</span>
-                <input
-                  type="tel"
-                  value={selection.phone}
-                  onChange={(event) =>
-                    setSelection((prev) => ({
-                      ...prev,
-                      phone: event.target.value,
-                    }))
-                  }
-                  className="w-full rounded-lg border border-[#dadce0] px-3 py-2 text-sm outline-none focus:border-zinc-400"
-                  placeholder="+7 ..."
-                />
-              </label>
-            </div>
+            <BookingPromotionConfirmBlock
+              promotions={
+                bookingRulesResult?.confirmSections.map((section) => ({
+                  id: section.id,
+                  title: section.title,
+                  description: section.description,
+                })) ?? []
+              }
+            />
+            <BookingClientFields
+              variant="wizard"
+              name={selection.name}
+              onNameChange={(value) =>
+                setSelection((prev) => ({ ...prev, name: value }))
+              }
+              countryCode={selection.countryCode}
+              onCountryCodeChange={(value) =>
+                setSelection((prev) => ({ ...prev, countryCode: value }))
+              }
+              phoneLocal={selection.phoneLocal}
+              onPhoneLocalChange={(value) =>
+                setSelection((prev) => ({ ...prev, phoneLocal: value }))
+              }
+              consent={selection.consent}
+              onConsentChange={(value) =>
+                setSelection((prev) => ({ ...prev, consent: value }))
+              }
+              errors={clientFieldErrors}
+              onClearError={(field) =>
+                setClientFieldErrors((current) => ({
+                  ...current,
+                  [field]: undefined,
+                }))
+              }
+            />
+            <BookingLegalConfirmNotice />
             <button
               type="button"
-              disabled={submitting}
+              disabled={!canSubmitBooking}
               onClick={() => void submitBooking()}
               className="w-full rounded-lg bg-zinc-900 px-4 py-3 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:opacity-60"
             >

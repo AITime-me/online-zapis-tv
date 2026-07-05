@@ -1,12 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { BookingBackButton } from "@/components/booking/booking-back-button";
+import { bookingStudioTelHref } from "@/components/booking/booking-config";
 import { bookingTheme } from "@/components/booking/booking-theme";
 import {
   BookingPromotionBadge,
   BookingPromotionCardNote,
 } from "@/components/booking/booking-promotion-ui";
-import { getServiceCardPromotions } from "@/lib/booking/promotions";
+import { getServiceCardPromotion } from "@/lib/booking/promotions";
 import type {
   BookingCatalogMaster,
   BookingCatalogService,
@@ -23,6 +25,7 @@ type BookingMasterFirstStepProps = {
   onSelectMaster: (master: BookingCatalogMaster) => void;
   onSelectService: (service: BookingCatalogService) => void;
   onBackToMasters: () => void;
+  onManagerRequest: (master: BookingCatalogMaster) => void;
 };
 
 function formatDuration(minutes: number): string {
@@ -65,6 +68,7 @@ export function BookingMasterFirstStep({
   onSelectMaster,
   onSelectService,
   onBackToMasters,
+  onManagerRequest,
 }: BookingMasterFirstStepProps) {
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -103,35 +107,92 @@ export function BookingMasterFirstStep({
           <p className="py-8 text-center text-base text-[#6b7280]">Загрузка…</p>
         ) : masters.length === 0 ? (
           <p className="py-8 text-center text-base text-[#6b7280]">
-            Сейчас нет мастеров для онлайн-записи.
+            Сейчас нет активных мастеров.
           </p>
         ) : (
           <ul className="space-y-3">
-            {masters.map((master) => (
-              <li key={master.id}>
-                <button
-                  type="button"
-                  onClick={() => onSelectMaster(master)}
-                  className="min-h-12 w-full rounded-2xl border px-5 py-4 text-left transition hover:shadow-sm active:scale-[0.99]"
+            {masters.map((master) => {
+              const isOnline = master.isOnlineBookingEnabled;
+
+              if (isOnline) {
+                return (
+                  <li key={master.id}>
+                    <button
+                      type="button"
+                      onClick={() => onSelectMaster(master)}
+                      className="min-h-12 w-full rounded-2xl border px-5 py-4 text-left transition hover:shadow-sm active:scale-[0.99]"
+                      style={{
+                        borderColor: bookingTheme.border,
+                        backgroundColor: bookingTheme.card,
+                      }}
+                    >
+                      <span
+                        className="block text-lg font-medium"
+                        style={{ color: bookingTheme.green }}
+                      >
+                        {master.publicName}
+                      </span>
+                      {master.clientDescription && (
+                        <span className="mt-1 block text-sm text-[#6b7280]">
+                          {master.clientDescription}
+                        </span>
+                      )}
+                    </button>
+                  </li>
+                );
+              }
+
+              return (
+                <li
+                  key={master.id}
+                  className="rounded-2xl border px-5 py-4"
                   style={{
                     borderColor: bookingTheme.border,
-                    backgroundColor: bookingTheme.card,
+                    backgroundColor: `${bookingTheme.surface}`,
+                    opacity: 0.92,
                   }}
                 >
                   <span
                     className="block text-lg font-medium"
-                    style={{ color: bookingTheme.green }}
+                    style={{ color: bookingTheme.greenMuted }}
                   >
                     {master.publicName}
                   </span>
                   {master.clientDescription && (
-                    <span className="mt-1 block text-sm text-[#6b7280]">
+                    <span className="mt-1 block text-sm text-[#9ca3af]">
                       {master.clientDescription}
                     </span>
                   )}
-                </button>
-              </li>
-            ))}
+                  <p
+                    className="mt-3 text-sm font-medium"
+                    style={{ color: bookingTheme.goldMuted }}
+                  >
+                    Запись через менеджера студии
+                  </p>
+                  <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                    <button
+                      type="button"
+                      onClick={() => onManagerRequest(master)}
+                      className="min-h-12 flex-1 rounded-xl px-4 py-3 text-base font-medium text-white"
+                      style={{ backgroundColor: bookingTheme.green }}
+                    >
+                      Оставить заявку
+                    </button>
+                    <a
+                      href={bookingStudioTelHref}
+                      className="flex min-h-12 flex-1 items-center justify-center rounded-xl border px-4 py-3 text-base font-medium"
+                      style={{
+                        borderColor: bookingTheme.border,
+                        color: bookingTheme.green,
+                        backgroundColor: bookingTheme.card,
+                      }}
+                    >
+                      Позвонить в студию
+                    </a>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
@@ -140,28 +201,9 @@ export function BookingMasterFirstStep({
 
   return (
     <div className="space-y-5">
-      <button
-        type="button"
-        onClick={onBackToMasters}
-        className="inline-flex min-h-12 items-center gap-1.5 text-base font-medium transition hover:opacity-80"
-        style={{ color: bookingTheme.greenMuted }}
-      >
-        <svg
-          aria-hidden
-          className="h-5 w-5"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={1.5}
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M15 19l-7-7 7-7"
-          />
-        </svg>
+      <BookingBackButton onClick={onBackToMasters}>
         Назад к мастерам
-      </button>
+      </BookingBackButton>
 
       <header className="space-y-1">
         <p
@@ -204,12 +246,11 @@ export function BookingMasterFirstStep({
       ) : (
         <ul className="space-y-4">
           {filteredServices.map((service) => {
-            const promotions = getServiceCardPromotions({
+            const promo = getServiceCardPromotion({
               serviceId: service.id,
               categoryName: service.categoryName,
             });
-            const primaryPromotion = promotions[0];
-            const hasPromotion = Boolean(primaryPromotion);
+            const hasPromotion = promo.isActive;
 
             return (
               <li
@@ -226,9 +267,9 @@ export function BookingMasterFirstStep({
               >
                 <div className="space-y-3">
                   <div>
-                    {primaryPromotion && (
+                    {promo.isActive && (
                       <div className="mb-3">
-                        <BookingPromotionBadge text={primaryPromotion.badgeText} />
+                        <BookingPromotionBadge text={promo.badgeText} />
                       </div>
                     )}
                     <h3
@@ -248,10 +289,8 @@ export function BookingMasterFirstStep({
                         {formatDuration(service.durationMinutes)}
                       </span>
                     </div>
-                    {primaryPromotion?.cardShortText && (
-                      <BookingPromotionCardNote
-                        text={primaryPromotion.cardShortText}
-                      />
+                    {promo.note && (
+                      <BookingPromotionCardNote text={promo.note} />
                     )}
                     {service.clientDescription && (
                       <p className="mt-3 text-base leading-relaxed text-[#6b7280]">

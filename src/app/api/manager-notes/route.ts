@@ -5,7 +5,7 @@ import {
   requireInternalApiAuth,
   WRITE_SCHEDULE_ROLES,
 } from "@/lib/auth/api-access";
-import { isValidDateKey } from "@/lib/datetime/date-key";
+import { isValidDateKey } from "@/lib/datetime/date-layer";
 import {
   createManagerNote,
   getManagerNotesForDate,

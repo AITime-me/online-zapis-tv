@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { isValidDateKey } from "@/lib/datetime/date-key";
-import { formatDateKeyInStudio } from "@/lib/datetime/studio";
+import { isValidDateKey } from "@/lib/datetime/date-layer";
+import { formatStudioDateKey, getStudioNow } from "@/lib/datetime/date-layer";
 import { getAvailableTimeSlots } from "@/services/BookingService";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +22,7 @@ export async function GET(request: Request) {
     );
   }
 
-  const studioToday = formatDateKeyInStudio(new Date());
+  const studioToday = formatStudioDateKey(getStudioNow());
   const slots = await getAvailableTimeSlots(
     masterId,
     serviceId,

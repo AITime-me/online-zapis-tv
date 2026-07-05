@@ -65,6 +65,21 @@ enum ManagerNoteType {
   OWNER
 }
 
+enum BookingRequestStatus {
+  NEW
+  CONTACTED
+  CLOSED
+}
+
+enum BookingRequestType {
+  MANAGER_REQUEST
+  CONSULTATION_REQUEST
+}
+
+enum BookingRequestSource {
+  ONLINE
+}
+
 model User {
   id           String   @id @default(uuid()) @db.Uuid
   email        String   @unique
@@ -111,6 +126,7 @@ model Master {
   scheduleBlocks   ScheduleBlock[]
   extraWorkWindows ExtraWorkWindow[]
   bookingLinks     BookingLink[]
+  bookingRequests  BookingRequest[]
 
   @@map("masters")
 }
@@ -300,6 +316,24 @@ model BookingLink {
   master  Master?  @relation(fields: [masterId], references: [id], onDelete: SetNull)
 
   @@map("booking_links")
+}
+
+model BookingRequest {
+  id          String               @id @default(uuid()) @db.Uuid
+  clientName  String               @map("client_name")
+  clientPhone String               @map("client_phone")
+  comment     String?
+  masterId    String?              @map("master_id") @db.Uuid
+  status      BookingRequestStatus @default(NEW)
+  source      BookingRequestSource @default(ONLINE)
+  type        BookingRequestType
+  createdAt   DateTime             @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime             @updatedAt @map("updated_at") @db.Timestamptz
+
+  master Master? @relation(fields: [masterId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt(sort: Desc)])
+  @@map("booking_requests")
 }
 
 model EmergencyExport {

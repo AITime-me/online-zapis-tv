@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { addMinutesToDateTime } from "@/lib/datetime/date-layer";
 
 export type ServiceTimingSource = "service" | "masterOverride";
 
@@ -66,7 +67,9 @@ export function calculateAppointmentEndsAt(
   durationMinutes: number,
   breakAfterMinutes: number,
 ): Date {
-  return new Date(
-    startsAt.getTime() + (durationMinutes + breakAfterMinutes) * 60 * 1000,
+  return addMinutesToDateTime(
+    startsAt,
+    durationMinutes + breakAfterMinutes,
+    startsAt,
   );
 }

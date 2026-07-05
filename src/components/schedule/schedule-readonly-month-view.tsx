@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback } from "react";
-import { addMonthsToMonthKey, formatMonthTitle } from "@/lib/datetime/date-key";
+import { addMonthsToMonthKey, formatMonthTitle } from "@/lib/datetime/date-layer";
 import {
   fetchViewScheduleMonth,
   useScheduleMonthAutoRefresh,

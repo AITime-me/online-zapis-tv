@@ -1,4 +1,4 @@
-import { formatStudioTimeRange } from "@/lib/datetime/date-key";
+import { formatStudioTimeRange } from "@/lib/datetime/date-layer";
 import type { ScheduleDayBlock } from "@/types/schedule";
 
 export function ScheduleBlockCard({ block }: { block: ScheduleDayBlock }) {

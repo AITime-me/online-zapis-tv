@@ -6,11 +6,14 @@ import {
 } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import {
+  addMinutesSafe,
   diffMinutes,
   formatDateKeyInStudio,
   formatStudioTimeInput,
+  getEpochDate,
+  getStudioNow,
   parseStudioDateTime,
-} from "@/lib/datetime/date-key";
+} from "@/lib/datetime/date-layer";
 import { getStudioDayRangeFromDateKey } from "@/lib/datetime/studio";
 import {
   APPOINTMENT_SOURCE_LABELS,
@@ -209,8 +212,8 @@ async function assertNoBlockingConflict(
       status: appointment.status,
     })),
     scheduleBlocks: context.scheduleBlocks.map((block) => ({
-      startsAt: block.startsAt ?? new Date(0),
-      endsAt: block.endsAt ?? new Date(0),
+      startsAt: block.startsAt ?? getEpochDate(),
+      endsAt: block.endsAt ?? getEpochDate(),
       isFullDay: block.isFullDay,
     })),
     candidateInterval: {
@@ -255,9 +258,8 @@ async function resolveTimingFields(
     if (timing) {
       standardDurationMinutes = timing.durationMinutes;
       standardBreakAfterMinutes = timing.breakAfterMinutes;
-      const durationOnlyEndsAt = new Date(
-        startsAt.getTime() + timing.durationMinutes * 60_000,
-      );
+      const durationOnlyEndsAt =
+        addMinutesSafe(startsAt, timing.durationMinutes) ?? startsAt;
       const withBreakEndsAt = calculateAppointmentEndsAt(
         startsAt,
         timing.durationMinutes,
@@ -427,7 +429,7 @@ export async function cancelAppointment(id: string): Promise<AppointmentDto> {
     where: { id },
     data: {
       status: "CANCELLED",
-      cancelledAt: new Date(),
+      cancelledAt: getStudioNow(),
     },
     include: { service: true },
   });
