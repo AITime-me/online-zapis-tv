@@ -15,6 +15,7 @@ import {
   AppointmentEditorForm,
   NewAppointmentForm,
 } from "@/components/schedule/appointment-editor-form";
+import { AppointmentCard } from "@/components/schedule/appointment-card";
 import {
   FullDayBlockForm,
   NewIntervalBlockForm,
@@ -441,16 +442,10 @@ export function QuickDayEditor({
                         onSaveStatus={handleSaveStatus}
                       />
                     ) : (
-                      <article
+                      <AppointmentCard
                         key={appointment.id}
-                        className="border border-[#e8eaed] px-2 py-1 text-xs"
-                      >
-                        {formatStudioTimeRange(
-                          appointment.startsAt,
-                          appointment.endsAt,
-                        )}{" "}
-                        {appointment.clientName}
-                      </article>
+                        appointment={appointment}
+                      />
                     ),
                   )}
                 </div>

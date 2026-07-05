@@ -20,6 +20,8 @@ import {
   normalizePromotion,
   type NormalizedPromotion,
 } from "@/lib/promo/promotion-normalizer";
+import type { AppliedPromotionRecord } from "@/types/applied-promotion";
+import type { PromoRuleType } from "@/lib/promo/promo-engine";
 
 export { BOOKING_PROMO_GENERAL_NOTICE as BOOKING_RULES_GENERAL_NOTICE };
 
@@ -99,6 +101,16 @@ function resolveClientContext(input: RulesEngineInput): ClientContext {
     };
   }
 
+  const hasClientInput =
+    Boolean(input.clientId?.trim()) ||
+    Boolean(input.client?.clientId?.trim()) ||
+    Boolean(input.client?.phone?.trim()) ||
+    Boolean(input.client?.bookings?.length);
+
+  if (!hasClientInput) {
+    return EMPTY_CLIENT_CONTEXT;
+  }
+
   return buildClientContext({
     clientId: input.clientId ?? input.client?.clientId,
     phone: input.client?.phone,
@@ -166,6 +178,48 @@ function mapConfirmSections(rules: PromoRule[]): RulesEngineConfirmSection[] {
     title: rule.title,
     description: rule.description,
   }));
+}
+
+function mapPromoStorageType(type: PromoRuleType): string {
+  if (type === "FIRST_VISIT") {
+    return "FIRST_VISIT_DISCOUNT";
+  }
+  if (type === "GIFT") {
+    return "GIFT_SERVICE";
+  }
+  return type;
+}
+
+/** Сериализация результата rules-engine для хранения в записи. */
+export function buildStoredAppliedPromotions(
+  input: RulesEngineInput,
+): AppliedPromotionRecord[] {
+  const client = toPromoClient(input);
+  const priceResult = calculatePrice(toPromoPriceInput(input), client);
+  const gifts = checkGifts(toGiftInput(input));
+  const promotions: AppliedPromotionRecord[] = [];
+
+  for (const { rule, message } of priceResult.appliedPromos) {
+    if (rule.type === "GIFT") {
+      continue;
+    }
+
+    promotions.push({
+      type: mapPromoStorageType(rule.type),
+      label: message,
+      value: rule.discountPercent ?? rule.fixedDiscount ?? null,
+    });
+  }
+
+  for (const gift of gifts) {
+    promotions.push({
+      type: "GIFT_SERVICE",
+      label: gift.title,
+      value: null,
+    });
+  }
+
+  return promotions;
 }
 
 /** Единая точка расчёта цены, акций и подарков для booking. */

@@ -227,7 +227,13 @@ model Appointment {
   status                    AppointmentStatus @default(SCHEDULED)
   source                    AppointmentSource @default(INTERNAL)
   promoCode                 String?           @map("promo_code")
+  appliedPromotions         Json?             @map("applied_promotions")
   botSessionId              String?           @map("bot_session_id")
+  manageToken               String?           @unique @map("manage_token")
+  cancelledBy               String?           @map("cancelled_by")
+  cancelReason              String?           @map("cancel_reason")
+  rescheduleRequestText     String?           @map("reschedule_request_text")
+  rescheduleRequestedAt     DateTime?         @map("reschedule_requested_at") @db.Timestamptz
   createdByUserId           String?           @map("created_by_user_id") @db.Uuid
   cancelledAt               DateTime?         @map("cancelled_at") @db.Timestamptz
   createdAt                 DateTime          @default(now()) @map("created_at") @db.Timestamptz

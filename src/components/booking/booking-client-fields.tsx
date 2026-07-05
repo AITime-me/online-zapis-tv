@@ -2,9 +2,9 @@
 
 import { bookingTheme } from "@/components/booking/booking-theme";
 import { BookingLegalConsentField } from "@/components/booking/booking-legal-links";
+import { PhoneCountrySelect } from "@/components/booking/phone-country-select";
 import {
   getPhonePlaceholder,
-  PHONE_COUNTRY_CODES,
   type ClientDataFieldErrors,
   type PhoneCountryCode,
 } from "@/lib/booking/client-validation";
@@ -48,8 +48,8 @@ export function BookingClientFields({
     ? "mb-1 block text-zinc-700"
     : "mb-1 block text-[#4b5563]";
   const phoneSelectClassName = isWizard
-    ? "w-[7.5rem] shrink-0 rounded-lg border px-2 py-2 text-sm outline-none focus:border-zinc-400 sm:w-32"
-    : "w-[7.5rem] shrink-0 rounded-xl border px-2 py-3 text-sm outline-none focus:border-[#c4a35a] sm:w-32 sm:text-base";
+    ? "inline-flex min-w-[4.5rem] items-center justify-between rounded-lg border px-2 py-2 text-sm outline-none focus:border-zinc-400"
+    : "inline-flex min-w-[4.5rem] items-center justify-between rounded-xl border px-2 py-3 text-sm outline-none focus:border-[#c4a35a] sm:text-base";
   const phoneInputClassName = isWizard
     ? "min-w-0 flex-1 rounded-lg border px-3 py-2 text-sm outline-none focus:border-zinc-400"
     : "min-w-0 flex-1 rounded-xl border px-3 py-3 text-base outline-none focus:border-[#c4a35a]";
@@ -91,22 +91,15 @@ export function BookingClientFields({
       <div className="block text-sm">
         <span className={labelClassName}>Телефон</span>
         <div className="flex gap-2">
-          <select
+          <PhoneCountrySelect
             value={countryCode}
-            onChange={(event) => {
-              onCountryCodeChange(event.target.value as PhoneCountryCode);
+            onChange={(nextValue) => {
+              onCountryCodeChange(nextValue);
               onClearError?.("phone");
             }}
-            aria-label="Код страны"
+            borderColor={borderColor(Boolean(errors.phone))}
             className={phoneSelectClassName}
-            style={{ borderColor: borderColor(Boolean(errors.phone)) }}
-          >
-            {PHONE_COUNTRY_CODES.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          />
           <input
             type="tel"
             value={phoneLocal}

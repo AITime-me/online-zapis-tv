@@ -68,6 +68,9 @@ const UPCOMING_STATUSES: ReadonlySet<ClientBookingStatus> = new Set([
   "SCHEDULED",
   "CONFIRMED",
 ]);
+/** Записи, после которых клиент больше не считается на первом визите. */
+const FIRST_VISIT_DISQUALIFYING_STATUSES: ReadonlySet<ClientBookingStatus> =
+  new Set(["COMPLETED", "SCHEDULED", "CONFIRMED"]);
 
 export const EMPTY_CLIENT_CONTEXT: ClientContext = {
   clientId: null,
@@ -228,7 +231,10 @@ export function buildClientContext(
   const visitHistory = buildVisitHistory(bookings, now);
   const signals = buildBehaviorSignals(visitHistory, bookings);
   const isNewClient = visitHistory.completedVisits === 0;
-  const isFirstVisit = isNewClient;
+  const qualifyingAppointments = bookings.filter((booking) =>
+    FIRST_VISIT_DISQUALIFYING_STATUSES.has(booking.status),
+  ).length;
+  const isFirstVisit = qualifyingAppointments === 0;
 
   return {
     clientId,

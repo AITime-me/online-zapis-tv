@@ -1,7 +1,7 @@
 "use client";
 
+import Link from "next/link";
 import { formatDateKeyLabel } from "@/lib/datetime/date-layer";
-import { downloadBookingIcs } from "@/lib/booking/calendar-ics";
 import {
   bookingStudio,
   bookingStudioTelHref,
@@ -24,6 +24,7 @@ type BookingSuccessScreenProps = {
   dateKey: string;
   startTime: string;
   rulesResult?: RulesEngineResult | null;
+  manageUrl?: string | null;
   onBookAgain: () => void;
 };
 
@@ -59,18 +60,9 @@ export function BookingSuccessScreen({
   dateKey,
   startTime,
   rulesResult = null,
+  manageUrl = null,
   onBookAgain,
 }: BookingSuccessScreenProps) {
-  const handleAddToCalendar = () => {
-    downloadBookingIcs({
-      dateKey,
-      startTime,
-      durationMinutes: service.durationMinutes,
-      masterName: master.publicName,
-      serviceName: service.publicName,
-    });
-  };
-
   const hasRulesPrice =
     rulesResult != null &&
     (rulesResult.price.originalLabel != null ||
@@ -97,6 +89,9 @@ export function BookingSuccessScreen({
           </h2>
           <p className="text-base leading-relaxed text-[#6b7280] md:text-lg">
             Пусть это время будет только для вас ✨
+          </p>
+          <p className="text-sm leading-relaxed text-[#6b7280]">
+            Запись ожидает подтверждения менеджером студии.
           </p>
         </header>
 
@@ -138,11 +133,23 @@ export function BookingSuccessScreen({
         </section>
 
         <div className="space-y-3">
+          {manageUrl ? (
+            <Link
+              href={manageUrl}
+              className="flex min-h-12 w-full items-center justify-center rounded-xl px-5 py-3 text-base font-medium text-white transition hover:opacity-95 active:scale-[0.99]"
+              style={{ backgroundColor: bookingTheme.green }}
+            >
+              Управлять записью
+            </Link>
+          ) : null}
           <button
             type="button"
             onClick={onBookAgain}
-            className="flex min-h-12 w-full items-center justify-center rounded-xl px-5 py-3 text-base font-medium text-white transition hover:opacity-95 active:scale-[0.99]"
-            style={{ backgroundColor: bookingTheme.green }}
+            className="flex min-h-12 w-full items-center justify-center rounded-xl border px-5 py-3 text-base font-medium transition hover:bg-[#faf9f7] active:scale-[0.99]"
+            style={{
+              borderColor: bookingTheme.border,
+              color: bookingTheme.green,
+            }}
           >
             Записаться ещё раз
           </button>
@@ -156,17 +163,6 @@ export function BookingSuccessScreen({
           >
             Позвонить в студию
           </a>
-          <button
-            type="button"
-            onClick={handleAddToCalendar}
-            className="flex min-h-12 w-full items-center justify-center rounded-xl px-5 py-3 text-base font-medium transition hover:opacity-90 active:scale-[0.99]"
-            style={{
-              backgroundColor: `${bookingTheme.gold}22`,
-              color: bookingTheme.greenMuted,
-            }}
-          >
-            Добавить в календарь
-          </button>
           <p className="pt-1 text-center text-sm text-[#9ca3af]">
             {bookingStudio.phoneDisplay}
           </p>

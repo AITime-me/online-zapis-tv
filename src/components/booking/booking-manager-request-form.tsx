@@ -32,7 +32,7 @@ export function BookingManagerRequestForm({
   onClose,
 }: BookingManagerRequestFormProps) {
   const [name, setName] = useState("");
-  const [countryCode, setCountryCode] = useState<PhoneCountryCode>("+7");
+  const [countryCode, setCountryCode] = useState<PhoneCountryCode>("RU");
   const [phoneLocal, setPhoneLocal] = useState("");
   const [comment, setComment] = useState("");
   const [consent, setConsent] = useState(false);
@@ -79,7 +79,7 @@ export function BookingManagerRequestForm({
 
   const resetAndClose = () => {
     setName("");
-    setCountryCode("+7");
+    setCountryCode("RU");
     setPhoneLocal("");
     setComment("");
     setConsent(false);

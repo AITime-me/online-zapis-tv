@@ -36,13 +36,15 @@ import {
 import type { PublicClientContext } from "@/lib/client/client-context-engine";
 import {
   buildFullPhoneNumber,
-  isClientDataValid,
   type ClientDataFieldErrors,
   type PhoneCountryCode,
   validateClientContactFields,
-  validateClientData,
 } from "@/lib/booking/client-validation";
 import { bookingTheme } from "@/components/booking/booking-theme";
+import {
+  DEFAULT_BOOKING_ERROR,
+  readJsonResponse,
+} from "@/lib/booking/api-response";
 import {
   BOOKING_PROMOTIONS_GENERAL_NOTICE,
   evaluateBookingRules,
@@ -69,7 +71,7 @@ type BookingSelection = {
 
 const EMPTY_CLIENT_FIELDS = {
   name: "",
-  countryCode: "+7" as PhoneCountryCode,
+  countryCode: "RU" as PhoneCountryCode,
   phoneLocal: "",
   consent: false,
 };
@@ -156,6 +158,7 @@ export function BookingWizard() {
   const [clientPromoContextReady, setClientPromoContextReady] = useState(false);
   const [successRulesResult, setSuccessRulesResult] =
     useState<RulesEngineResult | null>(null);
+  const [successManageUrl, setSuccessManageUrl] = useState<string | null>(null);
 
   const resetWizard = useCallback(() => {
     setStep("service");
@@ -168,6 +171,7 @@ export function BookingWizard() {
       ...EMPTY_CLIENT_FIELDS,
     });
     setSuccessRulesResult(null);
+    setSuccessManageUrl(null);
     setClientPromoContext(null);
     setClientPromoContextReady(false);
     setClientFieldErrors({});
@@ -474,65 +478,132 @@ export function BookingWizard() {
     [selection.countryCode, selection.phoneLocal],
   );
 
-  const clientData = useMemo(
-    () => ({
-      clientName: selection.name,
-      clientPhone: fullPhone,
-      consent: selection.consent,
-    }),
-    [fullPhone, selection.consent, selection.name],
-  );
-
-  const canSubmitBooking = useMemo(
-    () => isClientDataValid(clientData) && !submitting,
-    [clientData, submitting],
-  );
+  const canSubmitContact = useMemo(() => {
+    const contactErrors = validateClientContactFields(
+      selection.name,
+      fullPhone,
+    );
+    return !contactErrors.name && !contactErrors.phone;
+  }, [fullPhone, selection.name]);
 
   const submitBooking = async () => {
+    console.log("[booking] submit fired", {
+      step,
+      serviceId: selection.service?.id ?? null,
+      masterId: selection.master?.id ?? null,
+      dateKey: selection.dateKey,
+      startTime: selection.startTime,
+      name: selection.name.trim(),
+      phone: fullPhone,
+      consent: selection.consent,
+      canSubmitContact,
+    });
+
     if (
       !selection.service ||
       !selection.master ||
       !selection.dateKey ||
       !selection.startTime
     ) {
+      console.warn("[booking] submit blocked: incomplete selection", {
+        hasService: Boolean(selection.service),
+        hasMaster: Boolean(selection.master),
+        dateKey: selection.dateKey,
+        startTime: selection.startTime,
+      });
       return;
     }
 
-    const validationErrors = validateClientData(clientData);
+    const validationErrors = validateClientContactFields(
+      selection.name,
+      fullPhone,
+    );
     setClientFieldErrors(validationErrors);
 
-    if (validationErrors.name || validationErrors.phone || validationErrors.consent) {
+    if (validationErrors.name || validationErrors.phone) {
+      console.warn("[booking] submit blocked: client validation", validationErrors);
       return;
     }
 
     setSubmitting(true);
     setError(null);
+
+    const createPayload = {
+      serviceId: selection.service.id,
+      masterId: selection.master.id,
+      date: selection.dateKey,
+      startTime: selection.startTime,
+      name: selection.name.trim(),
+      phone: fullPhone,
+      consent: true,
+    };
+
+    console.log("[booking] POST /api/booking/create", createPayload);
+
     try {
       const response = await fetch("/api/booking/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          serviceId: selection.service.id,
-          masterId: selection.master.id,
-          date: selection.dateKey,
-          startTime: selection.startTime,
-          name: selection.name.trim(),
-          phone: fullPhone,
-          consent: true,
-        }),
+        body: JSON.stringify(createPayload),
       });
-      const data = (await response.json()) as {
+
+      type CreateBookingResponse = {
         ok?: boolean;
         error?: string;
+        code?: string;
+        stack?: string;
+        detail?: unknown;
         fieldErrors?: ClientDataFieldErrors;
+        manageUrl?: string | null;
+        appointment?: {
+          serviceName: string | null;
+          startsAt: string;
+          status: string;
+          source: string;
+        };
       };
-      if (!response.ok || !data.ok) {
+
+      const { data, parseError, rawText } = await readJsonResponse<CreateBookingResponse>(
+        response,
+      );
+
+      if (parseError) {
+        console.error("[booking/create] empty or invalid JSON body", {
+          status: response.status,
+          statusText: response.statusText,
+          rawText: rawText?.slice(0, 500),
+        });
+        throw new Error(parseError);
+      }
+
+      if (!data) {
+        throw new Error(DEFAULT_BOOKING_ERROR);
+      }
+
+      if (!response.ok || data.ok !== true) {
+        const failurePayload = {
+          status: response.status,
+          ok: data.ok,
+          error: data.error,
+          code: data.code,
+          stack: data.stack,
+          detail: data.detail,
+          fieldErrors: data.fieldErrors,
+          rawText: rawText?.slice(0, 500),
+        };
+        console.error("[booking/create] failed:", failurePayload);
         if (data.fieldErrors) {
           setClientFieldErrors(data.fieldErrors);
         }
-        throw new Error(data.error ?? "Не удалось создать запись");
+        throw new Error(
+          typeof data.error === "string" && data.error.trim()
+            ? data.error
+            : DEFAULT_BOOKING_ERROR,
+        );
       }
+
       setSuccessRulesResult(bookingRulesResult);
+      setSuccessManageUrl(data.manageUrl ?? null);
       setStep("success");
     } catch (submitError) {
       setError(
@@ -725,6 +796,7 @@ export function BookingWizard() {
           dateKey={selection.dateKey}
           startTime={selection.startTime}
           rulesResult={successRulesResult}
+          manageUrl={successManageUrl}
           onBookAgain={resetWizard}
         />
       </div>
@@ -1065,6 +1137,7 @@ export function BookingWizard() {
             />
             <BookingClientFields
               variant="wizard"
+              showConsent={false}
               name={selection.name}
               onNameChange={(value) =>
                 setSelection((prev) => ({ ...prev, name: value }))
@@ -1092,9 +1165,9 @@ export function BookingWizard() {
             <BookingLegalConfirmNotice />
             <button
               type="button"
-              disabled={!canSubmitBooking}
+              disabled={submitting}
               onClick={() => void submitBooking()}
-              className="w-full rounded-lg bg-zinc-900 px-4 py-3 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:opacity-60"
+              className={`w-full rounded-lg bg-zinc-900 px-4 py-3 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:opacity-60${!canSubmitContact && !submitting ? " opacity-80" : ""}`}
             >
               {submitting ? "Записываем…" : "Записаться"}
             </button>

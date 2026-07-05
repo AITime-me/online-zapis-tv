@@ -1,10 +1,7 @@
-import {
-  AppointmentSource,
-  AppointmentStatus,
-  type Appointment,
-  type Prisma,
-} from "@prisma/client";
+import { AppointmentSource, AppointmentStatus, type Appointment, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { logServiceError } from "@/lib/errors/format-service-error";
+import { parseAppliedPromotions } from "@/lib/promo/applied-promotions";
 import {
   addMinutesSafe,
   diffMinutes,
@@ -26,6 +23,8 @@ import {
   calculateAppointmentEndsAt,
   resolveServiceTimingForMaster,
 } from "@/services/ServiceTimingService";
+import { createManageToken } from "@/services/BookingManageService";
+import type { AppliedPromotionRecord } from "@/types/applied-promotion";
 
 const APPOINTMENT_BUSY_CONFLICT_MESSAGE =
   "У мастера уже есть запись или перерыв в это время.";
@@ -58,6 +57,7 @@ export type AppointmentWriteInput = {
   importantNote?: string | null;
   isBold?: boolean;
   isManualTimeOverride?: boolean;
+  appliedPromotions?: AppliedPromotionRecord[] | null;
 };
 
 export type AppointmentDto = {
@@ -76,6 +76,8 @@ export type AppointmentDto = {
   source: string;
   statusCode: AppointmentStatus;
   sourceCode: AppointmentSource;
+  manageToken?: string | null;
+  appliedPromotions: AppliedPromotionRecord[];
 };
 
 function mapAppointment(
@@ -97,6 +99,8 @@ function mapAppointment(
     source: APPOINTMENT_SOURCE_LABELS[appointment.source],
     statusCode: appointment.status,
     sourceCode: appointment.source,
+    manageToken: appointment.manageToken,
+    appliedPromotions: parseAppliedPromotions(appointment.appliedPromotions),
   };
 }
 
@@ -323,16 +327,43 @@ async function createAppointmentRecord(
   input: AppointmentWriteInput,
   createdByUserId: string | null,
 ): Promise<AppointmentDto> {
-  await assertNoBlockingConflict(input);
+  try {
+    if (!input.masterId?.trim()) {
+      throw new AppointmentValidationError("Не указан мастер");
+    }
+    if (!input.serviceId?.trim()) {
+      throw new AppointmentValidationError("Не указана услуга");
+    }
+    if (!input.status) {
+      throw new AppointmentValidationError("Не указан статус записи");
+    }
+    if (!input.clientName?.trim()) {
+      throw new AppointmentValidationError("Не указано имя клиента");
+    }
+    if (!input.clientPhone?.trim()) {
+      throw new AppointmentValidationError("Не указан телефон клиента");
+    }
 
-  const startsAt = parseStudioDateTime(input.dateKey, input.startTime);
-  const endsAt = parseStudioDateTime(input.dateKey, input.endTime);
-  const timingFields = await resolveTimingFields(input, startsAt, endsAt);
+    await assertNoBlockingConflict(input);
 
-  const appointment = await prisma.appointment.create({
-    data: {
-      masterId: input.masterId,
-      serviceId: input.serviceId ?? null,
+    const startsAt = parseStudioDateTime(input.dateKey, input.startTime);
+    const endsAt = parseStudioDateTime(input.dateKey, input.endTime);
+
+    if (!Number.isFinite(startsAt.getTime()) || !Number.isFinite(endsAt.getTime())) {
+      throw new AppointmentValidationError("Некорректные дата или время записи");
+    }
+
+    const timingFields = await resolveTimingFields(input, startsAt, endsAt);
+    const manageToken =
+      input.source === "ONLINE" ? createManageToken() : null;
+
+    if (input.source === "ONLINE" && !manageToken) {
+      throw new AppointmentValidationError("Не удалось сгенерировать manageToken");
+    }
+
+    const createPayload: Prisma.AppointmentCreateInput = {
+      master: { connect: { id: input.masterId } },
+      service: { connect: { id: input.serviceId! } },
       startsAt,
       endsAt,
       clientName: input.clientName.trim(),
@@ -342,13 +373,47 @@ async function createAppointmentRecord(
       isBold: input.isBold ?? false,
       status: input.status,
       source: input.source,
-      createdByUserId,
+      manageToken,
+      ...(createdByUserId
+        ? { createdByUser: { connect: { id: createdByUserId } } }
+        : {}),
+      ...(input.appliedPromotions && input.appliedPromotions.length > 0
+        ? {
+            appliedPromotions: input.appliedPromotions as Prisma.InputJsonValue,
+          }
+        : {}),
       ...timingFields,
-    },
-    include: { service: true },
-  });
+    };
 
-  return mapAppointment(appointment);
+    console.error("[appointment.create] payload:", {
+      masterId: input.masterId,
+      serviceId: input.serviceId,
+      startsAt: startsAt.toISOString(),
+      endsAt: endsAt.toISOString(),
+      status: input.status,
+      source: input.source,
+      manageToken: manageToken ? "[generated]" : null,
+      appliedPromotionsCount: input.appliedPromotions?.length ?? 0,
+      serviceDurationMinutes: timingFields.serviceDurationMinutes,
+      breakAfterMinutes: timingFields.breakAfterMinutes,
+    });
+
+    const appointment = await prisma.appointment.create({
+      data: createPayload,
+      include: { service: true },
+    });
+
+    if (input.source === "ONLINE" && !appointment.manageToken) {
+      throw new AppointmentValidationError(
+        "Запись создана без manageToken — проверьте миграцию appointments.manage_token",
+      );
+    }
+
+    return mapAppointment(appointment);
+  } catch (error) {
+    logServiceError("appointment.create", error);
+    throw error;
+  }
 }
 
 export async function updateAppointment(

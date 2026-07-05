@@ -23,6 +23,8 @@ import {
   fromPriceBounds,
   getBasePrice,
 } from "@/lib/pricing/price-layer";
+import { evaluateStoredAppliedPromotions } from "@/lib/promo/applied-promotions";
+import { resolveClientContextByPhone } from "@/services/ClientContextService";
 
 export type BookingServiceMode = "ONLINE" | "MANAGER_ONLY";
 
@@ -97,6 +99,19 @@ function addMinutesToTime(dateKey: string, time: string, minutes: number): strin
 
 function compareTimeStrings(left: string, right: string): number {
   return left.localeCompare(right);
+}
+
+async function loadServicePromoContext(serviceId: string) {
+  return prisma.service.findUnique({
+    where: { id: serviceId },
+    select: {
+      categoryId: true,
+      price: true,
+      priceFrom: true,
+      priceTo: true,
+      category: { select: { name: true } },
+    },
+  });
 }
 
 async function assertOnlineBookable(
@@ -610,6 +625,35 @@ export async function createOnlineBooking(input: OnlineBookingInput) {
   }
 
   const timing = await assertOnlineBookable(input.masterId, input.serviceId);
+  const [serviceContext, clientContext] = await Promise.all([
+    loadServicePromoContext(input.serviceId),
+    resolveClientContextByPhone(phone),
+  ]);
+
+  const priceBounds = fromPriceBounds(
+    decimalToNumber(serviceContext?.priceFrom ?? serviceContext?.price),
+    decimalToNumber(serviceContext?.priceTo ?? serviceContext?.priceFrom ?? serviceContext?.price),
+  );
+
+  const appliedPromotions = evaluateStoredAppliedPromotions({
+    serviceId: input.serviceId,
+    categoryId: serviceContext?.categoryId,
+    categoryName: serviceContext?.category?.name,
+    clientContext: {
+      isFirstVisit: clientContext.isFirstVisit,
+      isNewClient: clientContext.isNewClient,
+    },
+    basePrice: priceBounds ? getBasePrice(priceBounds) : null,
+    priceMax: priceBounds?.max ?? null,
+  });
+
+  console.error("[booking/createOnlineBooking] client promo context:", {
+    phoneSuffix: phone.replace(/\D/g, "").slice(-10),
+    isFirstVisit: clientContext.isFirstVisit,
+    qualifyingBookings: clientContext.visitHistory.totalBookings,
+    appliedPromotionsCount: appliedPromotions.length,
+  });
+
   const endTime = addMinutesToTime(
     input.date,
     input.startTime,
@@ -624,5 +668,6 @@ export async function createOnlineBooking(input: OnlineBookingInput) {
     serviceId: input.serviceId,
     clientName: name,
     clientPhone: phone,
+    appliedPromotions,
   });
 }

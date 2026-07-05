@@ -1,11 +1,8 @@
 import { prisma } from "@/lib/db";
 import { ManagerNoteType } from "@prisma/client";
 import { getStudioDayRangeFromDateKey } from "@/lib/datetime/studio";
-import {
-  APPOINTMENT_SOURCE_LABELS,
-  APPOINTMENT_STATUS_LABELS,
-  getBlockDisplayLabel,
-} from "@/lib/schedule/labels";
+import { getBlockDisplayLabel } from "@/lib/schedule/labels";
+import { mapScheduleDayAppointment } from "@/lib/schedule/map-schedule-appointment";
 import type { ScheduleDayData } from "@/types/schedule";
 
 export async function getScheduleDayData(
@@ -71,23 +68,7 @@ export async function getScheduleDayData(
       id: master.id,
       internalName: master.internalName,
       publicName: master.publicName,
-      appointments: master.appointments.map((appointment) => ({
-        id: appointment.id,
-        serviceId: appointment.serviceId,
-        startsAt: appointment.startsAt.toISOString(),
-        endsAt: appointment.endsAt.toISOString(),
-        clientName: appointment.clientName,
-        clientPhone: appointment.clientPhone,
-        serviceName: appointment.service?.publicName ?? null,
-        comment: appointment.comment,
-        importantNote: appointment.importantNote,
-        isBold: appointment.isBold,
-        isManualTimeOverride: appointment.isManualTimeOverride,
-        status: APPOINTMENT_STATUS_LABELS[appointment.status],
-        source: APPOINTMENT_SOURCE_LABELS[appointment.source],
-        statusCode: appointment.status,
-        sourceCode: appointment.source,
-      })),
+      appointments: master.appointments.map(mapScheduleDayAppointment),
       scheduleBlocks: master.scheduleBlocks.map((block) => ({
         id: block.id,
         startsAt: block.isFullDay ? "" : (block.startsAt?.toISOString() ?? ""),

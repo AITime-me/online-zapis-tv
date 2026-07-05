@@ -5,6 +5,7 @@ import {
   cellHasFullDayBlock,
   formatMonthCellLine,
 } from "@/components/schedule/schedule-month-cell-content";
+import { AppointmentPromoBadges } from "@/components/schedule/appointment-promo-badges";
 
 export function ScheduleMonthCell({
   items,
@@ -57,12 +58,20 @@ export function ScheduleMonthCell({
                     line.isBlock && !line.isFullDayBlock ? "text-zinc-600" : ""
                   } ${line.isExtraWork ? "text-[#1a73e8]" : ""}`}
                 >
-                  {line.text}
+                  {line.title}
                 </div>
+                {line.subtitle ? (
+                  <div className="text-[9px] tabular-nums text-zinc-500">
+                    {line.subtitle}
+                  </div>
+                ) : null}
                 {line.hasImportantNote && item.kind === "appointment" ? (
                   <div className="text-[9px] leading-tight text-amber-800">
                     ⚠ {item.importantNote}
                   </div>
+                ) : null}
+                {item.kind === "appointment" && line.hasPromotions ? (
+                  <AppointmentPromoBadges promotions={item.appliedPromotions} />
                 ) : null}
               </div>
             );

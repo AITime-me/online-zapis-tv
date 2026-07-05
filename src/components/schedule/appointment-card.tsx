@@ -1,4 +1,6 @@
 import { formatStudioTime } from "@/lib/datetime/date-layer";
+import { getScheduleAppointmentTitle } from "@/lib/schedule/appointment-display";
+import { AppointmentPromoBadges } from "@/components/schedule/appointment-promo-badges";
 import type { ScheduleDayAppointment } from "@/types/schedule";
 
 export function AppointmentCard({
@@ -7,6 +9,7 @@ export function AppointmentCard({
   appointment: ScheduleDayAppointment;
 }) {
   const timeLabel = `${formatStudioTime(appointment.startsAt)} – ${formatStudioTime(appointment.endsAt)}`;
+  const title = getScheduleAppointmentTitle(appointment.serviceName);
 
   return (
     <article
@@ -14,29 +17,20 @@ export function AppointmentCard({
         appointment.isBold ? "font-bold" : ""
       }`}
     >
+      <div className="text-zinc-900">{title}</div>
+
       <div className="tabular-nums text-[10px] font-normal text-zinc-500">
         {timeLabel}
       </div>
 
-      <div className="text-zinc-900">
-        {appointment.clientName}
-        {appointment.serviceName ? (
-          <span className="font-normal text-zinc-600">
-            {" "}
-            · {appointment.serviceName}
-          </span>
-        ) : null}
-      </div>
+      <AppointmentPromoBadges
+        promotions={appointment.appliedPromotions}
+        className="mt-0.5"
+      />
 
       {appointment.importantNote ? (
         <div className="mt-0.5 bg-amber-50 px-1 py-px text-[10px] leading-tight text-amber-900">
           ⚠ {appointment.importantNote}
-        </div>
-      ) : null}
-
-      {appointment.comment ? (
-        <div className="mt-0.5 line-clamp-2 text-[10px] font-normal text-zinc-500">
-          {appointment.comment}
         </div>
       ) : null}
 

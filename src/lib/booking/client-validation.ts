@@ -2,6 +2,14 @@ export const MIN_CLIENT_NAME_LENGTH = 2;
 export const MIN_PHONE_DIGITS = 10;
 export const MAX_PHONE_DIGITS = 15;
 
+import {
+  DEFAULT_PHONE_COUNTRY_CODE,
+  getDialCode,
+  getPhonePlaceholder,
+  PHONE_COUNTRY_OPTIONS,
+  type PhoneCountryCode,
+} from "@/lib/phone/country-codes";
+
 export type ClientDataFieldErrors = {
   name?: string;
   phone?: string;
@@ -14,14 +22,16 @@ export type ClientDataInput = {
   consent: boolean;
 };
 
-export const PHONE_COUNTRY_CODES = [
-  { value: "+7", label: "+7 (Россия)" },
-  { value: "+49", label: "+49 (Германия)" },
-  { value: "+375", label: "+375 (Беларусь)" },
-  { value: "+1", label: "+1 (США)" },
-] as const;
-
-export type PhoneCountryCode = (typeof PHONE_COUNTRY_CODES)[number]["value"];
+export {
+  DEFAULT_PHONE_COUNTRY_CODE,
+  getDialCode,
+  getPhoneCountryOption,
+  getPhonePlaceholder,
+  PHONE_COUNTRY_CODES,
+  PHONE_COUNTRY_OPTIONS,
+  type PhoneCountryCode,
+  type PhoneCountryId,
+} from "@/lib/phone/country-codes";
 
 export const CLIENT_DATA_CONSENT_ERROR =
   "Необходимо согласие на обработку персональных данных";
@@ -37,7 +47,7 @@ export function normalizeLocalPhoneDigits(
   let digits = localPhone.replace(/\D/g, "");
 
   if (
-    countryCode === "+7" &&
+    getDialCode(countryCode) === "+7" &&
     digits.length === 11 &&
     (digits.startsWith("7") || digits.startsWith("8"))
   ) {
@@ -52,7 +62,7 @@ export function buildFullPhoneNumber(
   localPhone: string,
 ): string {
   const localDigits = normalizeLocalPhoneDigits(countryCode, localPhone);
-  const codeDigits = countryCode.replace(/\D/g, "");
+  const codeDigits = getDialCode(countryCode).replace(/\D/g, "");
 
   if (!localDigits) {
     return "";
@@ -109,21 +119,6 @@ export function hasClientDataErrors(errors: ClientDataFieldErrors): boolean {
 
 export function isClientDataValid(input: ClientDataInput): boolean {
   return !hasClientDataErrors(validateClientData(input));
-}
-
-export function getPhonePlaceholder(countryCode: PhoneCountryCode): string {
-  switch (countryCode) {
-    case "+7":
-      return "912 979-30-90";
-    case "+49":
-      return "151 23456789";
-    case "+375":
-      return "29 123-45-67";
-    case "+1":
-      return "212 555-0123";
-    default:
-      return "";
-  }
 }
 
 export function getFirstClientDataError(

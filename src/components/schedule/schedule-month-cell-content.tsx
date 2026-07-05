@@ -1,48 +1,55 @@
 import type { ScheduleMonthCellItem } from "@/types/schedule-month";
 import { formatStudioTimeRange } from "@/lib/datetime/date-layer";
+import { getScheduleAppointmentTitle } from "@/lib/schedule/appointment-display";
 
 export function formatMonthCellLine(item: ScheduleMonthCellItem): {
-  text: string;
+  title: string;
+  subtitle: string | null;
   isBold: boolean;
   isBlock: boolean;
   isFullDayBlock: boolean;
   isExtraWork: boolean;
   hasImportantNote: boolean;
+  hasPromotions: boolean;
 } {
   if (item.kind === "appointment") {
-    const time = formatStudioTimeRange(item.startsAt, item.endsAt);
-    const servicePart = item.serviceName ? ` · ${item.serviceName}` : "";
     return {
-      text: `${time} ${item.clientName}${servicePart}`,
+      title: getScheduleAppointmentTitle(item.serviceName),
+      subtitle: formatStudioTimeRange(item.startsAt, item.endsAt),
       isBold: item.isBold,
       isBlock: false,
       isFullDayBlock: false,
       isExtraWork: false,
       hasImportantNote: Boolean(item.importantNote),
+      hasPromotions: item.appliedPromotions.length > 0,
     };
   }
 
   if (item.kind === "block") {
     if (item.isFullDay || !item.startsAt || !item.endsAt) {
       return {
-        text: item.blockTypeLabel,
+        title: item.blockTypeLabel,
+        subtitle: null,
         isBold: true,
         isBlock: true,
         isFullDayBlock: true,
         isExtraWork: false,
         hasImportantNote: false,
+        hasPromotions: false,
       };
     }
 
     const time = formatStudioTimeRange(item.startsAt, item.endsAt);
     const reason = item.blockTypeLabel || item.internalReason || "Блок";
     return {
-      text: `БЛОК ${time} ${reason}`,
+      title: `БЛОК ${reason}`,
+      subtitle: time,
       isBold: false,
       isBlock: true,
       isFullDayBlock: false,
       isExtraWork: false,
       hasImportantNote: false,
+      hasPromotions: false,
     };
   }
 
@@ -51,12 +58,14 @@ export function formatMonthCellLine(item: ScheduleMonthCellItem): {
       ? formatStudioTimeRange(item.startsAt, item.endsAt)
       : "—";
   return {
-    text: `+ ${time}`,
+    title: "+ Доп. окно",
+    subtitle: time,
     isBold: false,
     isBlock: false,
     isFullDayBlock: false,
     isExtraWork: true,
     hasImportantNote: false,
+    hasPromotions: false,
   };
 }
 

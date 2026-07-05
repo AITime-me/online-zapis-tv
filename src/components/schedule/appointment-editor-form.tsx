@@ -14,6 +14,8 @@ import {
 import type { ScheduleEditorFieldKey } from "@/lib/schedule/editor-field-labels";
 import type { EditorServiceOption } from "@/services/ScheduleEditorOptionsService";
 import { EditorCheckboxField, EditorField } from "@/components/schedule/editor-field";
+import { getScheduleAppointmentTitle } from "@/lib/schedule/appointment-display";
+import { AppointmentPromoBadges } from "@/components/schedule/appointment-promo-badges";
 
 export type { EditorOptions };
 
@@ -316,13 +318,16 @@ export function AppointmentEditorForm({
   if (!canEdit) {
     return (
       <article className="border border-[#e8eaed] px-2 py-1 text-xs">
+        <div className={appointment.isBold ? "font-bold" : ""}>
+          {getScheduleAppointmentTitle(appointment.serviceName)}
+        </div>
         <div className="tabular-nums text-[10px] text-zinc-500">
           {form.startTime}–{form.endTime}
         </div>
-        <div className={appointment.isBold ? "font-bold" : ""}>
-          {appointment.clientName}
-          {appointment.serviceName ? ` · ${appointment.serviceName}` : ""}
-        </div>
+        <AppointmentPromoBadges
+          promotions={appointment.appliedPromotions}
+          className="mt-0.5"
+        />
       </article>
     );
   }

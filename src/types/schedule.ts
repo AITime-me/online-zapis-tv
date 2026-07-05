@@ -1,3 +1,5 @@
+import type { AppliedPromotionRecord } from "@/types/applied-promotion";
+
 export type ScheduleDayAppointment = {
   id: string;
   serviceId: string | null;
@@ -14,6 +16,7 @@ export type ScheduleDayAppointment = {
   source: string;
   statusCode: string;
   sourceCode: string;
+  appliedPromotions: AppliedPromotionRecord[];
 };
 
 export type ScheduleDayBlock = {

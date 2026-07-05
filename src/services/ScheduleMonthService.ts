@@ -7,11 +7,10 @@ import {
 } from "@/lib/datetime/date-layer";
 import { getStudioMonthRangeFromMonthKey } from "@/lib/datetime/studio";
 import {
-  APPOINTMENT_SOURCE_LABELS,
-  APPOINTMENT_STATUS_LABELS,
   getBlockDisplayLabel,
 } from "@/lib/schedule/labels";
 import { compareScheduleMonthCellItems } from "@/lib/schedule/datetime-guards";
+import { mapScheduleDayAppointment } from "@/lib/schedule/map-schedule-appointment";
 import type {
   ScheduleMonthCellItem,
   ScheduleMonthData,
@@ -25,21 +24,7 @@ function mapAppointment(
 ): ScheduleMonthCellItem {
   return {
     kind: "appointment",
-    id: appointment.id,
-    serviceId: appointment.serviceId,
-    startsAt: appointment.startsAt.toISOString(),
-    endsAt: appointment.endsAt.toISOString(),
-    clientName: appointment.clientName,
-    clientPhone: appointment.clientPhone,
-    serviceName: appointment.service?.publicName ?? null,
-    comment: appointment.comment,
-    importantNote: appointment.importantNote,
-    isBold: appointment.isBold,
-    isManualTimeOverride: appointment.isManualTimeOverride,
-    status: APPOINTMENT_STATUS_LABELS[appointment.status],
-    source: APPOINTMENT_SOURCE_LABELS[appointment.source],
-    statusCode: appointment.status,
-    sourceCode: appointment.source,
+    ...mapScheduleDayAppointment(appointment),
   };
 }
 

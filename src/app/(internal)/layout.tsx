@@ -1,11 +1,11 @@
 "use client";
 
-import { SessionProvider } from "next-auth/react";
+import { SafeSessionProvider } from "@/components/auth/safe-session-provider";
 
 export default function InternalLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  return <SessionProvider>{children}</SessionProvider>;
+  return <SafeSessionProvider>{children}</SafeSessionProvider>;
 }
