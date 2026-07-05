@@ -90,8 +90,12 @@ function resolveClientContext(input: RulesEngineInput): ClientContext {
   if (input.clientContext) {
     return {
       ...EMPTY_CLIENT_CONTEXT,
-      isFirstVisit: input.clientContext.isFirstVisit,
-      isNewClient: input.clientContext.isNewClient,
+      ...(input.clientContext.isFirstVisit !== undefined
+        ? { isFirstVisit: input.clientContext.isFirstVisit }
+        : {}),
+      ...(input.clientContext.isNewClient !== undefined
+        ? { isNewClient: input.clientContext.isNewClient }
+        : {}),
     };
   }
 

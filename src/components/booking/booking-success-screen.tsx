@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { formatDateKeyLabel } from "@/lib/datetime/date-layer";
 import { downloadBookingIcs } from "@/lib/booking/calendar-ics";
 import {
@@ -8,7 +7,12 @@ import {
   bookingStudioTelHref,
 } from "@/components/booking/booking-config";
 import { BookingConfetti } from "@/components/booking/booking-confetti";
+import {
+  BookingRulesConfirmBlock,
+  BookingRulesPriceSummary,
+} from "@/components/booking/booking-promotion-ui";
 import { bookingTheme } from "@/components/booking/booking-theme";
+import type { RulesEngineResult } from "@/lib/promo/rules-engine";
 import type {
   BookingCatalogMaster,
   BookingCatalogService,
@@ -19,6 +23,8 @@ type BookingSuccessScreenProps = {
   master: BookingCatalogMaster;
   dateKey: string;
   startTime: string;
+  rulesResult?: RulesEngineResult | null;
+  onBookAgain: () => void;
 };
 
 function formatDuration(minutes: number): string {
@@ -52,6 +58,8 @@ export function BookingSuccessScreen({
   master,
   dateKey,
   startTime,
+  rulesResult = null,
+  onBookAgain,
 }: BookingSuccessScreenProps) {
   const handleAddToCalendar = () => {
     downloadBookingIcs({
@@ -62,6 +70,12 @@ export function BookingSuccessScreen({
       serviceName: service.publicName,
     });
   };
+
+  const hasRulesPrice =
+    rulesResult != null &&
+    (rulesResult.price.originalLabel != null ||
+      rulesResult.promos.length > 0 ||
+      rulesResult.gifts.length > 0);
 
   return (
     <>
@@ -108,20 +122,30 @@ export function BookingSuccessScreen({
               label="Длительность"
               value={formatDuration(service.durationMinutes)}
             />
-            {service.priceLabel && (
+            {hasRulesPrice ? (
+              <div className="py-3">
+                <BookingRulesPriceSummary rulesResult={rulesResult} />
+              </div>
+            ) : service.priceLabel ? (
               <DetailRow label="Цена" value={service.priceLabel} />
-            )}
+            ) : null}
           </dl>
+          {rulesResult?.confirmSections.length ? (
+            <div className="mt-4">
+              <BookingRulesConfirmBlock sections={rulesResult.confirmSections} />
+            </div>
+          ) : null}
         </section>
 
         <div className="space-y-3">
-          <Link
-            href="/booking"
+          <button
+            type="button"
+            onClick={onBookAgain}
             className="flex min-h-12 w-full items-center justify-center rounded-xl px-5 py-3 text-base font-medium text-white transition hover:opacity-95 active:scale-[0.99]"
             style={{ backgroundColor: bookingTheme.green }}
           >
             Записаться ещё раз
-          </Link>
+          </button>
           <a
             href={bookingStudioTelHref}
             className="flex min-h-12 w-full items-center justify-center rounded-xl border px-5 py-3 text-base font-medium transition hover:bg-[#faf9f7] active:scale-[0.99]"

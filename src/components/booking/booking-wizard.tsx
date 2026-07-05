@@ -47,6 +47,7 @@ import {
   BOOKING_PROMOTIONS_GENERAL_NOTICE,
   evaluateBookingRules,
 } from "@/lib/booking/promotions";
+import type { RulesEngineResult } from "@/lib/promo/rules-engine";
 import type {
   BookingCatalogCategory,
   BookingCatalogMaster,
@@ -152,6 +153,31 @@ export function BookingWizard() {
   );
   const [clientPromoContext, setClientPromoContext] =
     useState<PublicClientContext | null>(null);
+  const [clientPromoContextReady, setClientPromoContextReady] = useState(false);
+  const [successRulesResult, setSuccessRulesResult] =
+    useState<RulesEngineResult | null>(null);
+
+  const resetWizard = useCallback(() => {
+    setStep("service");
+    setBookingPath("by-service");
+    setSelection({
+      service: null,
+      master: null,
+      dateKey: null,
+      startTime: null,
+      ...EMPTY_CLIENT_FIELDS,
+    });
+    setSuccessRulesResult(null);
+    setClientPromoContext(null);
+    setClientPromoContextReady(false);
+    setClientFieldErrors({});
+    setError(null);
+    setSelectedCategoryId(null);
+    setServiceStepKey((key) => key + 1);
+    setMasterFirstView("masters");
+    setAvailableDays([]);
+    setSlots([]);
+  }, []);
 
   const confirmPhone = useMemo(
     () => buildFullPhoneNumber(selection.countryCode, selection.phoneLocal),
@@ -506,6 +532,7 @@ export function BookingWizard() {
         }
         throw new Error(data.error ?? "Не удалось создать запись");
       }
+      setSuccessRulesResult(bookingRulesResult);
       setStep("success");
     } catch (submitError) {
       setError(
@@ -566,10 +593,13 @@ export function BookingWizard() {
   useEffect(() => {
     if (step !== "confirm" || !isConfirmPhoneValid) {
       setClientPromoContext(null);
+      setClientPromoContextReady(false);
       return;
     }
 
     let cancelled = false;
+    setClientPromoContextReady(false);
+
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
@@ -583,17 +613,18 @@ export function BookingWizard() {
             context?: PublicClientContext;
           };
 
-          if (!cancelled && data.ok && data.context) {
-            setClientPromoContext(data.context);
-            return;
-          }
-
           if (!cancelled) {
-            setClientPromoContext(null);
+            if (data.ok && data.context) {
+              setClientPromoContext(data.context);
+            } else {
+              setClientPromoContext(null);
+            }
+            setClientPromoContextReady(true);
           }
         } catch {
           if (!cancelled) {
             setClientPromoContext(null);
+            setClientPromoContextReady(true);
           }
         }
       })();
@@ -610,23 +641,27 @@ export function BookingWizard() {
       return null;
     }
 
+    const resolvedClientContext =
+      clientPromoContextReady && clientPromoContext
+        ? {
+            isFirstVisit: clientPromoContext.isFirstVisit,
+            isNewClient: clientPromoContext.isNewClient,
+          }
+        : undefined;
+
     return evaluateBookingRules({
       serviceId: confirmPromoContext.serviceId,
       categoryId: confirmPromoContext.categoryId,
       categoryName: confirmPromoContext.categoryName,
       basePrice: confirmPromoContext.basePrice,
-      clientContext: clientPromoContext
-        ? {
-            isFirstVisit: clientPromoContext.isFirstVisit,
-            isNewClient: clientPromoContext.isNewClient,
-          }
-        : undefined,
+      clientContext: resolvedClientContext,
       client: {
         phone: confirmPhone.trim() ? confirmPhone : undefined,
       },
     });
   }, [
     clientPromoContext,
+    clientPromoContextReady,
     confirmPhone,
     confirmPromoContext,
     selection.service,
@@ -689,6 +724,8 @@ export function BookingWizard() {
           master={selection.master}
           dateKey={selection.dateKey}
           startTime={selection.startTime}
+          rulesResult={successRulesResult}
+          onBookAgain={resetWizard}
         />
       </div>
     );
