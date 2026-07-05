@@ -33,11 +33,13 @@ import {
   BookingPromotionGeneralNotice,
   BookingRulesPriceSummary,
 } from "@/components/booking/booking-promotion-ui";
+import type { PublicClientContext } from "@/lib/client/client-context-engine";
 import {
   buildFullPhoneNumber,
   isClientDataValid,
   type ClientDataFieldErrors,
   type PhoneCountryCode,
+  validateClientContactFields,
   validateClientData,
 } from "@/lib/booking/client-validation";
 import { bookingTheme } from "@/components/booking/booking-theme";
@@ -148,6 +150,18 @@ export function BookingWizard() {
   const [clientFieldErrors, setClientFieldErrors] = useState<ClientDataFieldErrors>(
     {},
   );
+  const [clientPromoContext, setClientPromoContext] =
+    useState<PublicClientContext | null>(null);
+
+  const confirmPhone = useMemo(
+    () => buildFullPhoneNumber(selection.countryCode, selection.phoneLocal),
+    [selection.countryCode, selection.phoneLocal],
+  );
+
+  const isConfirmPhoneValid = useMemo(() => {
+    const phoneErrors = validateClientContactFields(selection.name, confirmPhone);
+    return !phoneErrors.phone;
+  }, [confirmPhone, selection.name]);
 
   useEffect(() => {
     let cancelled = false;
@@ -549,29 +563,72 @@ export function BookingWizard() {
     };
   }, [categories, selectedCategoryId, selectedCategoryName, selection.service]);
 
+  useEffect(() => {
+    if (step !== "confirm" || !isConfirmPhoneValid) {
+      setClientPromoContext(null);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const response = await fetch("/api/booking/client-context", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ phone: confirmPhone }),
+          });
+          const data = (await response.json()) as {
+            ok?: boolean;
+            context?: PublicClientContext;
+          };
+
+          if (!cancelled && data.ok && data.context) {
+            setClientPromoContext(data.context);
+            return;
+          }
+
+          if (!cancelled) {
+            setClientPromoContext(null);
+          }
+        } catch {
+          if (!cancelled) {
+            setClientPromoContext(null);
+          }
+        }
+      })();
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [confirmPhone, isConfirmPhoneValid, step]);
+
   const bookingRulesResult = useMemo(() => {
     if (!selection.service || !confirmPromoContext) {
       return null;
     }
-
-    const phone = buildFullPhoneNumber(
-      selection.countryCode,
-      selection.phoneLocal,
-    );
 
     return evaluateBookingRules({
       serviceId: confirmPromoContext.serviceId,
       categoryId: confirmPromoContext.categoryId,
       categoryName: confirmPromoContext.categoryName,
       basePrice: confirmPromoContext.basePrice,
+      clientContext: clientPromoContext
+        ? {
+            isFirstVisit: clientPromoContext.isFirstVisit,
+            isNewClient: clientPromoContext.isNewClient,
+          }
+        : undefined,
       client: {
-        phone: phone.trim() ? phone : undefined,
+        phone: confirmPhone.trim() ? confirmPhone : undefined,
       },
     });
   }, [
+    clientPromoContext,
+    confirmPhone,
     confirmPromoContext,
-    selection.countryCode,
-    selection.phoneLocal,
     selection.service,
   ]);
 

@@ -49,6 +49,20 @@ export type ClientContext = {
   signals: ClientBehaviorSignals;
 };
 
+/** Безопасный контекст для публичного booking API (без PII и сырых записей). */
+export type PublicClientContext = {
+  isFirstVisit: boolean;
+  isNewClient: boolean;
+  visitHistory: {
+    completedVisits: number;
+    upcomingBookings: number;
+    noShowCount: number;
+    cancelledBookings: number;
+    visitedServiceIds: string[];
+  };
+  signals: ClientBehaviorSignals;
+};
+
 const COMPLETED_STATUSES: ReadonlySet<ClientBookingStatus> = new Set(["COMPLETED"]);
 const UPCOMING_STATUSES: ReadonlySet<ClientBookingStatus> = new Set([
   "SCHEDULED",
@@ -234,6 +248,22 @@ export function toPromoClientContext(context: ClientContext): {
   return {
     clientId: context.clientId,
     isFirstVisit: context.isFirstVisit,
+  };
+}
+
+/** Публичный safe-ответ без телефона, id записей и дат визитов. */
+export function toPublicClientContext(context: ClientContext): PublicClientContext {
+  return {
+    isFirstVisit: context.isFirstVisit,
+    isNewClient: context.isNewClient,
+    visitHistory: {
+      completedVisits: context.visitHistory.completedVisits,
+      upcomingBookings: context.visitHistory.upcomingBookings,
+      noShowCount: context.visitHistory.noShowCount,
+      cancelledBookings: context.visitHistory.cancelledBookings,
+      visitedServiceIds: context.visitHistory.visitedServiceIds,
+    },
+    signals: { ...context.signals },
   };
 }
 

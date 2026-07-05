@@ -1,6 +1,7 @@
 import { checkGifts, type GiftCheckInput } from "@/lib/promo/gift-engine";
 import {
   buildClientContext,
+  EMPTY_CLIENT_CONTEXT,
   type ClientBookingRecord,
   type ClientContext,
   type ClientContextInput,
@@ -29,12 +30,14 @@ export {
   hasCompletedServiceVisit,
   normalizeClientPhone,
   toPromoClientContext,
+  toPublicClientContext,
   type ClientBehaviorSignals,
   type ClientBookingRecord,
   type ClientBookingStatus,
   type ClientContext,
   type ClientContextInput,
   type ClientVisitHistory,
+  type PublicClientContext,
 } from "@/lib/client/client-context-engine";
 
 export type RulesEngineInput = {
@@ -46,6 +49,8 @@ export type RulesEngineInput = {
   isFirstVisit?: boolean;
   /** Контекст клиента: телефон, история записей. */
   client?: ClientContextInput | null;
+  /** Готовый safe-контекст с API (isFirstVisit из истории в БД). */
+  clientContext?: Pick<ClientContext, "isFirstVisit" | "isNewClient"> | null;
   basePrice?: number | null;
   /** Верхняя граница диапазона; если не задана — совпадает с basePrice. */
   priceMax?: number | null;
@@ -82,6 +87,14 @@ export type RulesEngineResult = {
 export type { NormalizedPromotion, RulesEngineServiceCardDisplay } from "@/lib/promo/promotion-normalizer";
 
 function resolveClientContext(input: RulesEngineInput): ClientContext {
+  if (input.clientContext) {
+    return {
+      ...EMPTY_CLIENT_CONTEXT,
+      isFirstVisit: input.clientContext.isFirstVisit,
+      isNewClient: input.clientContext.isNewClient,
+    };
+  }
+
   return buildClientContext({
     clientId: input.clientId ?? input.client?.clientId,
     phone: input.client?.phone,
