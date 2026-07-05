@@ -1,5 +1,11 @@
 import { checkGifts, type GiftCheckInput } from "@/lib/promo/gift-engine";
 import {
+  buildClientContext,
+  type ClientBookingRecord,
+  type ClientContext,
+  type ClientContextInput,
+} from "@/lib/client/client-context-engine";
+import {
   BOOKING_PROMO_GENERAL_NOTICE,
   calculatePrice,
   getConfirmStepPromoRules,
@@ -16,12 +22,30 @@ import {
 
 export { BOOKING_PROMO_GENERAL_NOTICE as BOOKING_RULES_GENERAL_NOTICE };
 
+export {
+  buildClientContext,
+  EMPTY_CLIENT_CONTEXT,
+  hasCompletedCategoryVisit,
+  hasCompletedServiceVisit,
+  normalizeClientPhone,
+  toPromoClientContext,
+  type ClientBehaviorSignals,
+  type ClientBookingRecord,
+  type ClientBookingStatus,
+  type ClientContext,
+  type ClientContextInput,
+  type ClientVisitHistory,
+} from "@/lib/client/client-context-engine";
+
 export type RulesEngineInput = {
   serviceId: string;
   categoryId?: string | null;
   categoryName?: string | null;
   clientId?: string | null;
+  /** Явное переопределение поверх client-context-engine. */
   isFirstVisit?: boolean;
+  /** Контекст клиента: телефон, история записей. */
+  client?: ClientContextInput | null;
   basePrice?: number | null;
   /** Верхняя граница диапазона; если не задана — совпадает с basePrice. */
   priceMax?: number | null;
@@ -57,9 +81,19 @@ export type RulesEngineResult = {
 
 export type { NormalizedPromotion, RulesEngineServiceCardDisplay } from "@/lib/promo/promotion-normalizer";
 
+function resolveClientContext(input: RulesEngineInput): ClientContext {
+  return buildClientContext({
+    clientId: input.clientId ?? input.client?.clientId,
+    phone: input.client?.phone,
+    bookings: input.client?.bookings,
+  });
+}
+
 function toPromoClient(input: RulesEngineInput) {
+  const context = resolveClientContext(input);
+
   return {
-    isFirstVisit: input.isFirstVisit,
+    isFirstVisit: input.isFirstVisit ?? context.isFirstVisit,
   };
 }
 
@@ -77,12 +111,14 @@ function toPromoPriceInput(input: RulesEngineInput) {
 }
 
 function toGiftInput(input: RulesEngineInput): GiftCheckInput {
+  const context = resolveClientContext(input);
+
   return {
     serviceId: input.serviceId,
     categoryId: input.categoryId,
     categoryName: input.categoryName,
-    clientId: input.clientId,
-    isFirstVisit: input.isFirstVisit,
+    clientId: context.clientId,
+    isFirstVisit: input.isFirstVisit ?? context.isFirstVisit,
   };
 }
 

@@ -554,14 +554,26 @@ export function BookingWizard() {
       return null;
     }
 
+    const phone = buildFullPhoneNumber(
+      selection.countryCode,
+      selection.phoneLocal,
+    );
+
     return evaluateBookingRules({
       serviceId: confirmPromoContext.serviceId,
       categoryId: confirmPromoContext.categoryId,
       categoryName: confirmPromoContext.categoryName,
       basePrice: confirmPromoContext.basePrice,
-      isFirstVisit: true,
+      client: {
+        phone: phone.trim() ? phone : undefined,
+      },
     });
-  }, [confirmPromoContext, selection.service]);
+  }, [
+    confirmPromoContext,
+    selection.countryCode,
+    selection.phoneLocal,
+    selection.service,
+  ]);
 
   const calendarDays = useMemo(() => {
     if (!monthKey) {
