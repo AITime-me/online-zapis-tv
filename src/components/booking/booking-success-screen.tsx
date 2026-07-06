@@ -139,7 +139,7 @@ export function BookingSuccessScreen({
               className="flex min-h-12 w-full items-center justify-center rounded-xl px-5 py-3 text-base font-medium text-white transition hover:opacity-95 active:scale-[0.99]"
               style={{ backgroundColor: bookingTheme.green }}
             >
-              Управлять записью
+              Отменить или перенести запись
             </Link>
           ) : null}
           <button

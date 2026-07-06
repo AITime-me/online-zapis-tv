@@ -49,6 +49,14 @@ type ServicePlan = {
   breakAfterMinutes: number;
 };
 
+type StaleMasterServiceLink = {
+  serviceId: string;
+  serviceName: string;
+  masterId: string;
+  masterCanonical: string;
+  expectedMasterCanonical: string;
+};
+
 function breakAfterMinutesFor(category: string): number {
   return category === "Перманентный макияж" ? 30 : 15;
 }
@@ -227,7 +235,75 @@ async function buildPlan() {
     });
   }
 
-  return { plans, errors, todos, possibleDbDuplicates, masterMap };
+  const staleMasterServiceLinks = await detectStaleMasterServiceLinks(
+    plans,
+    masterMap,
+  );
+
+  return {
+    plans,
+    errors,
+    todos,
+    possibleDbDuplicates,
+    masterMap,
+    staleMasterServiceLinks,
+  };
+}
+
+async function detectStaleMasterServiceLinks(
+  plans: ServicePlan[],
+  masterMap: Map<string, DbMaster>,
+): Promise<StaleMasterServiceLink[]> {
+  const expectedByServiceId = new Map<string, ServicePlan>();
+  for (const plan of plans) {
+    if (!plan.serviceId) {
+      continue;
+    }
+    expectedByServiceId.set(plan.serviceId, plan);
+  }
+
+  if (expectedByServiceId.size === 0) {
+    return [];
+  }
+
+  const staleLinks: StaleMasterServiceLink[] = [];
+  const links = await prisma.masterService.findMany({
+    where: {
+      serviceId: { in: [...expectedByServiceId.keys()] },
+      OR: [
+        { isEnabled: true },
+        { isPublic: true },
+        { isOnlineBookingEnabled: true },
+      ],
+    },
+    include: {
+      master: { select: { internalName: true, publicName: true } },
+      service: { select: { publicName: true } },
+    },
+  });
+
+  for (const link of links) {
+    const plan = expectedByServiceId.get(link.serviceId);
+    if (!plan || link.masterId === plan.masterId) {
+      continue;
+    }
+
+    const staleMaster = [...masterMap.entries()].find(
+      ([, master]) => master.id === link.masterId,
+    );
+
+    staleLinks.push({
+      serviceId: link.serviceId,
+      serviceName: link.service.publicName,
+      masterId: link.masterId,
+      masterCanonical:
+        staleMaster?.[0] ??
+        `${link.master.internalName} / ${link.master.publicName}`,
+      expectedMasterCanonical: plan.masterCanonical,
+    });
+  }
+
+  return staleLinks;
 }
 
 function printReport(
@@ -236,6 +312,7 @@ function printReport(
   todos: string[],
   possibleDbDuplicates: string[],
   masterMap: Map<string, DbMaster>,
+  staleMasterServiceLinks: StaleMasterServiceLink[],
 ) {
   const creates = plans.filter((plan) => plan.action === "create");
   const updates = plans.filter((plan) => plan.action === "update");
@@ -327,6 +404,16 @@ function printReport(
     console.log("");
   }
 
+  if (staleMasterServiceLinks.length > 0) {
+    console.log("--- УСТАРЕВШИЕ ПРИВЯЗКИ master_services (будут отключены) ---");
+    for (const item of staleMasterServiceLinks) {
+      console.log(
+        `  - «${item.serviceName}»: ${item.masterCanonical} → отключить (ожидается ${item.expectedMasterCanonical})`,
+      );
+    }
+    console.log("");
+  }
+
   if (todos.length > 0) {
     console.log("--- TODO ---");
     for (const item of todos) {
@@ -355,7 +442,36 @@ function printReport(
   return canApply;
 }
 
-async function applyPlan(plans: ServicePlan[]) {
+async function disableStaleMasterServiceLinks(
+  tx: Prisma.TransactionClient,
+  staleLinks: StaleMasterServiceLink[],
+): Promise<number> {
+  let disabled = 0;
+
+  for (const link of staleLinks) {
+    await tx.masterService.update({
+      where: {
+        masterId_serviceId: {
+          masterId: link.masterId,
+          serviceId: link.serviceId,
+        },
+      },
+      data: {
+        isEnabled: false,
+        isPublic: false,
+        isOnlineBookingEnabled: false,
+      },
+    });
+    disabled += 1;
+  }
+
+  return disabled;
+}
+
+async function applyPlan(
+  plans: ServicePlan[],
+  staleMasterServiceLinks: StaleMasterServiceLink[],
+) {
   const categoryCache = new Map<string, string>();
 
   const existingCategories = await prisma.serviceCategory.findMany({
@@ -370,6 +486,7 @@ async function applyPlan(plans: ServicePlan[]) {
   let updatedServices = 0;
   let createdLinks = 0;
   let updatedLinks = 0;
+  let disabledStaleLinks = 0;
 
   await prisma.$transaction(async (tx) => {
     for (const plan of plans) {
@@ -457,6 +574,11 @@ async function applyPlan(plans: ServicePlan[]) {
         createdLinks += 1;
       }
     }
+
+    disabledStaleLinks = await disableStaleMasterServiceLinks(
+      tx,
+      staleMasterServiceLinks,
+    );
   });
 
   console.log("--- APPLY RESULT ---");
@@ -465,11 +587,18 @@ async function applyPlan(plans: ServicePlan[]) {
   console.log(`Services updated: ${updatedServices}`);
   console.log(`MasterService created: ${createdLinks}`);
   console.log(`MasterService updated: ${updatedLinks}`);
+  console.log(`MasterService stale disabled: ${disabledStaleLinks}`);
 }
 
 async function main() {
-  const { plans, errors, todos, possibleDbDuplicates, masterMap } =
-    await buildPlan();
+  const {
+    plans,
+    errors,
+    todos,
+    possibleDbDuplicates,
+    masterMap,
+    staleMasterServiceLinks,
+  } = await buildPlan();
 
   const canApply = printReport(
     plans,
@@ -477,6 +606,7 @@ async function main() {
     todos,
     possibleDbDuplicates,
     masterMap,
+    staleMasterServiceLinks,
   );
 
   if (!canApply) {
@@ -491,7 +621,7 @@ async function main() {
     return;
   }
 
-  await applyPlan(plans);
+  await applyPlan(plans, staleMasterServiceLinks);
 }
 
 main()
