@@ -1,10 +1,10 @@
-import { requireRole } from "@/lib/auth/session";
+import { requireAdminSection } from "@/lib/auth/session";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { BookingRequestsPanel } from "@/components/admin/booking-requests-panel";
 import { listBookingRequests } from "@/services/BookingRequestService";
 
 export default async function BookingRequestsAdminPage() {
-  await requireRole(["OWNER", "MANAGER"]);
+  const user = await requireAdminSection("booking-requests");
 
   const requests = await listBookingRequests();
 
@@ -14,6 +14,7 @@ export default async function BookingRequestsAdminPage() {
         title="Заявки онлайн-записи"
         description="Заявки через менеджера и консультации с сайта"
         current="booking-requests"
+        role={user.role}
       />
 
       <BookingRequestsPanel initialRequests={requests} />

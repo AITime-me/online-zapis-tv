@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   requireApiRoles,
-  WRITE_SCHEDULE_ROLES,
+  MANAGE_SERVICES_ROLES,
 } from "@/lib/auth/api-access";
 import {
   createService,
@@ -11,7 +11,7 @@ import {
 import type { ServiceWriteInput } from "@/types/service-admin";
 
 export async function GET() {
-  const authResult = await requireApiRoles(WRITE_SCHEDULE_ROLES);
+  const authResult = await requireApiRoles(MANAGE_SERVICES_ROLES);
   if ("response" in authResult) {
     return authResult.response;
   }
@@ -35,7 +35,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const authResult = await requireApiRoles(WRITE_SCHEDULE_ROLES);
+  const authResult = await requireApiRoles(MANAGE_SERVICES_ROLES);
   if ("response" in authResult) {
     return authResult.response;
   }

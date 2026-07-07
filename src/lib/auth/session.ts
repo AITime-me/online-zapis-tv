@@ -1,7 +1,12 @@
 import { redirect } from "next/navigation";
 import type { UserRole } from "@prisma/client";
 import { auth } from "@/auth";
-import { canAccessInternalZone } from "@/lib/auth/permissions";
+import {
+  canAccessAdminSection,
+  canAccessInternalZone,
+  OWNER_ROLES,
+  type AdminSection,
+} from "@/lib/auth/permissions";
 
 export async function getCurrentUser() {
   const session = await auth();
@@ -26,6 +31,20 @@ export async function requireRole(allowedRoles: UserRole[]) {
   const user = await requireAuth();
 
   if (!allowedRoles.includes(user.role)) {
+    redirect("/schedule");
+  }
+
+  return user;
+}
+
+export async function requireOwner() {
+  return requireRole(OWNER_ROLES);
+}
+
+export async function requireAdminSection(section: AdminSection) {
+  const user = await requireAuth();
+
+  if (!canAccessAdminSection(user.role, section)) {
     redirect("/schedule");
   }
 

@@ -1,4 +1,5 @@
-import { bookingTheme } from "@/components/booking/booking-theme";
+import { BookingButton } from "@/components/booking/booking-ui";
+import type { CSSProperties } from "react";
 
 export type BookingPathMode = "by-service" | "by-master";
 
@@ -15,36 +16,25 @@ export function BookingPathToggle({ value, onChange }: BookingPathToggleProps) {
 
   return (
     <div
-      className="grid grid-cols-1 gap-2 sm:grid-cols-2"
+      className="booking-path-toggle grid grid-cols-1 gap-2 sm:grid-cols-2"
       role="tablist"
       aria-label="Способ записи"
     >
-      {options.map((option) => {
+      {options.map((option, index) => {
         const isActive = value === option.id;
         return (
-          <button
+          <BookingButton
             key={option.id}
             type="button"
             role="tab"
             aria-selected={isActive}
+            variant={isActive ? "primary" : "secondary"}
             onClick={() => onChange(option.id)}
-            className="min-h-12 rounded-2xl border px-4 py-3.5 text-base font-medium transition active:scale-[0.99]"
-            style={
-              isActive
-                ? {
-                    borderColor: bookingTheme.green,
-                    backgroundColor: bookingTheme.green,
-                    color: "#ffffff",
-                  }
-                : {
-                    borderColor: bookingTheme.border,
-                    backgroundColor: bookingTheme.surface,
-                    color: bookingTheme.green,
-                  }
-            }
+            className={`w-full`}
+            style={{ "--sway-delay": `${index * 0.35}s` } as CSSProperties}
           >
             {option.label}
-          </button>
+          </BookingButton>
         );
       })}
     </div>

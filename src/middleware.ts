@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { canAccessInternalZone } from "@/lib/auth/permissions";
+import { canAccessAdminPath, canAccessInternalZone } from "@/lib/auth/permissions";
 import { isValidScheduleViewToken } from "@/lib/auth/view-schedule-token";
 
-const EXPORT_ADMIN_ROLES = new Set(["OWNER", "MANAGER"]);
+const OPERATIONAL_ADMIN_ROLES = new Set(["OWNER", "MANAGER"]);
 
 export default auth((req) => {
   const { pathname } = req.nextUrl;
@@ -35,7 +35,11 @@ export default auth((req) => {
       return NextResponse.redirect(loginUrl);
     }
 
-    if (!EXPORT_ADMIN_ROLES.has(role)) {
+    if (!OPERATIONAL_ADMIN_ROLES.has(role)) {
+      return NextResponse.redirect(new URL("/schedule", req.nextUrl.origin));
+    }
+
+    if (!canAccessAdminPath(role, pathname)) {
       return NextResponse.redirect(new URL("/schedule", req.nextUrl.origin));
     }
   }

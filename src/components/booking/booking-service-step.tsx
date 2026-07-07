@@ -1,8 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import { BookingBackButton } from "@/components/booking/booking-back-button";
 import { bookingTheme } from "@/components/booking/booking-theme";
+import {
+  BookingButton,
+  BOOKING_SELECTABLE_CARD_CLASS,
+  BookingStepDescription,
+  BookingStepEyebrow,
+  BookingStepTitle,
+  bookingSwayStyle,
+} from "@/components/booking/booking-ui";
 import {
   BookingPromotionBadge,
   BookingPromotionCardNote,
@@ -130,34 +138,19 @@ export function BookingServiceStep({
     return (
       <div className="space-y-6">
         <header className="space-y-2 text-center md:text-left">
-          <p
-            className="text-xs font-medium uppercase tracking-[0.2em]"
-            style={{ color: bookingTheme.gold }}
-          >
-            Шаг 1
-          </p>
-          <h2
-            className="text-xl font-semibold leading-tight md:text-2xl"
-            style={{ color: bookingTheme.green }}
-          >
-            Выберите направление
-          </h2>
-          <p className="text-base text-[#6b7280]">
-            Сначала категория — затем услуга
-          </p>
+          <BookingStepEyebrow>Шаг 1</BookingStepEyebrow>
+          <BookingStepTitle>Выберите направление</BookingStepTitle>
+          <BookingStepDescription>Сначала категория — затем услуга</BookingStepDescription>
         </header>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {categories.map((category) => (
+          {categories.map((category, index) => (
             <button
               key={category.id}
               type="button"
               onClick={() => openCategory(category)}
-              className="group flex min-h-14 w-full items-center justify-between gap-3 rounded-2xl border px-5 py-4 text-left transition hover:shadow-md active:scale-[0.99]"
-              style={{
-                borderColor: bookingTheme.border,
-                backgroundColor: bookingTheme.card,
-              }}
+              className={`${BOOKING_SELECTABLE_CARD_CLASS} ${index % 2 === 1 ? "booking-float-sway--alt" : ""} group flex min-h-14 w-full items-center justify-between gap-3 active:scale-[0.99]`}
+              style={bookingSwayStyle(index)}
             >
               <div className="min-w-0 flex-1">
                 <span
@@ -195,18 +188,8 @@ export function BookingServiceStep({
       </BookingBackButton>
 
       <header className="space-y-1">
-        <p
-          className="text-xs font-medium uppercase tracking-[0.2em]"
-          style={{ color: bookingTheme.gold }}
-        >
-          {selectedCategory?.name}
-        </p>
-        <h2
-          className="text-xl font-semibold leading-tight md:text-2xl"
-          style={{ color: bookingTheme.green }}
-        >
-          Выберите услугу
-        </h2>
+        <BookingStepEyebrow>{selectedCategory?.name}</BookingStepEyebrow>
+        <BookingStepTitle>Выберите услугу</BookingStepTitle>
       </header>
 
       <label className="relative block">
@@ -219,8 +202,8 @@ export function BookingServiceStep({
           value={searchQuery}
           onChange={(event) => setSearchQuery(event.target.value)}
           placeholder="Поиск по названию…"
-          className="w-full rounded-2xl border border-[#e8e4de] bg-[#faf9f7] py-3.5 pl-12 pr-4 text-base outline-none transition focus:border-[#c4a35a] focus:ring-2 focus:ring-[#c4a35a]/30"
-          style={{ color: bookingTheme.green }}
+          className="font-body w-full rounded-2xl border bg-white/90 py-3.5 pl-12 pr-4 text-base outline-none transition focus:ring-2 focus:ring-[rgba(201,169,106,0.28)]"
+          style={{ borderColor: "rgba(201, 169, 106, 0.34)", color: bookingTheme.green }}
         />
       </label>
 
@@ -232,7 +215,7 @@ export function BookingServiceStep({
         </p>
       ) : (
         <ul className="space-y-4">
-          {filteredServices.map((service) => {
+          {filteredServices.map((service, index) => {
             const isManagerOnly = service.bookingMode === "MANAGER_ONLY";
             const promo = isManagerOnly
               ? EMPTY_PROMOTION
@@ -246,12 +229,8 @@ export function BookingServiceStep({
               return (
                 <li
                   key={service.id}
-                  className="rounded-2xl border p-5"
-                  style={{
-                    borderColor: bookingTheme.border,
-                    backgroundColor: bookingTheme.surface,
-                    opacity: 0.92,
-                  }}
+                  className={`${BOOKING_SELECTABLE_CARD_CLASS} ${index % 2 === 1 ? "booking-float-sway--alt" : ""} opacity-95`}
+                  style={bookingSwayStyle(index)}
                 >
                   <div className="space-y-3">
                     <div>
@@ -286,14 +265,13 @@ export function BookingServiceStep({
                         </p>
                       )}
                     </div>
-                    <button
+                    <BookingButton
                       type="button"
                       onClick={() => onManagerOnlyService(service)}
-                      className="min-h-12 w-full rounded-xl px-5 py-3 text-base font-medium text-white transition hover:opacity-95 active:scale-[0.99] sm:w-auto sm:min-w-[180px]"
-                      style={{ backgroundColor: bookingTheme.green }}
+                      className="w-full sm:w-auto sm:min-w-[180px]"
                     >
                       Оставить заявку
-                    </button>
+                    </BookingButton>
                   </div>
                 </li>
               );
@@ -302,14 +280,10 @@ export function BookingServiceStep({
             return (
             <li
               key={service.id}
-              className="rounded-2xl border p-5"
+              className={`${BOOKING_SELECTABLE_CARD_CLASS} ${index % 2 === 1 ? "booking-float-sway--alt" : ""}`}
               style={{
-                borderColor: hasPromotion
-                  ? `${bookingTheme.gold}66`
-                  : bookingTheme.border,
-                backgroundColor: hasPromotion
-                  ? `${bookingTheme.gold}08`
-                  : bookingTheme.card,
+                ...bookingSwayStyle(index),
+                ...(hasPromotion ? { borderColor: "rgba(201, 169, 106, 0.52)" } : {}),
               }}
             >
               <div className="space-y-3">
@@ -345,14 +319,13 @@ export function BookingServiceStep({
                     </p>
                   )}
                 </div>
-                <button
+                <BookingButton
                   type="button"
                   onClick={() => onSelectService(service)}
-                  className="min-h-12 w-full rounded-xl px-5 py-3 text-base font-medium text-white transition hover:opacity-95 active:scale-[0.99] sm:w-auto sm:min-w-[140px]"
-                  style={{ backgroundColor: bookingTheme.green }}
+                  className="w-full sm:w-auto sm:min-w-[140px]"
                 >
                   Выбрать
-                </button>
+                </BookingButton>
               </div>
             </li>
             );

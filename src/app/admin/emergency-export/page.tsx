@@ -1,10 +1,10 @@
-import { requireRole } from "@/lib/auth/session";
+import { requireAdminSection } from "@/lib/auth/session";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { EmergencyExportPanel } from "@/components/admin/emergency-export-panel";
 import { emergencyExportService } from "@/services/EmergencyExportService";
 
 export default async function EmergencyExportAdminPage() {
-  await requireRole(["OWNER", "MANAGER"]);
+  const user = await requireAdminSection("emergency-export");
 
   const latest = await emergencyExportService.getLatestStatus();
   const latestSuccessful = await emergencyExportService.getLatestSuccessful();
@@ -46,6 +46,7 @@ export default async function EmergencyExportAdminPage() {
         title="Аварийная выгрузка"
         description="Локальная XLSX-выгрузка расписания на сегодня"
         current="export"
+        role={user.role}
       />
 
       <EmergencyExportPanel initialStatus={initialStatus} />

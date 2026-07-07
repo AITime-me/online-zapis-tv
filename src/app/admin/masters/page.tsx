@@ -1,10 +1,10 @@
-import { requireRole } from "@/lib/auth/session";
+import { requireAdminSection } from "@/lib/auth/session";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { MastersPanel } from "@/components/admin/masters-panel";
 import { listMasters } from "@/services/MasterAdminService";
 
 export default async function MastersAdminPage() {
-  await requireRole(["OWNER", "MANAGER"]);
+  const user = await requireAdminSection("masters");
 
   const masters = await listMasters(true);
 
@@ -14,6 +14,7 @@ export default async function MastersAdminPage() {
         title="Мастера"
         description="Справочник мастеров для внутреннего расписания"
         current="masters"
+        role={user.role}
       />
 
       <MastersPanel initialMasters={masters} />

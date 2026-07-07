@@ -7,6 +7,8 @@
   --foreground: #124032;
   --brand-green: #124032;
   --brand-green-hover: #0d3026;
+  --brand-green-promo: #0e3a2f;
+  --brand-green-promo-deep: #0c352b;
   --brand-gold: #c9a96a;
   --brand-gold-soft: rgba(201, 169, 106, 0.24);
 }
@@ -158,31 +160,429 @@ body {
   position: absolute;
   inset: 0;
   overflow: hidden;
-  opacity: 0.72;
+  opacity: 0.88;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 70% 55% at 12% 22%, rgba(201, 169, 106, 0.09), transparent 58%),
+    radial-gradient(ellipse 55% 45% at 88% 18%, rgba(18, 64, 50, 0.05), transparent 52%),
+    radial-gradient(circle at 50% 88%, rgba(201, 169, 106, 0.05), transparent 48%);
 }
 
 .home-hero-deco::before {
   content: "";
   position: absolute;
-  left: -8%;
-  top: 18%;
-  width: min(42vw, 280px);
-  height: min(42vw, 280px);
+  left: -10%;
+  top: 14%;
+  width: min(44vw, 300px);
+  height: min(44vw, 300px);
   border-radius: 999px;
-  border: 1px solid rgba(201, 169, 106, 0.09);
-  background: radial-gradient(circle, rgba(201, 169, 106, 0.035) 0%, transparent 68%);
+  border: 1px solid rgba(201, 169, 106, 0.14);
+  background: radial-gradient(circle, rgba(201, 169, 106, 0.05) 0%, transparent 68%);
+  box-shadow: 0 0 80px rgba(201, 169, 106, 0.06);
 }
 
 .home-hero-deco::after {
   content: "";
   position: absolute;
-  right: -6%;
-  bottom: 8%;
-  width: min(36vw, 220px);
-  height: min(36vw, 220px);
+  right: -8%;
+  bottom: 6%;
+  width: min(38vw, 240px);
+  height: min(38vw, 240px);
   border-radius: 999px;
-  border: 1px solid rgba(18, 64, 50, 0.05);
-  background: radial-gradient(circle, rgba(18, 64, 50, 0.025) 0%, transparent 70%);
+  border: 1px solid rgba(18, 64, 50, 0.08);
+  background: radial-gradient(circle, rgba(18, 64, 50, 0.035) 0%, transparent 70%);
+}
+
+.home-hero-deco-arc {
+  pointer-events: none;
+  position: absolute;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  border-top-color: rgba(201, 169, 106, 0.2);
+  border-right-color: rgba(201, 169, 106, 0.1);
+  opacity: 0.55;
+}
+
+.home-hero-deco-line {
+  pointer-events: none;
+  position: absolute;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(201, 169, 106, 0.32) 35%,
+    rgba(201, 169, 106, 0.18) 65%,
+    transparent
+  );
+  opacity: 0.5;
+}
+
+.home-hero-deco-line--vertical {
+  width: 1px;
+  height: auto;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(201, 169, 106, 0.28) 40%,
+    transparent
+  );
+}
+
+.home-hero-deco-ornament {
+  pointer-events: none;
+  position: absolute;
+  opacity: 0.14;
+  background-repeat: no-repeat;
+  background-size: contain;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120' fill='none'%3E%3Ccircle cx='60' cy='60' r='54' stroke='%23c9a96a' stroke-width='0.7'/%3E%3Ccircle cx='60' cy='60' r='36' stroke='%23c9a96a' stroke-width='0.5' opacity='0.65'/%3E%3Cpath d='M60 18v12M60 90v12M18 60h12M90 60h12' stroke='%23c9a96a' stroke-width='0.6' opacity='0.5'/%3E%3C/svg%3E");
+}
+
+.home-hero-content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+
+.home-hero--home {
+  background-color: #faf7f2;
+}
+
+.home-hero--home .home-hero-ref--desktop {
+  background-image: url("/images/hero-deco-soft.png");
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: 50% 38%;
+  opacity: 0.7;
+  filter: saturate(0.94) contrast(0.96) brightness(1.05);
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(0, 0, 0, 0.55) 8%,
+    black 18%,
+    black 58%,
+    rgba(0, 0, 0, 0.72) 78%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(0, 0, 0, 0.55) 8%,
+    black 18%,
+    black 58%,
+    rgba(0, 0, 0, 0.72) 78%,
+    transparent 100%
+  );
+}
+
+.home-hero--home .home-hero-ref--mobile {
+  display: none;
+  background-image: url("/images/hero-deco-mobile.png");
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: 50% 24%;
+  opacity: 0.74;
+  filter: saturate(0.9) contrast(0.94) brightness(1.07);
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(0, 0, 0, 0.45) 6%,
+    black 16%,
+    black 64%,
+    rgba(0, 0, 0, 0.65) 82%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(0, 0, 0, 0.45) 6%,
+    black 16%,
+    black 64%,
+    rgba(0, 0, 0, 0.65) 82%,
+    transparent 100%
+  );
+}
+
+.home-hero--home .home-hero-ref-overlay {
+  background:
+    radial-gradient(
+      ellipse 54% 50% at 50% 40%,
+      rgba(250, 247, 242, 0.78) 0%,
+      rgba(250, 247, 242, 0.34) 56%,
+      transparent 84%
+    ),
+    linear-gradient(
+      90deg,
+      rgba(250, 247, 242, 0.42) 0%,
+      transparent 14%,
+      transparent 86%,
+      rgba(250, 247, 242, 0.38) 100%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(250, 247, 242, 0.28) 0%,
+      transparent 16%,
+      transparent 52%,
+      rgba(250, 247, 242, 0.42) 76%,
+      #faf7f2 100%
+    );
+}
+
+.home-hero-ref {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-image: url("/images/hero-deco-soft.png");
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: 50% 40%;
+  opacity: 0.62;
+  filter: saturate(0.95) contrast(0.97) brightness(1.04);
+}
+
+.home-hero-ref-overlay {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background:
+    radial-gradient(
+      ellipse 58% 52% at 50% 42%,
+      rgba(250, 247, 242, 0.82) 0%,
+      rgba(250, 247, 242, 0.36) 58%,
+      transparent 86%
+    ),
+    linear-gradient(180deg, rgba(250, 247, 242, 0.24) 0%, transparent 24%, transparent 100%);
+}
+
+.booking-hero {
+  background-color: #faf7f2;
+}
+
+.home-hero-ref--booking {
+  background-image: url("/images/hero-deco-soft.png");
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: 50% 38%;
+  opacity: 0.7;
+  filter: saturate(0.94) contrast(0.96) brightness(1.05);
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(0, 0, 0, 0.55) 8%,
+    black 18%,
+    black 58%,
+    rgba(0, 0, 0, 0.72) 78%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(0, 0, 0, 0.55) 8%,
+    black 18%,
+    black 58%,
+    rgba(0, 0, 0, 0.72) 78%,
+    transparent 100%
+  );
+}
+
+.home-hero-ref-overlay--booking {
+  background:
+    radial-gradient(
+      ellipse 54% 50% at 50% 40%,
+      rgba(250, 247, 242, 0.78) 0%,
+      rgba(250, 247, 242, 0.34) 56%,
+      transparent 84%
+    ),
+    linear-gradient(
+      90deg,
+      rgba(250, 247, 242, 0.42) 0%,
+      transparent 14%,
+      transparent 86%,
+      rgba(250, 247, 242, 0.38) 100%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(250, 247, 242, 0.28) 0%,
+      transparent 16%,
+      transparent 52%,
+      rgba(250, 247, 242, 0.42) 76%,
+      #faf7f2 100%
+    );
+}
+
+@media (max-width: 639px) {
+  .home-hero--home .home-hero-ref--desktop {
+    display: none;
+  }
+
+  .home-hero--home .home-hero-ref--mobile {
+    display: block;
+    background-size: 118% auto;
+    background-position: 50% 22%;
+    opacity: 0.7;
+  }
+
+  .home-hero--home .home-hero-ref-overlay {
+    background:
+      radial-gradient(
+        ellipse 90% 58% at 50% 36%,
+        rgba(250, 247, 242, 0.86) 0%,
+        rgba(250, 247, 242, 0.4) 52%,
+        transparent 78%
+      ),
+      linear-gradient(
+        90deg,
+        rgba(250, 247, 242, 0.36) 0%,
+        transparent 12%,
+        transparent 88%,
+        rgba(250, 247, 242, 0.32) 100%
+      ),
+      linear-gradient(
+        180deg,
+        rgba(250, 247, 242, 0.2) 0%,
+        transparent 12%,
+        transparent 46%,
+        rgba(250, 247, 242, 0.48) 72%,
+        #faf7f2 100%
+      );
+  }
+
+  .home-hero-ref--booking {
+    background-image: url("/images/hero-deco-mobile.png");
+    background-size: 118% auto;
+    background-position: 50% 22%;
+    opacity: 0.7;
+    filter: saturate(0.9) contrast(0.94) brightness(1.07);
+    -webkit-mask-image: linear-gradient(
+      180deg,
+      transparent 0%,
+      rgba(0, 0, 0, 0.45) 6%,
+      black 16%,
+      black 64%,
+      rgba(0, 0, 0, 0.65) 82%,
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      180deg,
+      transparent 0%,
+      rgba(0, 0, 0, 0.45) 6%,
+      black 16%,
+      black 64%,
+      rgba(0, 0, 0, 0.65) 82%,
+      transparent 100%
+    );
+  }
+
+  .home-hero-ref-overlay--booking {
+    background:
+      radial-gradient(
+        ellipse 90% 58% at 50% 36%,
+        rgba(250, 247, 242, 0.86) 0%,
+        rgba(250, 247, 242, 0.4) 52%,
+        transparent 78%
+      ),
+      linear-gradient(
+        90deg,
+        rgba(250, 247, 242, 0.36) 0%,
+        transparent 12%,
+        transparent 88%,
+        rgba(250, 247, 242, 0.32) 100%
+      ),
+      linear-gradient(
+        180deg,
+        rgba(250, 247, 242, 0.2) 0%,
+        transparent 12%,
+        transparent 46%,
+        rgba(250, 247, 242, 0.48) 72%,
+        #faf7f2 100%
+      );
+  }
+}
+
+@media (min-width: 640px) {
+  .home-hero--home .home-hero-ref--mobile {
+    display: none;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .home-hero--home .home-hero-ref--desktop {
+    background-size: 104% auto;
+    background-position: 52% 36%;
+  }
+
+  .home-hero-ref--booking {
+    background-size: 104% auto;
+    background-position: 52% 36%;
+  }
+}
+
+@media (min-width: 1024px) {
+  .home-hero--home .home-hero-ref--desktop {
+    background-size: 108% auto;
+    background-position: 54% 34%;
+    opacity: 0.74;
+  }
+
+  .home-hero-ref--booking {
+    background-size: 108% auto;
+    background-position: 54% 34%;
+    opacity: 0.74;
+  }
+
+  .home-hero-ref-overlay--booking {
+    background:
+      radial-gradient(
+        ellipse 48% 44% at 50% 38%,
+        rgba(250, 247, 242, 0.72) 0%,
+        rgba(250, 247, 242, 0.26) 60%,
+        transparent 88%
+      ),
+      linear-gradient(
+        90deg,
+        rgba(250, 247, 242, 0.34) 0%,
+        transparent 12%,
+        transparent 88%,
+        rgba(250, 247, 242, 0.3) 100%
+      ),
+      linear-gradient(
+        180deg,
+        rgba(250, 247, 242, 0.2) 0%,
+        transparent 14%,
+        transparent 54%,
+        rgba(250, 247, 242, 0.48) 80%,
+        #faf7f2 100%
+      );
+  }
+
+  .home-hero--home .home-hero-ref-overlay {
+    background:
+      radial-gradient(
+        ellipse 48% 44% at 50% 38%,
+        rgba(250, 247, 242, 0.72) 0%,
+        rgba(250, 247, 242, 0.26) 60%,
+        transparent 88%
+      ),
+      linear-gradient(
+        90deg,
+        rgba(250, 247, 242, 0.34) 0%,
+        transparent 12%,
+        transparent 88%,
+        rgba(250, 247, 242, 0.3) 100%
+      ),
+      linear-gradient(
+        180deg,
+        rgba(250, 247, 242, 0.2) 0%,
+        transparent 14%,
+        transparent 54%,
+        rgba(250, 247, 242, 0.48) 80%,
+        #faf7f2 100%
+      );
+  }
 }
 
 .home-deco-ring {
@@ -268,9 +668,9 @@ body {
 
 .home-ornament-promo {
   background:
-    radial-gradient(circle at 15% 20%, rgba(201, 169, 106, 0.1), transparent 34%),
-    radial-gradient(circle at 85% 75%, rgba(255, 255, 255, 0.04), transparent 30%),
-    radial-gradient(ellipse 50% 40% at 50% 100%, rgba(201, 169, 106, 0.05), transparent 55%);
+    radial-gradient(circle at 15% 20%, rgba(201, 169, 106, 0.12), transparent 34%),
+    radial-gradient(circle at 85% 75%, rgba(255, 255, 255, 0.05), transparent 30%),
+    radial-gradient(ellipse 50% 40% at 50% 100%, rgba(201, 169, 106, 0.07), transparent 55%);
 }
 
 .home-ornament-promo::before {
@@ -293,18 +693,88 @@ body {
 }
 
 .home-promo-card--gift {
-  border-color: rgba(201, 169, 106, 0.52);
+  border-color: rgba(201, 169, 106, 0.58);
 }
 
 .home-promo-card--game {
+  border-color: rgba(201, 169, 106, 0.68);
+}
+
+.home-promo-section {
+  overflow-x: clip;
+  overflow-y: visible;
+  background: linear-gradient(168deg, #103d32 0%, #0e3a2f 48%, #0c352b 100%);
+}
+
+.home-promo-carousel-shell {
+  position: relative;
+  overflow: visible;
+  padding: 1.25rem 0.35rem 0.85rem;
+}
+
+@media (min-width: 640px) {
+  .home-promo-carousel-shell {
+    padding: 1.5rem 0.5rem 1rem;
+  }
+}
+
+.home-promo-card-float {
+  transform: translateX(var(--promo-drag, 0px));
+  animation: home-promo-sway 8.2s ease-in-out infinite;
+  will-change: transform;
+}
+
+.home-promo-card {
+  position: relative;
+  overflow: hidden;
+  border-width: 1px;
+  border-style: solid;
   border-color: rgba(201, 169, 106, 0.62);
+  background: linear-gradient(
+    168deg,
+    rgba(255, 255, 255, 0.1) 0%,
+    rgba(255, 255, 255, 0.035) 46%,
+    rgba(201, 169, 106, 0.07) 100%
+  );
   box-shadow:
-    0 24px 60px rgba(0, 0, 0, 0.14),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    0 36px 80px rgba(0, 0, 0, 0.34),
+    0 14px 32px rgba(0, 0, 0, 0.2),
+    0 0 0 1px rgba(201, 169, 106, 0.26) inset,
+    0 1px 0 rgba(255, 255, 255, 0.12) inset,
+    0 0 32px rgba(201, 169, 106, 0.1);
+}
+
+.home-promo-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse 80% 55% at 50% 0%,
+    rgba(255, 255, 255, 0.1),
+    transparent 58%
+  );
+}
+
+.home-promo-card::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 -65%;
+  width: 38%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.14),
+    transparent
+  );
+  transform: translateX(-140%) skewX(-16deg);
+  animation: home-shimmer 6.2s ease-in-out infinite;
+  pointer-events: none;
 }
 
 .home-promo-badge {
-  background: rgba(18, 64, 50, 0.22);
+  background: rgba(8, 38, 30, 0.38);
 }
 
 .home-mobile-menu-backdrop {
@@ -431,6 +901,325 @@ body {
   pointer-events: none;
 }
 
+.booking-fade-up {
+  opacity: 0;
+  transform: translate3d(0, 16px, 0);
+  transition:
+    opacity 650ms ease,
+    transform 650ms ease;
+}
+
+.booking-fade-up.is-visible {
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+}
+
+.booking-step-nav {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  align-content: flex-start;
+  gap: 0.5rem;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0 0 0.375rem;
+}
+
+.booking-step-nav__item {
+  flex: 0 0 auto;
+  max-width: 100%;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.booking-wizard-content {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  min-width: 0;
+}
+
+.booking-wizard-content::before {
+  content: "";
+  display: block;
+  height: 1px;
+  width: min(12rem, 72%);
+  margin: 0 auto 0.875rem;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(201, 169, 106, 0.52),
+    transparent
+  );
+  opacity: 0.85;
+}
+
+.booking-panel-premium {
+  position: relative;
+  border-color: rgba(201, 169, 106, 0.4) !important;
+  background: linear-gradient(165deg, #ffffff 0%, #fdfaf5 52%, #faf6ee 100%);
+  box-shadow:
+    0 20px 48px rgba(18, 64, 50, 0.08),
+    0 8px 22px rgba(18, 64, 50, 0.04),
+    0 0 0 1px rgba(201, 169, 106, 0.1) inset;
+}
+
+.booking-panel-premium::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    ellipse 80% 55% at 50% 0%,
+    rgba(255, 255, 255, 0.55),
+    transparent 58%
+  );
+}
+
+.booking-page-main {
+  background-color: #faf7f2;
+}
+
+@media (max-width: 639px) {
+  .booking-step-nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+    padding-bottom: 0.75rem;
+  }
+
+  .booking-step-nav__item {
+    justify-self: stretch;
+    width: 100%;
+  }
+
+  .booking-step-nav__item:nth-child(5) {
+    grid-column: 1 / -1;
+    justify-self: center;
+    width: auto;
+    min-width: min(100%, 11.5rem);
+  }
+
+  .booking-wizard-content {
+    margin-top: 0.25rem;
+  }
+
+  .booking-wizard-content::before {
+    margin-bottom: 1rem;
+  }
+
+  .booking-wizard .booking-float-panel,
+  .booking-wizard .booking-panel-premium {
+    transform: none;
+    box-shadow:
+      0 18px 42px rgba(18, 64, 50, 0.09),
+      0 6px 18px rgba(18, 64, 50, 0.045),
+      0 0 0 1px rgba(201, 169, 106, 0.12) inset;
+  }
+
+  .booking-wizard .booking-float-panel.booking-float-sway {
+    animation: booking-sway-c-mobile 7.8s ease-in-out infinite;
+    animation-delay: var(--sway-delay, 0s);
+  }
+}
+
+@media (min-width: 640px) {
+  .booking-step-nav {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 0;
+  }
+
+  .booking-step-nav::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@keyframes booking-sway-c-mobile {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-2px) rotate(0.12deg);
+  }
+}
+
+.booking-float-panel {
+  box-shadow:
+    0 18px 44px rgba(18, 64, 50, 0.09),
+    0 6px 18px rgba(18, 64, 50, 0.04),
+    0 0 0 1px rgba(201, 169, 106, 0.08) inset;
+  transform: translateY(-2px);
+  transition:
+    transform 320ms ease,
+    box-shadow 320ms ease,
+    border-color 320ms ease;
+}
+
+.booking-float-card {
+  box-shadow:
+    0 16px 40px rgba(18, 64, 50, 0.08),
+    0 4px 14px rgba(18, 64, 50, 0.04);
+  transition:
+    transform 320ms ease,
+    box-shadow 320ms ease,
+    border-color 320ms ease;
+}
+
+.booking-float-card:hover {
+  transform: translateY(-5px);
+  box-shadow:
+    0 26px 56px rgba(18, 64, 50, 0.13),
+    0 8px 22px rgba(18, 64, 50, 0.06);
+  border-color: rgba(201, 169, 106, 0.62);
+}
+
+.booking-float-card:active {
+  transform: translateY(-2px);
+}
+
+.booking-path-toggle .home-btn {
+  transition:
+    transform 320ms ease,
+    box-shadow 320ms ease,
+    border-color 320ms ease;
+}
+
+.booking-path-toggle .home-btn-secondary {
+  box-shadow:
+    0 10px 24px rgba(18, 64, 50, 0.06),
+    0 2px 8px rgba(18, 64, 50, 0.03);
+}
+
+.booking-path-toggle .home-btn-secondary:hover {
+  transform: translateY(-3px);
+  box-shadow:
+    0 14px 30px rgba(18, 64, 50, 0.09),
+    0 4px 12px rgba(18, 64, 50, 0.05);
+}
+
+.booking-path-toggle .home-btn-primary {
+  transform: translateY(-1px);
+}
+
+.booking-path-toggle .home-btn-primary:hover {
+  transform: translateY(-4px);
+}
+
+@keyframes home-promo-sway {
+  0%,
+  100% {
+    transform: translateX(var(--promo-drag, 0px)) translateY(-10px) rotate(0deg);
+  }
+  50% {
+    transform: translateX(var(--promo-drag, 0px)) translateY(-14px) rotate(0.32deg);
+  }
+}
+
+@keyframes booking-sway-a {
+  0%,
+  100% {
+    transform: translateY(-2px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-5px) rotate(0.22deg);
+  }
+}
+
+@keyframes booking-sway-b {
+  0%,
+  100% {
+    transform: translateY(-2px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-4px) rotate(-0.2deg);
+  }
+}
+
+@keyframes booking-sway-c {
+  0%,
+  100% {
+    transform: translateY(-1px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-3px) rotate(0.15deg);
+  }
+}
+
+.booking-float-sway:not(:hover) {
+  animation: booking-sway-a 6.8s ease-in-out infinite;
+  animation-delay: var(--sway-delay, 0s);
+}
+
+.booking-float-sway.booking-float-sway--alt:not(:hover) {
+  animation: booking-sway-b 7.4s ease-in-out infinite;
+  animation-delay: var(--sway-delay, 0s);
+}
+
+.booking-float-panel.booking-float-sway {
+  animation: booking-sway-c 7.8s ease-in-out infinite;
+  animation-delay: var(--sway-delay, 0s);
+}
+
+.booking-btn-sway:not(:hover):not(:disabled) {
+  animation: booking-sway-c 7.2s ease-in-out infinite;
+  animation-delay: var(--sway-delay, 0s);
+}
+
+.booking-float-sway:hover,
+.booking-float-sway--alt:hover,
+.booking-btn-sway:hover {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .booking-fade-up {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  .booking-float-panel,
+  .booking-float-card,
+  .booking-float-card:hover,
+  .booking-float-card:active,
+  .booking-path-toggle .home-btn,
+  .booking-path-toggle .home-btn-secondary:hover,
+  .booking-path-toggle .home-btn-primary,
+  .booking-path-toggle .home-btn-primary:hover,
+  .booking-float-sway,
+  .booking-float-sway--alt,
+  .booking-float-panel.booking-float-sway,
+  .booking-btn-sway,
+  .home-promo-card-float {
+    transform: none;
+    transition: none;
+    animation: none;
+  }
+
+  .home-promo-card {
+    transform: translateX(var(--promo-drag, 0px));
+  }
+
+  .home-promo-card::after {
+    animation: none;
+    display: none;
+  }
+
+  .home-promo-card-float {
+    transform: translateX(var(--promo-drag, 0px));
+  }
+}
+
 .studio-logo {
   display: block;
   background: transparent !important;
@@ -478,6 +1267,19 @@ body {
   .home-btn-primary::after {
     animation: none;
     display: none;
+  }
+
+  .home-promo-card::after {
+    animation: none;
+    display: none;
+  }
+
+  .home-promo-card-float,
+  .booking-float-sway,
+  .booking-float-sway--alt,
+  .booking-float-panel.booking-float-sway,
+  .booking-btn-sway {
+    animation: none;
   }
 
   .home-btn {

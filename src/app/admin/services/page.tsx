@@ -1,10 +1,10 @@
-import { requireRole } from "@/lib/auth/session";
+import { requireAdminSection } from "@/lib/auth/session";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { ServicesPanel } from "@/components/admin/services-panel";
 import { getServiceAdminPageData } from "@/services/ServiceAdminService";
 
 export default async function ServicesAdminPage() {
-  await requireRole(["OWNER", "MANAGER"]);
+  const user = await requireAdminSection("services");
 
   const {
     services,
@@ -20,6 +20,7 @@ export default async function ServicesAdminPage() {
         title="Услуги"
         description="Справочник услуг для расписания и онлайн-записи"
         current="services"
+        role={user.role}
       />
 
       <ServicesPanel

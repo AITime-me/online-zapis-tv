@@ -1,6 +1,12 @@
 import Link from "next/link";
 import { requireAuth } from "@/lib/auth/session";
-import { ROLE_LABELS } from "@/lib/auth/permissions";
+import {
+  canAccessEmergencyExport,
+  canManageBookingRequests,
+  canManageMasters,
+  canManageServices,
+  ROLE_LABELS,
+} from "@/lib/auth/permissions";
 import { LogoutButton } from "@/components/auth/logout-button";
 import { ScheduleDayView } from "@/components/schedule/schedule-day-view";
 import { ScheduleMonthView } from "@/components/schedule/schedule-month-view";
@@ -38,27 +44,37 @@ export default async function SchedulePage({ searchParams }: SchedulePageProps) 
       </div>
 
       <div className="flex items-center gap-2">
-        {(user.role === "OWNER" || user.role === "MANAGER") && (
-          <>
-            <Link
-              href="/admin/masters"
-              className="text-xs text-[#1a73e8] hover:underline"
-            >
-              Мастера
-            </Link>
-            <Link
-              href="/admin/services"
-              className="text-xs text-[#1a73e8] hover:underline"
-            >
-              Услуги
-            </Link>
-            <Link
-              href="/admin/emergency-export"
-              className="text-xs text-[#1a73e8] hover:underline"
-            >
-              Аварийная выгрузка
-            </Link>
-          </>
+        {canManageMasters(user.role) && (
+          <Link
+            href="/admin/masters"
+            className="text-xs text-[#1a73e8] hover:underline"
+          >
+            Мастера
+          </Link>
+        )}
+        {canManageServices(user.role) && (
+          <Link
+            href="/admin/services"
+            className="text-xs text-[#1a73e8] hover:underline"
+          >
+            Услуги
+          </Link>
+        )}
+        {canManageBookingRequests(user.role) && (
+          <Link
+            href="/admin/booking-requests"
+            className="text-xs text-[#1a73e8] hover:underline"
+          >
+            Заявки
+          </Link>
+        )}
+        {canAccessEmergencyExport(user.role) && (
+          <Link
+            href="/admin/emergency-export"
+            className="text-xs text-[#1a73e8] hover:underline"
+          >
+            Аварийная выгрузка
+          </Link>
         )}
         <LogoutButton />
       </div>

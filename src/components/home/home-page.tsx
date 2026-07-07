@@ -52,19 +52,12 @@ export function HomePage() {
       <HomeHeader />
 
       <main>
-        <section className="home-fade-up is-visible home-hero relative overflow-hidden px-4 pb-10 pt-8 sm:pb-14 sm:pt-11 md:px-6 md:pb-16 md:pt-16 lg:pb-20 lg:pt-20">
-          <div className="home-hero-deco" aria-hidden />
-          <div
-            className="home-deco-ring -left-10 top-16 hidden h-28 w-28 opacity-30 sm:block md:h-36 md:w-36"
-            aria-hidden
-          />
-          <div
-            className="home-deco-hourglass right-6 top-24 hidden opacity-35 md:block lg:right-16"
-            aria-hidden
-          />
-          <div className="home-ornament-corner pointer-events-none absolute right-0 top-6 hidden h-40 w-40 opacity-20 lg:block" aria-hidden />
+        <section className="home-fade-up is-visible home-hero home-hero--home relative overflow-hidden px-4 pb-12 pt-9 sm:pb-16 sm:pt-11 md:px-6 md:pb-[4.5rem] md:pt-16 lg:pb-20 lg:pt-20">
+          <div className="home-hero-ref home-hero-ref--desktop" aria-hidden />
+          <div className="home-hero-ref home-hero-ref--mobile" aria-hidden />
+          <div className="home-hero-ref-overlay" aria-hidden />
 
-          <div className="relative mx-auto max-w-3xl text-center">
+          <div className="home-hero-content mx-auto w-full max-w-3xl text-center">
             <p
               className="font-body text-[0.7rem] font-semibold uppercase tracking-[0.28em] sm:text-xs"
               style={{ color: studioBrand.gold }}
@@ -73,7 +66,7 @@ export function HomePage() {
             </p>
 
             <h1
-              className="font-display mx-auto mt-4 max-w-[18ch] text-[1.75rem] font-semibold leading-[1.15] sm:mt-5 sm:max-w-none sm:text-4xl md:text-5xl lg:text-[3.1rem]"
+              className="font-display mx-auto mt-4 max-w-2xl text-balance text-[1.75rem] font-semibold leading-[1.15] sm:mt-5 sm:text-4xl md:text-5xl lg:text-[3.1rem]"
               style={{ color: studioBrand.green }}
             >
               Выберите заботу, которую подарите себе сегодня
@@ -86,7 +79,7 @@ export function HomePage() {
               Подберите процедуру, специалиста и удобное время — без лишних поисков
             </p>
 
-            <div className="mt-8 sm:mt-10">
+            <div className="mt-8 w-full sm:mt-9">
               <HomeCtaGroup
                 centered
                 primaryHref="/booking"
@@ -100,7 +93,7 @@ export function HomePage() {
 
         <HomeSection
           divider
-          className="home-steps-intro !pt-10 sm:!pt-12 md:!pt-16 lg:!pt-20"
+          className="home-steps-intro !pt-8 sm:!pt-10 md:!pt-14 lg:!pt-16"
           title="Ваш путь к визиту — несколько простых шагов"
           description="Выберите процедуру, специалиста и подходящее время. Мы позаботимся о Вашей записи."
         >
@@ -180,8 +173,7 @@ export function HomePage() {
 
         <section
           id="promo"
-          className="home-fade-up relative overflow-hidden px-4 py-16 sm:py-20 md:px-6 md:py-24"
-          style={{ backgroundColor: studioBrand.green }}
+          className="home-fade-up home-promo-section relative px-4 py-16 sm:py-20 md:px-6 md:py-24"
         >
           <div className="home-ornament-promo pointer-events-none absolute inset-0 opacity-25" aria-hidden />
           <div

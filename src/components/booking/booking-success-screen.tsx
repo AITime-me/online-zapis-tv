@@ -11,7 +11,14 @@ import {
   BookingRulesConfirmBlock,
   BookingRulesPriceSummary,
 } from "@/components/booking/booking-promotion-ui";
-import { bookingTheme } from "@/components/booking/booking-theme";
+import {
+  BookingButton,
+  BookingPanel,
+  BookingStepDescription,
+  BookingStepEyebrow,
+  BookingStepTitle,
+} from "@/components/booking/booking-ui";
+import { studioBrand } from "@/lib/brand/studio-brand";
 import type { RulesEngineResult } from "@/lib/promo/rules-engine";
 import type {
   BookingCatalogMaster,
@@ -43,10 +50,12 @@ function formatDuration(minutes: number): string {
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-start justify-between gap-4 py-3">
-      <dt className="shrink-0 text-base text-[#9ca3af]">{label}</dt>
+      <dt className="font-body shrink-0 text-base" style={{ color: studioBrand.inkMuted }}>
+        {label}
+      </dt>
       <dd
-        className="text-right text-base font-medium leading-snug"
-        style={{ color: bookingTheme.green }}
+        className="font-body text-right text-base font-medium leading-snug"
+        style={{ color: studioBrand.green }}
       >
         {value}
       </dd>
@@ -72,43 +81,27 @@ export function BookingSuccessScreen({
   return (
     <>
       <BookingConfetti />
-      <div className="relative space-y-6">
+      <div className="booking-fade-up relative space-y-6">
         <header className="space-y-3 text-center">
           <div
             className="mx-auto flex h-14 w-14 items-center justify-center rounded-full text-2xl"
-            style={{ backgroundColor: `${bookingTheme.gold}33` }}
+            style={{ backgroundColor: `${studioBrand.gold}33`, color: studioBrand.green }}
             aria-hidden
           >
             ✓
           </div>
-          <h2
-            className="text-2xl font-semibold leading-tight md:text-3xl"
-            style={{ color: bookingTheme.green }}
-          >
-            Вы записаны!
-          </h2>
-          <p className="text-base leading-relaxed text-[#6b7280] md:text-lg">
+          <BookingStepTitle>Вы записаны!</BookingStepTitle>
+          <BookingStepDescription>
             Пусть это время будет только для вас ✨
-          </p>
-          <p className="text-sm leading-relaxed text-[#6b7280]">
+          </BookingStepDescription>
+          <p className="font-body text-sm leading-relaxed" style={{ color: studioBrand.inkMuted }}>
             Запись ожидает подтверждения менеджером студии.
           </p>
         </header>
 
-        <section
-          className="rounded-2xl border p-5 md:p-6"
-          style={{
-            borderColor: bookingTheme.border,
-            backgroundColor: bookingTheme.card,
-          }}
-        >
-          <h3
-            className="mb-1 text-sm font-medium uppercase tracking-[0.15em]"
-            style={{ color: bookingTheme.gold }}
-          >
-            Детали записи
-          </h3>
-          <dl className="divide-y" style={{ borderColor: bookingTheme.border }}>
+        <BookingPanel>
+          <BookingStepEyebrow>Детали записи</BookingStepEyebrow>
+          <dl className="divide-y" style={{ borderColor: studioBrand.goldLineSoft }}>
             <DetailRow label="Услуга" value={service.publicName} />
             <DetailRow label="Мастер" value={master.publicName} />
             <DetailRow label="Дата" value={formatDateKeyLabel(dateKey)} />
@@ -130,40 +123,27 @@ export function BookingSuccessScreen({
               <BookingRulesConfirmBlock sections={rulesResult.confirmSections} />
             </div>
           ) : null}
-        </section>
+        </BookingPanel>
 
         <div className="space-y-3">
           {manageUrl ? (
             <Link
               href={manageUrl}
-              className="flex min-h-12 w-full items-center justify-center rounded-xl px-5 py-3 text-base font-medium text-white transition hover:opacity-95 active:scale-[0.99]"
-              style={{ backgroundColor: bookingTheme.green }}
+              className="home-btn home-btn-primary font-body flex min-h-12 w-full items-center justify-center rounded-2xl px-5 py-3 text-base font-medium text-white transition duration-300 ease-out"
             >
               Отменить или перенести запись
             </Link>
           ) : null}
-          <button
-            type="button"
-            onClick={onBookAgain}
-            className="flex min-h-12 w-full items-center justify-center rounded-xl border px-5 py-3 text-base font-medium transition hover:bg-[#faf9f7] active:scale-[0.99]"
-            style={{
-              borderColor: bookingTheme.border,
-              color: bookingTheme.green,
-            }}
-          >
+          <BookingButton variant="secondary" type="button" onClick={onBookAgain} className="w-full">
             Записаться ещё раз
-          </button>
+          </BookingButton>
           <a
             href={bookingStudioTelHref}
-            className="flex min-h-12 w-full items-center justify-center rounded-xl border px-5 py-3 text-base font-medium transition hover:bg-[#faf9f7] active:scale-[0.99]"
-            style={{
-              borderColor: bookingTheme.border,
-              color: bookingTheme.green,
-            }}
+            className="home-btn home-btn-secondary font-body flex min-h-12 w-full items-center justify-center rounded-2xl border bg-white/92 px-5 py-3 text-base font-medium text-[var(--brand-green)] transition duration-300 ease-out"
           >
             Позвонить в студию
           </a>
-          <p className="pt-1 text-center text-sm text-[#9ca3af]">
+          <p className="font-body pt-1 text-center text-sm" style={{ color: studioBrand.inkMuted }}>
             {bookingStudio.phoneDisplay}
           </p>
         </div>

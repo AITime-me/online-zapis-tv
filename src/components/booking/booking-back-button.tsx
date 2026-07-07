@@ -1,7 +1,7 @@
 "use client";
 
 import type { ButtonHTMLAttributes, ReactNode } from "react";
-import { bookingTheme } from "@/components/booking/booking-theme";
+import { BookingButton } from "@/components/booking/booking-ui";
 
 type BookingBackButtonProps = {
   children: ReactNode;
@@ -29,18 +29,14 @@ export function BookingBackButton({
   type = "button",
 }: BookingBackButtonProps) {
   return (
-    <button
+    <BookingButton
       type={type}
+      variant="secondary"
       onClick={onClick}
-      className={`inline-flex min-h-12 shrink-0 items-center justify-center gap-2 rounded-xl border-2 px-4 py-2.5 text-sm font-semibold transition hover:bg-[#f0ebe3] active:scale-[0.98] active:bg-[#e8e2d8] sm:min-h-[48px] sm:px-5 sm:text-base ${className}`}
-      style={{
-        color: bookingTheme.green,
-        borderColor: bookingTheme.gold,
-        backgroundColor: bookingTheme.surface,
-      }}
+      className={`min-h-11 gap-2 px-4 py-2.5 text-sm sm:px-5 sm:text-base ${className}`}
     >
       <BackChevronIcon />
       <span>{children}</span>
-    </button>
+    </BookingButton>
   );
 }

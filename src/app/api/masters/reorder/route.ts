@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   requireApiRoles,
-  WRITE_SCHEDULE_ROLES,
+  MANAGE_MASTERS_ROLES,
 } from "@/lib/auth/api-access";
 import {
   MasterAdminValidationError,
@@ -10,7 +10,7 @@ import {
 import type { MasterReorderInput } from "@/types/master-admin";
 
 export async function PATCH(request: Request) {
-  const authResult = await requireApiRoles(WRITE_SCHEDULE_ROLES);
+  const authResult = await requireApiRoles(MANAGE_MASTERS_ROLES);
   if ("response" in authResult) {
     return authResult.response;
   }

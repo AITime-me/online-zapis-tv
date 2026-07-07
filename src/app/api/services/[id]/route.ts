@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   requireApiRoles,
-  WRITE_SCHEDULE_ROLES,
+  MANAGE_SERVICES_ROLES,
 } from "@/lib/auth/api-access";
 import {
   ServiceAdminNotFoundError,
@@ -15,7 +15,7 @@ type RouteContext = {
 };
 
 export async function PATCH(request: Request, context: RouteContext) {
-  const authResult = await requireApiRoles(WRITE_SCHEDULE_ROLES);
+  const authResult = await requireApiRoles(MANAGE_SERVICES_ROLES);
   if ("response" in authResult) {
     return authResult.response;
   }

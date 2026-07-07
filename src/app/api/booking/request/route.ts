@@ -67,7 +67,7 @@ export async function POST(request: Request) {
       comment: body.comment,
       masterId: body.masterId ?? null,
       type: body.type,
-      consent: true,
+      consent: body.consent === true,
     });
 
     return NextResponse.json({ ok: true, request: bookingRequest });

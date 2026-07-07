@@ -1,4 +1,4 @@
-import { requireRole } from "@/lib/auth/session";
+import { requireAdminSection } from "@/lib/auth/session";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import {
   PromotionsDetailsList,
@@ -10,7 +10,7 @@ import {
 } from "@/services/PromotionAdminService";
 
 export default async function PromotionsAdminPage() {
-  await requireRole(["OWNER", "MANAGER"]);
+  const user = await requireAdminSection("promotions");
 
   const rules = listPromotionRulesForAdmin();
   const summary = getPromotionAdminSummary(rules);
@@ -21,6 +21,7 @@ export default async function PromotionsAdminPage() {
         title="Акции и подарки"
         description="Правила, которые применяются в онлайн-записи и отображаются в расписании."
         current="promotions"
+        role={user.role}
       />
 
       <section className="rounded border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-900">

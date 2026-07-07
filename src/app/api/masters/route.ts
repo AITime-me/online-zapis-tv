@@ -1,8 +1,5 @@
 import { NextResponse } from "next/server";
-import {
-  requireApiRoles,
-  WRITE_SCHEDULE_ROLES,
-} from "@/lib/auth/api-access";
+import { requireApiRoles, MANAGE_MASTERS_ROLES } from "@/lib/auth/api-access";
 import {
   createMaster,
   listMasters,
@@ -12,7 +9,7 @@ import {
 import type { MasterWriteInput } from "@/types/master-admin";
 
 export async function GET(request: Request) {
-  const authResult = await requireApiRoles(WRITE_SCHEDULE_ROLES);
+  const authResult = await requireApiRoles(MANAGE_MASTERS_ROLES);
   if ("response" in authResult) {
     return authResult.response;
   }
@@ -25,7 +22,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const authResult = await requireApiRoles(WRITE_SCHEDULE_ROLES);
+  const authResult = await requireApiRoles(MANAGE_MASTERS_ROLES);
   if ("response" in authResult) {
     return authResult.response;
   }

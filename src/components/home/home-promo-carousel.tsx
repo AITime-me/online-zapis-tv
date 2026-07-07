@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState, type TouchEvent } from "react";
+import { useCallback, useRef, useState, type CSSProperties, type TouchEvent } from "react";
 import { StudioLogo } from "@/components/brand/studio-logo";
 import {
   HOME_PROMOTION_KIND_LABELS,
@@ -85,55 +85,54 @@ export function HomePromoCarousel({ promotions }: HomePromoCarouselProps) {
   }
 
   return (
-    <div className="relative select-none">
+    <div className="home-promo-carousel-shell relative select-none">
       <div
-        className="overflow-hidden"
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
         onTouchCancel={onTouchEnd}
       >
-        <article
-          className={`home-promo-card ${PROMO_CARD_CLASS[promotion.kind]} rounded-[2rem] border px-5 py-9 text-center transition-transform duration-300 ease-out sm:px-8 md:px-10 md:py-12`}
-          style={{
-            borderColor: studioBrand.goldLine,
-            background:
-              "linear-gradient(165deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%)",
-            boxShadow: "0 24px 60px rgba(0,0,0,0.14)",
-            transform: `translateX(${dragOffset}px)`,
-          }}
+        <div
+          className="home-promo-card-float"
+          style={{ "--promo-drag": `${dragOffset}px` } as CSSProperties}
         >
-          <p
-            className="home-promo-badge font-body mb-5 inline-flex items-center rounded-full border px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em]"
-            style={{
-              borderColor: "rgba(201, 169, 106, 0.42)",
-              color: studioBrand.goldMuted,
-            }}
+          <article
+            className={`home-promo-card ${PROMO_CARD_CLASS[promotion.kind]} relative z-0 rounded-[2rem] px-5 py-9 text-center sm:px-8 md:px-10 md:py-12`}
           >
-            {resolvePromotionBadge(promotion)}
-          </p>
+            <div className="relative z-[1]">
+              <p
+                className="home-promo-badge font-body mb-5 inline-flex items-center rounded-full border px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em]"
+                style={{
+                  borderColor: "rgba(201, 169, 106, 0.42)",
+                  color: studioBrand.goldMuted,
+                }}
+              >
+                {resolvePromotionBadge(promotion)}
+              </p>
 
-          <div className="mb-6 flex justify-center">
-            <StudioLogo variant="gold" size="md" className="mx-auto object-center" />
-          </div>
+              <div className="mb-6 flex justify-center">
+                <StudioLogo variant="gold" size="md" className="mx-auto object-center" />
+              </div>
 
-          <h3 className="font-display text-xl font-semibold leading-tight text-[#faf7f2] sm:text-2xl md:text-3xl">
-            {promotion.title}
-          </h3>
-          <p className="font-body mx-auto mt-4 max-w-2xl text-sm leading-relaxed text-white/78 sm:text-base md:text-lg">
-            {promotion.description}
-          </p>
+              <h3 className="font-display text-xl font-semibold leading-tight text-[#faf7f2] sm:text-2xl md:text-3xl">
+                {promotion.title}
+              </h3>
+              <p className="font-body mx-auto mt-4 max-w-2xl text-sm leading-relaxed text-white/78 sm:text-base md:text-lg">
+                {promotion.description}
+              </p>
 
-          <div className="mt-8 flex justify-center">
-            <HomeButton
-              href={promotion.ctaHref}
-              variant={promotion.kind === "game" ? "primary" : "ghost"}
-              className={promotion.kind === "game" ? "sm:min-w-[220px]" : undefined}
-            >
-              {promotion.ctaLabel}
-            </HomeButton>
-          </div>
-        </article>
+              <div className="mt-8 flex justify-center">
+                <HomeButton
+                  href={promotion.ctaHref}
+                  variant={promotion.kind === "game" ? "primary" : "ghost"}
+                  className={promotion.kind === "game" ? "sm:min-w-[220px]" : undefined}
+                >
+                  {promotion.ctaLabel}
+                </HomeButton>
+              </div>
+            </div>
+          </article>
+        </div>
       </div>
 
       {count > 1 ? (

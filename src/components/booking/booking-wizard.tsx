@@ -27,7 +27,6 @@ import {
 } from "@/components/booking/booking-path-toggle";
 import { BookingSuccessScreen } from "@/components/booking/booking-success-screen";
 import { BookingClientFields } from "@/components/booking/booking-client-fields";
-import { BookingLegalConfirmNotice } from "@/components/booking/booking-legal-links";
 import {
   BookingPromotionConfirmBlock,
   BookingPromotionGeneralNotice,
@@ -39,8 +38,16 @@ import {
   type ClientDataFieldErrors,
   type PhoneCountryCode,
   validateClientContactFields,
+  validateClientData,
 } from "@/lib/booking/client-validation";
 import { bookingTheme } from "@/components/booking/booking-theme";
+import {
+  BookingButton,
+  BookingPanel,
+  BookingStepTitle,
+  BOOKING_SELECTABLE_CARD_CLASS,
+  bookingSwayStyle,
+} from "@/components/booking/booking-ui";
 import {
   DEFAULT_BOOKING_ERROR,
   readJsonResponse,
@@ -189,6 +196,24 @@ export function BookingWizard() {
     () => buildFullPhoneNumber(selection.countryCode, selection.phoneLocal),
     [selection.countryCode, selection.phoneLocal],
   );
+
+  useEffect(() => {
+    const elements = document.querySelectorAll(".booking-fade-up");
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("is-visible");
+          }
+        }
+      },
+      { threshold: 0.08, rootMargin: "0px 0px -4% 0px" },
+    );
+    for (const element of elements) {
+      observer.observe(element);
+    }
+    return () => observer.disconnect();
+  }, [step]);
 
   const isConfirmPhoneValid = useMemo(() => {
     const phoneErrors = validateClientContactFields(selection.name, confirmPhone);
@@ -481,12 +506,13 @@ export function BookingWizard() {
   );
 
   const canSubmitContact = useMemo(() => {
-    const contactErrors = validateClientContactFields(
-      selection.name,
-      fullPhone,
-    );
-    return !contactErrors.name && !contactErrors.phone;
-  }, [fullPhone, selection.name]);
+    const clientErrors = validateClientData({
+      clientName: selection.name,
+      clientPhone: fullPhone,
+      consent: selection.consent,
+    });
+    return !clientErrors.name && !clientErrors.phone && !clientErrors.consent;
+  }, [fullPhone, selection.consent, selection.name]);
 
   const submitBooking = async () => {
     console.log("[booking] submit fired", {
@@ -516,13 +542,14 @@ export function BookingWizard() {
       return;
     }
 
-    const validationErrors = validateClientContactFields(
-      selection.name,
-      fullPhone,
-    );
+    const validationErrors = validateClientData({
+      clientName: selection.name,
+      clientPhone: fullPhone,
+      consent: selection.consent,
+    });
     setClientFieldErrors(validationErrors);
 
-    if (validationErrors.name || validationErrors.phone) {
+    if (validationErrors.name || validationErrors.phone || validationErrors.consent) {
       console.warn("[booking] submit blocked: client validation", validationErrors);
       return;
     }
@@ -538,7 +565,7 @@ export function BookingWizard() {
       name: selection.name.trim(),
       phone: fullPhone,
       comment: selection.comment.trim() || undefined,
-      consent: true,
+      consent: selection.consent,
     };
 
     console.log("[booking] POST /api/booking/create", createPayload);
@@ -763,15 +790,11 @@ export function BookingWizard() {
 
   if (loading) {
     return (
-      <div
-        className="rounded-2xl border p-10 text-center text-base text-[#6b7280]"
-        style={{
-          borderColor: bookingTheme.border,
-          backgroundColor: bookingTheme.card,
-        }}
-      >
-        Загрузка…
-      </div>
+      <BookingPanel className="booking-fade-up is-visible p-10 text-center">
+        <p className="font-body text-base" style={{ color: bookingTheme.textMuted }}>
+          Загрузка…
+        </p>
+      </BookingPanel>
     );
   }
 
@@ -786,13 +809,7 @@ export function BookingWizard() {
     }
 
     return (
-      <div
-        className="rounded-2xl border p-5 md:p-8"
-        style={{
-          borderColor: bookingTheme.border,
-          backgroundColor: bookingTheme.card,
-        }}
-      >
+      <BookingPanel className="booking-fade-up is-visible p-5 md:p-8">
         <BookingSuccessScreen
           service={selection.service}
           master={selection.master}
@@ -802,30 +819,30 @@ export function BookingWizard() {
           manageUrl={successManageUrl}
           onBookAgain={resetWizard}
         />
-      </div>
+      </BookingPanel>
     );
   }
 
   return (
-    <div className="space-y-4">
+    <div className="booking-wizard booking-fade-up is-visible space-y-4 md:space-y-4">
       <BookingManagerRequestForm
         open={requestForm != null}
         type={requestForm?.type ?? "MANAGER_REQUEST"}
         master={requestForm?.master}
         onClose={() => setRequestForm(null)}
       />
-      <nav className="flex flex-wrap gap-2">
+      <nav className="booking-step-nav" aria-label="Шаги записи">
         {STEPS.map((entry, index) => {
           const isActive = entry.id === step;
           const isDone = index < currentStepIndex;
           return (
             <span
               key={entry.id}
-              className={`rounded-full px-3 py-1.5 text-xs font-medium ${
+              className={`booking-step-nav__item font-body rounded-full px-3 py-1.5 text-xs font-medium transition duration-300 ${
                 isActive
                   ? "text-white"
                   : isDone
-                    ? "text-[#4b5563]"
+                    ? ""
                     : "text-[#9ca3af]"
               }`}
               style={
@@ -833,12 +850,12 @@ export function BookingWizard() {
                   ? { backgroundColor: bookingTheme.green }
                   : isDone
                     ? {
-                        backgroundColor: `${bookingTheme.gold}33`,
+                        backgroundColor: "rgba(201, 169, 106, 0.22)",
                         color: bookingTheme.green,
                       }
                     : {
                         backgroundColor: bookingTheme.card,
-                        border: `1px solid ${bookingTheme.border}`,
+                        border: `1px solid rgba(201, 169, 106, 0.34)`,
                       }
               }
             >
@@ -854,13 +871,8 @@ export function BookingWizard() {
         </div>
       )}
 
-      <div
-        className="rounded-2xl border p-4 md:p-6"
-        style={{
-          borderColor: bookingTheme.border,
-          backgroundColor: bookingTheme.card,
-        }}
-      >
+      <div className="booking-wizard-content">
+      <BookingPanel>
         {step === "service" && (
           <div className="space-y-6">
             <BookingPathToggle
@@ -914,9 +926,7 @@ export function BookingWizard() {
         {step === "master" && (
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-2">
-              <h2 className="text-base font-semibold text-zinc-900">
-                Выберите мастера
-              </h2>
+              <BookingStepTitle>Выберите мастера</BookingStepTitle>
               <BookingBackButton
                 onClick={() => {
                   const categoryId =
@@ -944,19 +954,20 @@ export function BookingWizard() {
                 Нет доступных мастеров для этой услуги.
               </p>
             ) : (
-              <div className="grid gap-2 sm:grid-cols-2">
-                {masters.map((master) => (
+              <div className="grid gap-3 sm:grid-cols-2">
+                {masters.map((master, index) => (
                   <button
                     key={master.id}
                     type="button"
                     onClick={() => selectMaster(master)}
-                    className="rounded-lg border border-[#dadce0] px-4 py-3 text-left transition hover:border-zinc-400 hover:bg-zinc-50"
+                    className={`${BOOKING_SELECTABLE_CARD_CLASS} ${index % 2 === 1 ? "booking-float-sway--alt" : ""} rounded-[1.25rem] px-4 py-3`}
+                    style={bookingSwayStyle(index)}
                   >
-                    <div className="font-medium text-zinc-900">
+                    <div className="font-body font-medium" style={{ color: bookingTheme.green }}>
                       {master.publicName}
                     </div>
                     {master.clientDescription && (
-                      <p className="mt-1 text-xs text-zinc-500">
+                      <p className="font-body mt-1 text-xs" style={{ color: bookingTheme.textMuted }}>
                         {master.clientDescription}
                       </p>
                     )}
@@ -970,9 +981,7 @@ export function BookingWizard() {
         {step === "date" && (
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-2">
-              <h2 className="text-base font-semibold text-zinc-900">
-                Выберите дату
-              </h2>
+              <BookingStepTitle>Выберите дату</BookingStepTitle>
               <BookingBackButton
                 onClick={() => {
                   if (bookingPath === "by-master") {
@@ -991,17 +1000,19 @@ export function BookingWizard() {
                 <button
                   type="button"
                   onClick={() => changeMonth(-1)}
-                  className="rounded-md px-2 py-1 text-sm text-zinc-600 hover:bg-zinc-100"
+                  className="font-body rounded-xl border px-2 py-1 text-sm transition hover:bg-white/80"
+                  style={{ borderColor: "rgba(201, 169, 106, 0.34)", color: bookingTheme.green }}
                 >
                   ←
                 </button>
-                <span className="text-sm font-medium capitalize text-zinc-800">
+                <span className="font-display text-sm font-medium capitalize" style={{ color: bookingTheme.green }}>
                   {formatMonthTitle(monthKey)}
                 </span>
                 <button
                   type="button"
                   onClick={() => changeMonth(1)}
-                  className="rounded-md px-2 py-1 text-sm text-zinc-600 hover:bg-zinc-100"
+                  className="font-body rounded-xl border px-2 py-1 text-sm transition hover:bg-white/80"
+                  style={{ borderColor: "rgba(201, 169, 106, 0.34)", color: bookingTheme.green }}
                 >
                   →
                 </button>
@@ -1034,13 +1045,23 @@ export function BookingWizard() {
                         type="button"
                         disabled={!isAvailable || isPast}
                         onClick={() => selectDate(cell.dateKey!)}
-                        className={`aspect-square rounded-lg text-sm transition ${
+                        className={`font-body aspect-square rounded-xl text-sm transition duration-200 ${
                           isSelected
-                            ? "bg-zinc-900 text-white"
+                            ? "home-btn-primary text-white"
                             : isAvailable && !isPast
-                              ? "bg-emerald-50 text-emerald-900 hover:bg-emerald-100"
+                              ? "border bg-white/90 hover:-translate-y-0.5"
                               : "cursor-not-allowed text-zinc-300"
                         }`}
+                        style={
+                          isSelected
+                            ? undefined
+                            : isAvailable && !isPast
+                              ? {
+                                  borderColor: "rgba(201, 169, 106, 0.34)",
+                                  color: bookingTheme.green,
+                                }
+                              : undefined
+                        }
                       >
                         {cell.label}
                       </button>
@@ -1060,9 +1081,7 @@ export function BookingWizard() {
         {step === "time" && (
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-2">
-              <h2 className="text-base font-semibold text-zinc-900">
-                Выберите время
-              </h2>
+              <BookingStepTitle>Выберите время</BookingStepTitle>
               <BookingBackButton onClick={() => setStep("date")}>
                 Назад
               </BookingBackButton>
@@ -1080,12 +1099,13 @@ export function BookingWizard() {
               </p>
             ) : (
               <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
-                {slots.map((slot) => (
+                {slots.map((slot, index) => (
                   <button
                     key={slot}
                     type="button"
                     onClick={() => selectTime(slot)}
-                    className="rounded-lg border border-[#dadce0] px-3 py-2 text-sm font-medium text-zinc-800 transition hover:border-zinc-400 hover:bg-zinc-50"
+                    className={`${BOOKING_SELECTABLE_CARD_CLASS} ${index % 2 === 1 ? "booking-float-sway--alt" : ""} rounded-xl px-3 py-2 text-sm font-medium`}
+                    style={{ ...bookingSwayStyle(index), color: bookingTheme.green }}
                   >
                     {slot}
                   </button>
@@ -1098,17 +1118,23 @@ export function BookingWizard() {
         {step === "confirm" && (
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-2">
-              <h2 className="text-base font-semibold text-zinc-900">
-                Подтверждение
-              </h2>
+              <BookingStepTitle>Подтверждение</BookingStepTitle>
               <BookingBackButton onClick={() => setStep("time")}>
                 Назад
               </BookingBackButton>
             </div>
-            <dl className="space-y-2 rounded-lg bg-zinc-50 p-4 text-sm">
+            <dl
+              className="space-y-2 rounded-[1.25rem] border p-4 text-sm"
+              style={{
+                borderColor: "rgba(201, 169, 106, 0.34)",
+                backgroundColor: "rgba(255, 255, 255, 0.72)",
+              }}
+            >
               <div className="flex justify-between gap-4">
-                <dt className="text-zinc-500">Услуга</dt>
-                <dd className="text-right font-medium text-zinc-900">
+                <dt className="font-body" style={{ color: bookingTheme.textMuted }}>
+                  Услуга
+                </dt>
+                <dd className="font-body text-right font-medium" style={{ color: bookingTheme.green }}>
                   {selection.service?.publicName}
                 </dd>
               </div>
@@ -1116,14 +1142,18 @@ export function BookingWizard() {
                 <BookingRulesPriceSummary rulesResult={bookingRulesResult} />
               ) : null}
               <div className="flex justify-between gap-4">
-                <dt className="text-zinc-500">Мастер</dt>
-                <dd className="text-right font-medium text-zinc-900">
+                <dt className="font-body" style={{ color: bookingTheme.textMuted }}>
+                  Мастер
+                </dt>
+                <dd className="font-body text-right font-medium" style={{ color: bookingTheme.green }}>
                   {selection.master?.publicName}
                 </dd>
               </div>
               <div className="flex justify-between gap-4">
-                <dt className="text-zinc-500">Дата и время</dt>
-                <dd className="text-right font-medium text-zinc-900">
+                <dt className="font-body" style={{ color: bookingTheme.textMuted }}>
+                  Дата и время
+                </dt>
+                <dd className="font-body text-right font-medium" style={{ color: bookingTheme.green }}>
                   {selection.dateKey && formatDateKeyLabel(selection.dateKey)}{" "}
                   {selection.startTime}
                 </dd>
@@ -1140,7 +1170,6 @@ export function BookingWizard() {
             />
             <BookingClientFields
               variant="wizard"
-              showConsent={false}
               name={selection.name}
               onNameChange={(value) =>
                 setSelection((prev) => ({ ...prev, name: value }))
@@ -1169,17 +1198,16 @@ export function BookingWizard() {
                 }))
               }
             />
-            <BookingLegalConfirmNotice />
-            <button
-              type="button"
-              disabled={submitting}
+            <BookingButton
+              disabled={!canSubmitContact || submitting}
               onClick={() => void submitBooking()}
-              className={`w-full rounded-lg bg-zinc-900 px-4 py-3 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:opacity-60${!canSubmitContact && !submitting ? " opacity-80" : ""}`}
+              className="w-full"
             >
               {submitting ? "Записываем…" : "Записаться"}
-            </button>
+            </BookingButton>
           </div>
         )}
+      </BookingPanel>
       </div>
     </div>
   );

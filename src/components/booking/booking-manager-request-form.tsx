@@ -1,10 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { BookingClientFields } from "@/components/booking/booking-client-fields";
-import { BookingLegalConfirmNotice } from "@/components/booking/booking-legal-links";
 import { bookingStudioTelHref } from "@/components/booking/booking-config";
-import { bookingTheme } from "@/components/booking/booking-theme";
+import {
+  BookingButton,
+  BookingStepDescription,
+} from "@/components/booking/booking-ui";
+import { studioBrand } from "@/lib/brand/studio-brand";
 import {
   buildFullPhoneNumber,
   type ClientDataFieldErrors,
@@ -40,6 +44,31 @@ export function BookingManagerRequestForm({
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<ClientDataFieldErrors>({});
   const [success, setSuccess] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!open || !isMounted) {
+      return;
+    }
+
+    const body = document.body;
+    const previousOverflow = body.style.overflow;
+    body.style.overflow = "hidden";
+
+    return () => {
+      body.style.overflow = previousOverflow;
+    };
+  }, [isMounted, open]);
+
+  useEffect(() => {
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, []);
 
   const fullPhone = useMemo(
     () => buildFullPhoneNumber(countryCode, phoneLocal),
@@ -60,23 +89,6 @@ export function BookingManagerRequestForm({
     [clientData, submitting],
   );
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [open]);
-
-  if (!open) {
-    return null;
-  }
-
   const resetAndClose = () => {
     setName("");
     setCountryCode("RU");
@@ -89,6 +101,10 @@ export function BookingManagerRequestForm({
     setSubmitting(false);
     onClose();
   };
+
+  if (!open || !isMounted) {
+    return null;
+  }
 
   const clearFieldError = (field: keyof ClientDataFieldErrors) => {
     setFieldErrors((current) => ({
@@ -117,7 +133,7 @@ export function BookingManagerRequestForm({
           comment: comment || null,
           masterId: master?.id ?? null,
           type,
-          consent: true,
+          consent,
         }),
       });
       const data = (await response.json()) as {
@@ -149,41 +165,40 @@ export function BookingManagerRequestForm({
       ? "Консультация"
       : "Заявка через менеджера";
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-3 sm:p-4"
+      className="fixed inset-0 z-50 flex h-[100dvh] max-h-[100dvh] items-center justify-center overflow-hidden bg-black/30 p-3 sm:p-4"
       role="presentation"
     >
       <div
-        className="flex max-h-[90dvh] w-full max-w-md flex-col overflow-hidden rounded-2xl border shadow-lg"
-        style={{
-          borderColor: bookingTheme.border,
-          backgroundColor: bookingTheme.card,
-        }}
+        className="home-card home-card-info booking-float-panel booking-panel-premium flex max-h-full min-h-0 w-full max-w-md flex-col overflow-hidden rounded-[1.75rem] border shadow-[0_18px_50px_rgba(28,46,38,0.12)]"
         role="dialog"
         aria-modal="true"
         aria-labelledby="booking-request-title"
       >
         <header
           className="flex shrink-0 items-start justify-between gap-3 border-b px-4 py-4 sm:px-5"
-          style={{ borderColor: bookingTheme.border }}
+          style={{ borderColor: studioBrand.goldLineSoft }}
         >
           <div className="min-w-0 flex-1">
             <h2
               id="booking-request-title"
-              className="text-xl font-semibold leading-tight"
-              style={{ color: bookingTheme.green }}
+              className="font-display text-xl font-semibold leading-tight"
+              style={{ color: studioBrand.green }}
             >
               {title}
             </h2>
             {!success && master && (
-              <p className="mt-1 text-sm text-[#9ca3af]">{master.publicName}</p>
+              <p className="font-body mt-1 text-sm" style={{ color: studioBrand.inkMuted }}>
+                {master.publicName}
+              </p>
             )}
           </div>
           <button
             type="button"
             onClick={resetAndClose}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-2xl leading-none text-[#9ca3af] transition hover:bg-[#faf9f7] hover:text-[#6b7280]"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-2xl leading-none transition hover:bg-[var(--brand-cream)]"
+            style={{ color: studioBrand.inkMuted }}
             aria-label="Закрыть"
           >
             ×
@@ -192,15 +207,15 @@ export function BookingManagerRequestForm({
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">
           {success ? (
-            <p className="text-center text-base leading-relaxed text-[#6b7280]">
+            <BookingStepDescription className="text-center">
               Менеджер студии свяжется с вами для подбора времени.
-            </p>
+            </BookingStepDescription>
           ) : (
             <>
-              <p className="mb-4 text-base leading-relaxed text-[#6b7280]">
+              <BookingStepDescription className="mb-4">
                 Оставьте заявку, и менеджер студии свяжется с вами для подбора
                 времени.
-              </p>
+              </BookingStepDescription>
 
               <BookingClientFields
                 name={name}
@@ -216,25 +231,21 @@ export function BookingManagerRequestForm({
                 showComment={false}
               />
 
-              <label className="mt-3 block text-sm">
-                <span className="mb-1 block text-[#4b5563]">
+              <label className="font-body mt-3 block text-sm">
+                <span className="mb-1 block" style={{ color: studioBrand.greenMuted }}>
                   Комментарий, необязательно
                 </span>
                 <textarea
                   value={comment}
                   onChange={(event) => setComment(event.target.value)}
                   rows={3}
-                  className="w-full rounded-xl border px-3 py-3 text-base outline-none focus:border-[#c4a35a]"
-                  style={{ borderColor: bookingTheme.border }}
+                  className="w-full rounded-2xl border border-[var(--brand-gold-border)] bg-[var(--brand-cream)] px-3 py-3 text-base text-[var(--brand-green)] outline-none transition focus:border-[var(--brand-gold)] focus:ring-2 focus:ring-[var(--brand-gold)]/25"
                   placeholder="Удобное время для звонка или пожелания"
                 />
               </label>
 
               {error && (
-                <p
-                  className="mt-3 text-sm"
-                  style={{ color: bookingTheme.textMuted }}
-                >
+                <p className="font-body mt-3 text-sm" style={{ color: studioBrand.inkMuted }}>
                   {error}
                 </p>
               )}
@@ -243,44 +254,34 @@ export function BookingManagerRequestForm({
         </div>
 
         <footer
-          className="shrink-0 space-y-3 border-t px-4 py-4 sm:px-5"
-          style={{ borderColor: bookingTheme.border }}
+          className="shrink-0 space-y-3 border-t px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-5"
+          style={{ borderColor: studioBrand.goldLineSoft }}
         >
           {success ? (
-            <button
-              type="button"
-              onClick={resetAndClose}
-              className="min-h-12 w-full rounded-xl px-5 py-3 text-base font-medium text-white"
-              style={{ backgroundColor: bookingTheme.green }}
-            >
+            <BookingButton type="button" onClick={resetAndClose} className="w-full">
               Закрыть
-            </button>
+            </BookingButton>
           ) : (
             <>
-              <BookingLegalConfirmNotice actionLabel="Отправить заявку" />
-              <button
+              <BookingButton
                 type="button"
                 disabled={!canSubmit}
                 onClick={() => void handleSubmit()}
-                className="min-h-12 w-full rounded-xl px-5 py-3 text-base font-medium text-white disabled:opacity-60"
-                style={{ backgroundColor: bookingTheme.green }}
+                className="w-full"
               >
                 {submitting ? "Отправляем…" : "Отправить заявку"}
-              </button>
+              </BookingButton>
               <a
                 href={bookingStudioTelHref}
-                className="flex min-h-12 w-full items-center justify-center rounded-xl border px-5 py-3 text-base font-medium"
-                style={{
-                  borderColor: bookingTheme.border,
-                  color: bookingTheme.green,
-                }}
+                className="home-btn home-btn-secondary font-body flex min-h-12 w-full items-center justify-center rounded-2xl border bg-white/92 px-5 py-3 text-base font-medium text-[var(--brand-green)] shadow-none"
               >
                 Позвонить в студию
               </a>
               <button
                 type="button"
                 onClick={resetAndClose}
-                className="min-h-12 w-full rounded-xl text-base font-medium text-[#6b7280] transition hover:bg-[#faf9f7]"
+                className="font-body min-h-12 w-full rounded-2xl text-base font-medium transition hover:bg-[var(--brand-cream)]"
+                style={{ color: studioBrand.inkMuted }}
               >
                 Отмена
               </button>
@@ -288,6 +289,7 @@ export function BookingManagerRequestForm({
           )}
         </footer>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

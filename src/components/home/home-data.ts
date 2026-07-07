@@ -124,6 +124,7 @@ export const HOME_NAV = [
 ] as const;
 
 export const HOME_FOOTER_LEGAL_LINKS = [
+  { label: "Пользовательское соглашение", href: "/offer" },
   { label: "Политика конфиденциальности", href: "/privacy" },
-  { label: "Договор оферты", href: "/terms" },
+  { label: "Договор публичной оферты", href: "/terms" },
 ] as const;

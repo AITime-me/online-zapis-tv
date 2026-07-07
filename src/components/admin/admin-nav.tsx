@@ -1,14 +1,23 @@
 import Link from "next/link";
+import type { UserRole } from "@prisma/client";
+import {
+  canAccessAdminSection,
+  type AdminSection,
+} from "@/lib/auth/permissions";
 
 export type AdminNavCurrent =
   | "masters"
   | "services"
   | "export"
   | "booking-requests"
-  | "promotions";
+  | "promotions"
+  | "game"
+  | "users"
+  | "settings";
 
 type AdminNavLinksProps = {
   current?: AdminNavCurrent;
+  role: UserRole;
 };
 
 const linkClass =
@@ -18,34 +27,78 @@ const activeClass =
 
 type NavItem = {
   key: AdminNavCurrent | "schedule";
+  section: AdminSection | null;
   href: string;
   label: string;
 };
 
 const NAV_ITEMS: NavItem[] = [
-  { key: "schedule", href: "/schedule", label: "К расписанию" },
-  { key: "masters", href: "/admin/masters", label: "Мастера" },
-  { key: "services", href: "/admin/services", label: "Услуги" },
-  { key: "promotions", href: "/admin/promotions", label: "Акции" },
+  { key: "schedule", section: null, href: "/schedule", label: "К расписанию" },
+  {
+    key: "masters",
+    section: "masters",
+    href: "/admin/masters",
+    label: "Мастера",
+  },
+  {
+    key: "services",
+    section: "services",
+    href: "/admin/services",
+    label: "Услуги",
+  },
   {
     key: "booking-requests",
+    section: "booking-requests",
     href: "/admin/booking-requests",
     label: "Заявки",
   },
   {
+    key: "promotions",
+    section: "promotions",
+    href: "/admin/promotions",
+    label: "Акции",
+  },
+  {
+    key: "game",
+    section: "game",
+    href: "/admin/game",
+    label: "Игра",
+  },
+  {
+    key: "users",
+    section: "users",
+    href: "/admin/users",
+    label: "Пользователи",
+  },
+  {
+    key: "settings",
+    section: "system-settings",
+    href: "/admin/settings",
+    label: "Настройки",
+  },
+  {
     key: "export",
+    section: "emergency-export",
     href: "/admin/emergency-export",
     label: "Аварийная выгрузка",
   },
 ];
 
-export function AdminNavLinks({ current }: AdminNavLinksProps) {
+export function AdminNavLinks({ current, role }: AdminNavLinksProps) {
+  const visibleItems = NAV_ITEMS.filter((item) => {
+    if (!item.section) {
+      return true;
+    }
+
+    return canAccessAdminSection(role, item.section);
+  });
+
   return (
     <nav
       aria-label="Навигация админки"
       className="relative z-20 flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 text-sm"
     >
-      {NAV_ITEMS.map((item) => {
+      {visibleItems.map((item) => {
         const isActive = item.key !== "schedule" && current === item.key;
 
         if (isActive) {

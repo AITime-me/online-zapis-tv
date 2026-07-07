@@ -1,9 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import { BookingBackButton } from "@/components/booking/booking-back-button";
 import { bookingStudioTelHref } from "@/components/booking/booking-config";
 import { bookingTheme } from "@/components/booking/booking-theme";
+import {
+  BookingButton,
+  BOOKING_SELECTABLE_CARD_CLASS,
+  BookingStepDescription,
+  BookingStepEyebrow,
+  BookingStepTitle,
+  bookingSwayStyle,
+} from "@/components/booking/booking-ui";
 import {
   BookingPromotionBadge,
   BookingPromotionCardNote,
@@ -86,21 +94,9 @@ export function BookingMasterFirstStep({
     return (
       <div className="space-y-5">
         <header className="space-y-2 text-center md:text-left">
-          <p
-            className="text-xs font-medium uppercase tracking-[0.2em]"
-            style={{ color: bookingTheme.gold }}
-          >
-            Шаг 1
-          </p>
-          <h2
-            className="text-xl font-semibold leading-tight md:text-2xl"
-            style={{ color: bookingTheme.green }}
-          >
-            Выберите мастера
-          </h2>
-          <p className="text-base text-[#6b7280]">
-            Сначала мастер — затем услуга
-          </p>
+          <BookingStepEyebrow>Шаг 1</BookingStepEyebrow>
+          <BookingStepTitle>Выберите мастера</BookingStepTitle>
+          <BookingStepDescription>Сначала мастер — затем услуга</BookingStepDescription>
         </header>
 
         {loading ? (
@@ -111,7 +107,7 @@ export function BookingMasterFirstStep({
           </p>
         ) : (
           <ul className="space-y-3">
-            {masters.map((master) => {
+            {masters.map((master, index) => {
               const isOnline = master.isOnlineBookingEnabled;
 
               if (isOnline) {
@@ -120,11 +116,8 @@ export function BookingMasterFirstStep({
                     <button
                       type="button"
                       onClick={() => onSelectMaster(master)}
-                      className="min-h-12 w-full rounded-2xl border px-5 py-4 text-left transition hover:shadow-sm active:scale-[0.99]"
-                      style={{
-                        borderColor: bookingTheme.border,
-                        backgroundColor: bookingTheme.card,
-                      }}
+                      className={`${BOOKING_SELECTABLE_CARD_CLASS} ${index % 2 === 1 ? "booking-float-sway--alt" : ""} min-h-12 w-full active:scale-[0.99]`}
+                      style={bookingSwayStyle(index)}
                     >
                       <span
                         className="block text-lg font-medium"
@@ -145,12 +138,8 @@ export function BookingMasterFirstStep({
               return (
                 <li
                   key={master.id}
-                  className="rounded-2xl border px-5 py-4"
-                  style={{
-                    borderColor: bookingTheme.border,
-                    backgroundColor: `${bookingTheme.surface}`,
-                    opacity: 0.92,
-                  }}
+                  className={`${BOOKING_SELECTABLE_CARD_CLASS} ${index % 2 === 1 ? "booking-float-sway--alt" : ""} opacity-95`}
+                  style={bookingSwayStyle(index)}
                 >
                   <span
                     className="block text-lg font-medium"
@@ -170,22 +159,16 @@ export function BookingMasterFirstStep({
                     Запись через менеджера студии
                   </p>
                   <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-                    <button
+                    <BookingButton
                       type="button"
                       onClick={() => onManagerRequest(master)}
-                      className="min-h-12 flex-1 rounded-xl px-4 py-3 text-base font-medium text-white"
-                      style={{ backgroundColor: bookingTheme.green }}
+                      className="flex-1"
                     >
                       Оставить заявку
-                    </button>
+                    </BookingButton>
                     <a
                       href={bookingStudioTelHref}
-                      className="flex min-h-12 flex-1 items-center justify-center rounded-xl border px-4 py-3 text-base font-medium"
-                      style={{
-                        borderColor: bookingTheme.border,
-                        color: bookingTheme.green,
-                        backgroundColor: bookingTheme.card,
-                      }}
+                      className="home-btn home-btn-secondary font-body flex min-h-12 flex-1 items-center justify-center rounded-2xl border bg-white/92 px-4 py-3 text-base font-medium text-[var(--brand-green)] shadow-none"
                     >
                       Позвонить в студию
                     </a>
@@ -206,18 +189,8 @@ export function BookingMasterFirstStep({
       </BookingBackButton>
 
       <header className="space-y-1">
-        <p
-          className="text-xs font-medium uppercase tracking-[0.2em]"
-          style={{ color: bookingTheme.gold }}
-        >
-          {selectedMaster?.publicName}
-        </p>
-        <h2
-          className="text-xl font-semibold leading-tight md:text-2xl"
-          style={{ color: bookingTheme.green }}
-        >
-          Выберите услугу
-        </h2>
+        <BookingStepEyebrow>{selectedMaster?.publicName}</BookingStepEyebrow>
+        <BookingStepTitle>Выберите услугу</BookingStepTitle>
       </header>
 
       <label className="relative block">
@@ -230,8 +203,7 @@ export function BookingMasterFirstStep({
           value={searchQuery}
           onChange={(event) => setSearchQuery(event.target.value)}
           placeholder="Поиск по названию…"
-          className="w-full rounded-2xl border border-[#e8e4de] bg-[#faf9f7] py-3.5 pl-12 pr-4 text-base outline-none transition focus:border-[#c4a35a] focus:ring-2 focus:ring-[#c4a35a]/30"
-          style={{ color: bookingTheme.green }}
+          className="w-full rounded-2xl border border-[var(--brand-gold-border)] bg-[var(--brand-cream)] py-3.5 pl-12 pr-4 text-base text-[var(--brand-green)] outline-none transition focus:border-[var(--brand-gold)] focus:ring-2 focus:ring-[var(--brand-gold)]/25"
         />
       </label>
 
@@ -245,7 +217,7 @@ export function BookingMasterFirstStep({
         </p>
       ) : (
         <ul className="space-y-4">
-          {filteredServices.map((service) => {
+          {filteredServices.map((service, index) => {
             const promo = getServiceCardPromotion({
               serviceId: service.id,
               categoryName: service.categoryName,
@@ -255,15 +227,10 @@ export function BookingMasterFirstStep({
             return (
               <li
                 key={service.id}
-                className="rounded-2xl border p-5"
-                style={{
-                  borderColor: hasPromotion
-                    ? `${bookingTheme.gold}66`
-                    : bookingTheme.border,
-                  backgroundColor: hasPromotion
-                    ? `${bookingTheme.gold}08`
-                    : bookingTheme.card,
-                }}
+                className={`${BOOKING_SELECTABLE_CARD_CLASS} ${index % 2 === 1 ? "booking-float-sway--alt" : ""} ${
+                  hasPromotion ? "border-[var(--brand-gold)]/40 bg-[var(--brand-gold)]/[0.06]" : ""
+                }`}
+                style={bookingSwayStyle(index)}
               >
                 <div className="space-y-3">
                   <div>
@@ -298,14 +265,13 @@ export function BookingMasterFirstStep({
                       </p>
                     )}
                   </div>
-                  <button
+                  <BookingButton
                     type="button"
                     onClick={() => onSelectService(service)}
-                    className="min-h-12 w-full rounded-xl px-5 py-3 text-base font-medium text-white transition hover:opacity-95 active:scale-[0.99] sm:w-auto sm:min-w-[140px]"
-                    style={{ backgroundColor: bookingTheme.green }}
+                    className="w-full sm:w-auto sm:min-w-[140px]"
                   >
                     Выбрать
-                  </button>
+                  </BookingButton>
                 </div>
               </li>
             );

@@ -1,18 +1,19 @@
 import { NextResponse } from "next/server";
-import type { BookingRequestStatus, UserRole } from "@prisma/client";
-import { requireApiRoles } from "@/lib/auth/api-access";
+import type { BookingRequestStatus } from "@prisma/client";
+import {
+  BOOKING_REQUESTS_ADMIN_ROLES,
+  requireApiRoles,
+} from "@/lib/auth/api-access";
 import {
   listBookingRequests,
   updateBookingRequestStatus,
 } from "@/services/BookingRequestService";
 
-const ADMIN_ROLES: UserRole[] = ["OWNER", "MANAGER"];
-
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export async function GET() {
-  const authResult = await requireApiRoles(ADMIN_ROLES);
+  const authResult = await requireApiRoles(BOOKING_REQUESTS_ADMIN_ROLES);
   if ("response" in authResult) {
     return authResult.response;
   }
@@ -22,7 +23,7 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
-  const authResult = await requireApiRoles(ADMIN_ROLES);
+  const authResult = await requireApiRoles(BOOKING_REQUESTS_ADMIN_ROLES);
   if ("response" in authResult) {
     return authResult.response;
   }
