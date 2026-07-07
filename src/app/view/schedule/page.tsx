@@ -21,7 +21,7 @@ export default async function ViewSchedulePage({
   const monthData = await getScheduleMonthData(monthKey);
 
   return (
-    <main className="flex min-h-screen flex-col bg-[#f8f9fa] p-2 md:p-3">
+    <main className="flex min-h-screen min-w-0 flex-col overflow-x-hidden bg-[#f8f9fa] p-2 md:p-3">
       <header className="mb-2 border-b border-[#dadce0] bg-white px-2 py-1.5">
         <h1 className="text-sm font-semibold text-zinc-900">Расписание</h1>
         <p className="text-xs text-zinc-500">Только просмотр</p>

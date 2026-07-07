@@ -63,6 +63,7 @@ export type OnlineBookingInput = {
   startTime: string;
   name: string;
   phone: string;
+  comment?: string;
 };
 
 function decimalToNumber(value: Prisma.Decimal | null | undefined): number | null {
@@ -668,6 +669,7 @@ export async function createOnlineBooking(input: OnlineBookingInput) {
     serviceId: input.serviceId,
     clientName: name,
     clientPhone: phone,
+    comment: input.comment?.trim() || null,
     appliedPromotions,
   });
 }

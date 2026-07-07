@@ -16,12 +16,15 @@ type BookingClientFieldsProps = {
   onCountryCodeChange: (value: PhoneCountryCode) => void;
   phoneLocal: string;
   onPhoneLocalChange: (value: string) => void;
+  comment?: string;
+  onCommentChange?: (value: string) => void;
   consent: boolean;
   onConsentChange: (value: boolean) => void;
   errors: ClientDataFieldErrors;
   onClearError?: (field: keyof ClientDataFieldErrors) => void;
   variant?: "booking" | "wizard";
   showConsent?: boolean;
+  showComment?: boolean;
 };
 
 const fieldErrorStyle = { color: bookingTheme.goldMuted };
@@ -33,12 +36,15 @@ export function BookingClientFields({
   onCountryCodeChange,
   phoneLocal,
   onPhoneLocalChange,
+  comment = "",
+  onCommentChange,
   consent,
   onConsentChange,
   errors,
   onClearError,
   variant = "booking",
   showConsent = true,
+  showComment = true,
 }: BookingClientFieldsProps) {
   const isWizard = variant === "wizard";
   const inputClassName = isWizard
@@ -124,6 +130,20 @@ export function BookingClientFields({
           </p>
         )}
       </div>
+
+      {showComment && onCommentChange ? (
+        <label className="block text-sm">
+          <span className={labelClassName}>Комментарий</span>
+          <textarea
+            value={comment}
+            onChange={(event) => onCommentChange(event.target.value)}
+            rows={isWizard ? 2 : 3}
+            className={`${inputClassName} resize-y`}
+            style={{ borderColor: borderColor(false) }}
+            placeholder="Необязательно: пожелания или уточнения к записи"
+          />
+        </label>
+      ) : null}
 
       {showConsent && (
         <div className="pt-1">

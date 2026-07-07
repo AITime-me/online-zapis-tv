@@ -213,6 +213,7 @@ export function BookingManagerRequestForm({
                 onConsentChange={setConsent}
                 errors={fieldErrors}
                 onClearError={clearFieldError}
+                showComment={false}
               />
 
               <label className="mt-3 block text-sm">

@@ -1,6 +1,10 @@
 import type { ScheduleMonthCellItem } from "@/types/schedule-month";
 import { formatStudioTimeRange } from "@/lib/datetime/date-layer";
-import { getScheduleAppointmentTitle } from "@/lib/schedule/appointment-display";
+import {
+  buildScheduleAppointmentDisplay,
+  getScheduleAppointmentTitle,
+} from "@/lib/schedule/appointment-display";
+import { formatMonthAppointmentClientLine } from "@/components/schedule/appointment-detail-summary";
 
 export function formatMonthCellLine(item: ScheduleMonthCellItem): {
   title: string;
@@ -13,9 +17,10 @@ export function formatMonthCellLine(item: ScheduleMonthCellItem): {
   hasPromotions: boolean;
 } {
   if (item.kind === "appointment") {
+    const display = buildScheduleAppointmentDisplay(item);
     return {
-      title: getScheduleAppointmentTitle(item.serviceName),
-      subtitle: formatStudioTimeRange(item.startsAt, item.endsAt),
+      title: `${display.timeLabel} · ${getScheduleAppointmentTitle(item.serviceName)}`,
+      subtitle: formatMonthAppointmentClientLine(item),
       isBold: item.isBold,
       isBlock: false,
       isFullDayBlock: false,

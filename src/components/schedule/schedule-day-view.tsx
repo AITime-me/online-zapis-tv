@@ -3,8 +3,19 @@ import { ManagerColumn } from "@/components/schedule/manager-column";
 import { MasterColumn } from "@/components/schedule/master-column";
 import { ScheduleDateSwitcher } from "@/components/schedule/schedule-date-switcher";
 import { ScheduleViewSwitcher } from "@/components/schedule/schedule-view-switcher";
+import { SCHEDULE_TABLE_SCROLL } from "@/components/schedule/schedule-month-table-styles";
 
-const COLUMN_CLASS = "w-[280px] shrink-0 border-r border-[#dadce0] last:border-r-0";
+const COLUMN_CLASS = "w-[280px] min-w-[280px] max-w-[280px] shrink-0 border-r border-[#dadce0] last:border-r-0";
+const STICKY_MANAGER_HEADER = [
+  "sticky left-0 z-[3]",
+  "bg-[#f8f9fa]",
+  "shadow-[2px_0_6px_-2px_rgba(0,0,0,0.12)]",
+].join(" ");
+const STICKY_MANAGER_BODY = [
+  "sticky left-0 z-[2]",
+  "bg-white",
+  "shadow-[2px_0_6px_-2px_rgba(0,0,0,0.12)]",
+].join(" ");
 
 export function ScheduleDayView({
   data,
@@ -16,7 +27,7 @@ export function ScheduleDayView({
   const month = data.date.slice(0, 7);
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex min-w-0 flex-col gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <ScheduleViewSwitcher view="day" month={month} date={data.date} />
         <ScheduleDateSwitcher
@@ -25,11 +36,11 @@ export function ScheduleDayView({
         />
       </div>
 
-      <div className="overflow-x-auto border border-[#dadce0] bg-white">
-        <div className="min-w-max">
-          <div className="flex border-b border-[#dadce0] bg-[#f8f9fa]">
+      <div className={`${SCHEDULE_TABLE_SCROLL} border border-[#dadce0] bg-white`}>
+        <div className="w-max">
+          <div className="flex w-max border-b border-[#dadce0] bg-[#f8f9fa]">
             <div
-              className={`${COLUMN_CLASS} px-2 py-1.5 text-xs font-semibold text-zinc-800`}
+              className={`${COLUMN_CLASS} ${STICKY_MANAGER_HEADER} px-2 py-1.5 text-xs font-semibold text-zinc-800`}
             >
               Менеджер / задачи
             </div>
@@ -45,8 +56,11 @@ export function ScheduleDayView({
             ))}
           </div>
 
-          <div className="flex items-stretch">
-            <ManagerColumn notes={data.managerNotes} className={COLUMN_CLASS} />
+          <div className="flex w-max items-stretch">
+            <ManagerColumn
+              notes={data.managerNotes}
+              className={`${COLUMN_CLASS} ${STICKY_MANAGER_BODY}`}
+            />
             {data.masters.map((master) => (
               <MasterColumn
                 key={master.id}

@@ -1,6 +1,7 @@
 "use client";
 
 import type { ScheduleDayManagerNote } from "@/types/schedule";
+import { OWNER_COL } from "@/components/schedule/schedule-month-table-styles";
 
 const PREVIEW_LIMIT = 3;
 
@@ -18,7 +19,7 @@ export function ScheduleMonthOwnerCell({
 
   return (
     <td
-      className={`border-b border-r border-[#d0d5da] px-1.5 py-0.5 align-top ${
+      className={`${OWNER_COL} border-b border-r border-[#d0d5da] px-1.5 py-0.5 align-top ${
         isInteractive ? "cursor-pointer hover:bg-[#f3f6f8]" : ""
       }`}
       onClick={onOpen}

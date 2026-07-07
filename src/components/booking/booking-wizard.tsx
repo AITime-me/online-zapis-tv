@@ -66,6 +66,7 @@ type BookingSelection = {
   name: string;
   countryCode: PhoneCountryCode;
   phoneLocal: string;
+  comment: string;
   consent: boolean;
 };
 
@@ -73,6 +74,7 @@ const EMPTY_CLIENT_FIELDS = {
   name: "",
   countryCode: "RU" as PhoneCountryCode,
   phoneLocal: "",
+  comment: "",
   consent: false,
 };
 
@@ -535,6 +537,7 @@ export function BookingWizard() {
       startTime: selection.startTime,
       name: selection.name.trim(),
       phone: fullPhone,
+      comment: selection.comment.trim() || undefined,
       consent: true,
     };
 
@@ -1149,6 +1152,10 @@ export function BookingWizard() {
               phoneLocal={selection.phoneLocal}
               onPhoneLocalChange={(value) =>
                 setSelection((prev) => ({ ...prev, phoneLocal: value }))
+              }
+              comment={selection.comment}
+              onCommentChange={(value) =>
+                setSelection((prev) => ({ ...prev, comment: value }))
               }
               consent={selection.consent}
               onConsentChange={(value) =>

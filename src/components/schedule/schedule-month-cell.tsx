@@ -6,6 +6,7 @@ import {
   formatMonthCellLine,
 } from "@/components/schedule/schedule-month-cell-content";
 import { AppointmentPromoBadges } from "@/components/schedule/appointment-promo-badges";
+import { MASTER_COL } from "@/components/schedule/schedule-month-table-styles";
 
 export function ScheduleMonthCell({
   items,
@@ -23,7 +24,7 @@ export function ScheduleMonthCell({
   return (
     <td
       data-testid={cellTestId}
-      className={`border-b border-r border-[#d0d5da] px-1.5 py-0.5 align-top ${
+      className={`${MASTER_COL} border-b border-r border-[#d0d5da] px-1.5 py-0.5 align-top ${
         isInteractive ? "cursor-pointer hover:bg-[#e3ecf9]" : ""
       } ${isFullDayClosed ? "bg-[#eceff1]" : ""}`}
       onClick={onOpen}

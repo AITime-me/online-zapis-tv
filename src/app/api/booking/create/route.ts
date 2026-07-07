@@ -27,6 +27,7 @@ type CreateBookingBody = {
   startTime?: string;
   name?: string;
   phone?: string;
+  comment?: string | null;
   consent?: boolean;
 };
 
@@ -86,6 +87,8 @@ export async function POST(request: Request) {
 
     const clientName = typeof body.name === "string" ? body.name.trim() : "";
     const clientPhone = typeof body.phone === "string" ? body.phone.trim() : "";
+    const comment =
+      typeof body.comment === "string" ? body.comment.trim() : "";
 
     if (!body.serviceId || !body.masterId || !body.date || !body.startTime) {
       return errorResponse("Заполните все поля", 400, {
@@ -125,6 +128,7 @@ export async function POST(request: Request) {
       startTime: body.startTime,
       name: clientName,
       phone: clientPhone,
+      comment: comment || undefined,
     });
 
     if (!appointment.manageToken) {

@@ -1,20 +1,11 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { fontBody, fontDisplay } from "@/lib/brand/fonts";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
-
 export const metadata: Metadata = {
-  title: "Твоё время — онлайн-запись",
-  description: "MVP модуля онлайн-записи для студии красоты",
+  title: "Твоё время — студия красоты",
+  description:
+    "Онлайн-запись в студию красоты «Твоё время». Выберите процедуру, специалиста и удобное время для визита.",
 };
 
 export default function RootLayout({
@@ -25,9 +16,9 @@ export default function RootLayout({
   return (
     <html
       lang="ru"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${fontDisplay.variable} ${fontBody.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="font-body min-h-full flex flex-col">{children}</body>
     </html>
   );
 }

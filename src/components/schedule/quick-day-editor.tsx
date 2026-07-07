@@ -431,6 +431,7 @@ export function QuickDayEditor({
                         appointment={appointment}
                         dateKey={data.dateKey}
                         masterId={data.masterId}
+                        masterName={data.masterPublicName}
                         options={options}
                         canEdit={canEdit}
                         onSaved={async () => {
@@ -442,10 +443,10 @@ export function QuickDayEditor({
                         onSaveStatus={handleSaveStatus}
                       />
                     ) : (
-                      <AppointmentCard
-                        key={appointment.id}
-                        appointment={appointment}
-                      />
+              <AppointmentCard
+                key={appointment.id}
+                appointment={appointment}
+              />
                     ),
                   )}
                 </div>

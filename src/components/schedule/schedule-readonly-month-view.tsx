@@ -37,7 +37,7 @@ export function ScheduleReadonlyMonthView({
 
   return (
     <div
-      className="flex flex-col gap-2"
+      className="flex min-w-0 flex-col gap-2"
       data-testid="schedule-readonly-month-view"
       data-revision={scheduleRevision}
     >

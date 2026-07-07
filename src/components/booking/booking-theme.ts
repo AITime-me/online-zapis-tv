@@ -1,12 +1,12 @@
-/** Брендовые цвета онлайн-записи: тёмно-зелёный + золото. */
+/** Брендовые цвета студии «Твоё время». */
 export const bookingTheme = {
-  green: "#1a3d32",
-  greenHover: "#143028",
-  greenMuted: "#2a5245",
-  gold: "#c4a35a",
-  goldMuted: "#d4bc82",
-  surface: "#faf9f7",
+  green: "#124032",
+  greenHover: "#0d3026",
+  greenMuted: "#2a5648",
+  gold: "#c9a96a",
+  goldMuted: "#d9bf88",
+  surface: "#faf7f2",
   card: "#ffffff",
   border: "#e8e4de",
-  textMuted: "#6b7280",
+  textMuted: "#6b7268",
 } as const;

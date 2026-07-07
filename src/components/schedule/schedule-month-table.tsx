@@ -17,7 +17,7 @@ import {
   OWNER_COL,
   STICKY_COLUMN_HEADER,
   STICKY_CORNER_HEADER,
-  STICKY_SCROLL,
+  SCHEDULE_TABLE_SCROLL,
 } from "@/components/schedule/schedule-month-table-styles";
 
 export function ScheduleMonthTable({
@@ -35,10 +35,10 @@ export function ScheduleMonthTable({
 }) {
   return (
     <div
-      className={`${STICKY_SCROLL} border ${BORDER_OUTER} bg-white`}
+      className={`${SCHEDULE_TABLE_SCROLL} border ${BORDER_OUTER} bg-white`}
       style={{ maxHeight: "calc(100vh - 120px)" }}
     >
-      <table className="w-max min-w-full border-separate border-spacing-0 text-left">
+      <table className="w-max border-separate border-spacing-0 text-left">
         <thead className={HEADER_BG}>
           <tr className={`border-b ${BORDER_OUTER}`}>
             <th

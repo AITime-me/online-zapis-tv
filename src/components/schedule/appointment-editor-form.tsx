@@ -14,7 +14,7 @@ import {
 import type { ScheduleEditorFieldKey } from "@/lib/schedule/editor-field-labels";
 import type { EditorServiceOption } from "@/services/ScheduleEditorOptionsService";
 import { EditorCheckboxField, EditorField } from "@/components/schedule/editor-field";
-import { getScheduleAppointmentTitle } from "@/lib/schedule/appointment-display";
+import { AppointmentRecordSummary } from "@/components/schedule/appointment-detail-summary";
 import { AppointmentPromoBadges } from "@/components/schedule/appointment-promo-badges";
 
 export type { EditorOptions };
@@ -126,6 +126,7 @@ export function AppointmentEditorForm({
   masterId,
   options,
   canEdit,
+  masterName,
   onSaved,
   onCancelled,
   onSaveStatus,
@@ -135,6 +136,7 @@ export function AppointmentEditorForm({
   masterId: string;
   options: EditorOptions;
   canEdit: boolean;
+  masterName?: string | null;
   onSaved: () => void | Promise<void>;
   onCancelled: () => void | Promise<void>;
   onSaveStatus: (status: "idle" | "saving" | "saved" | "error", message?: string) => void;
@@ -317,16 +319,18 @@ export function AppointmentEditorForm({
 
   if (!canEdit) {
     return (
-      <article className="border border-[#e8eaed] px-2 py-1 text-xs">
-        <div className={appointment.isBold ? "font-bold" : ""}>
-          {getScheduleAppointmentTitle(appointment.serviceName)}
-        </div>
-        <div className="tabular-nums text-[10px] text-zinc-500">
+      <article className="border border-[#e8eaed] px-2 py-2 text-xs">
+        <AppointmentRecordSummary
+          appointment={appointment}
+          masterName={masterName}
+          dateKey={dateKey}
+        />
+        <div className="mt-2 tabular-nums text-[10px] text-zinc-500">
           {form.startTime}–{form.endTime}
         </div>
         <AppointmentPromoBadges
           promotions={appointment.appliedPromotions}
-          className="mt-0.5"
+          className="mt-1"
         />
       </article>
     );
@@ -334,6 +338,13 @@ export function AppointmentEditorForm({
 
   return (
     <article className="border border-[#e8eaed] p-2 text-xs">
+      <div className="mb-2 rounded border border-[#eceff1] bg-[#f8f9fa] px-2 py-1.5">
+        <AppointmentRecordSummary
+          appointment={appointment}
+          masterName={masterName}
+          dateKey={dateKey}
+        />
+      </div>
       <div className="grid grid-cols-2 gap-2">
         <EditorField field="startTime" htmlFor={fieldId("startTime")}>
           <input

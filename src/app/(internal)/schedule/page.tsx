@@ -73,7 +73,7 @@ export default async function SchedulePage({ searchParams }: SchedulePageProps) 
     const data = await getScheduleDayData(dateKey);
 
     return (
-      <main className="flex min-h-screen flex-col bg-[#f8f9fa] p-2 md:p-3">
+      <main className="flex min-h-screen min-w-0 flex-col overflow-x-hidden bg-[#f8f9fa] p-2 md:p-3">
         {pageHeader}
         <ScheduleDayView data={data} studioToday={studioToday} />
       </main>
@@ -84,7 +84,7 @@ export default async function SchedulePage({ searchParams }: SchedulePageProps) 
   const monthData = await getScheduleMonthData(monthKey);
 
   return (
-    <main className="flex min-h-screen flex-col bg-[#f8f9fa] p-2 md:p-3">
+    <main className="flex min-h-screen min-w-0 flex-col overflow-x-hidden bg-[#f8f9fa] p-2 md:p-3">
       {pageHeader}
       <ScheduleMonthView data={monthData} userRole={user.role} />
     </main>
