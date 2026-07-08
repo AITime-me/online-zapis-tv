@@ -1,16 +1,23 @@
 import { requireAdminSection } from "@/lib/auth/session";
-import { AdminPlaceholderPage } from "@/components/admin/admin-placeholder-page";
+import { AdminPageHeader } from "@/components/admin/admin-page-header";
+import { GamePanel } from "@/components/admin/game-panel";
+import { getGameAdminPageData } from "@/services/GameAdminService";
 
 export default async function GameAdminPage() {
   const user = await requireAdminSection("game");
 
+  const { config, gifts } = await getGameAdminPageData();
+
   return (
-    <AdminPlaceholderPage
-      title="Игра «Поймай своё время»"
-      description="Настройки игры, подарки, вероятности выпадения, тексты и изображения карточек."
-      current="game"
-      role={user.role}
-      notice="Раздел доступен только владельцу. Здесь появятся настройки игры, список подарков, вероятности, тексты, изображения и сезонные кампании."
-    />
+    <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 p-4 md:p-6">
+      <AdminPageHeader
+        title="Игра «Поймай своё время»"
+        description="Настройки игры, подарки, вероятности, тексты, изображения и правила доступности."
+        current="game"
+        role={user.role}
+      />
+
+      <GamePanel initialConfig={config} initialGifts={gifts} />
+    </main>
   );
 }

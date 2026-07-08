@@ -921,6 +921,106 @@ async function main() {
     `Services: ${serviceHaircut.publicName}, ${serviceManicure.publicName}, ${servicePmu.publicName}, ${serviceArchived.internalName} (archived)`,
   );
   console.log("Booking link token: test-bot-token-demo");
+
+  await prisma.gameConfig.upsert({
+    where: { id: "default" },
+    update: {},
+    create: {
+      id: "default",
+      isActive: false,
+      title: "Поймай своё время",
+      description:
+        "Пройдите короткую игру — мы подберём направление ухода, подарок и готовый текст для отправки администратору.",
+      resultHeaderText: "Ваш результат готов ✨",
+      directionLabelText: "Ваше направление ухода:",
+      giftLabelText: "Ваш подарок:",
+      ctaButtonText: "Получить подарок и записаться",
+      managerMessageHeader:
+        "Здравствуйте!\n\nЯ прошла игру «Поймай своё время».\n\nМой результат:\n",
+      managerMessageFooter:
+        "Хочу узнать условия получения подарка и записаться.",
+    },
+  });
+
+  const seedGifts = [
+    {
+      id: "11111111-1111-4111-8111-111111111111",
+      name: "Уход для рук",
+      shortDescription:
+        "Мягкий уход для кожи рук, который помогает вернуть ощущение ухоженности, мягкости и внимания к себе.",
+      probability: 50,
+      priority: "main",
+      cardStyle: "default",
+      requiredPremiumLevel: 0,
+      allowedGameDirections: [],
+      allowedResultTypes: [],
+    },
+    {
+      id: "22222222-2222-4222-8222-222222222222",
+      name: "Холодная плазма губ",
+      shortDescription:
+        "Деликатная процедура ухода за губами, направленная на улучшение качества кожи, увлажнённость и более гладкий рельеф.",
+      probability: 25,
+      priority: "standard",
+      cardStyle: "accent",
+      requiredPremiumLevel: 0,
+      allowedGameDirections: ["лицо", "качество кожи", "увлажнение"],
+      allowedResultTypes: [],
+    },
+    {
+      id: "33333333-3333-4333-8333-333333333333",
+      name: "Лазерная биоревитализация",
+      shortDescription:
+        "Процедура для глубокого увлажнения и поддержки качества кожи.",
+      probability: 18,
+      priority: "rare",
+      cardStyle: "accent",
+      requiredPremiumLevel: 0,
+      allowedGameDirections: ["лицо", "восстановление", "сияние", "качество кожи"],
+      allowedResultTypes: [],
+    },
+    {
+      id: "44444444-4444-4444-8444-444444444444",
+      name: "Формула сияния",
+      shortDescription:
+        "Комплексный уход для кожи, который помогает вернуть ощущение ухоженности, увлажнённости и более ровного внешнего вида кожи.",
+      probability: 7,
+      priority: "premium",
+      cardStyle: "premium",
+      requiredPremiumLevel: 2,
+      allowedGameDirections: ["премиум сияние", "премиум восстановление"],
+      allowedResultTypes: [],
+    },
+  ] as const;
+
+  for (const gift of seedGifts) {
+    await prisma.gameGift.upsert({
+      where: { id: gift.id },
+      update: {
+        name: gift.name,
+        shortDescription: gift.shortDescription,
+        probability: gift.probability,
+        priority: gift.priority,
+        cardStyle: gift.cardStyle,
+        requiredPremiumLevel: gift.requiredPremiumLevel,
+        allowedGameDirections: [...gift.allowedGameDirections],
+        allowedResultTypes: [...gift.allowedResultTypes],
+        isActive: true,
+      },
+      create: {
+        id: gift.id,
+        name: gift.name,
+        shortDescription: gift.shortDescription,
+        probability: gift.probability,
+        priority: gift.priority,
+        cardStyle: gift.cardStyle,
+        requiredPremiumLevel: gift.requiredPremiumLevel,
+        allowedGameDirections: [...gift.allowedGameDirections],
+        allowedResultTypes: [...gift.allowedResultTypes],
+        isActive: true,
+      },
+    });
+  }
 }
 
 main()

@@ -390,3 +390,72 @@ model ChangeEvent {
   @@index([createdAt])
   @@map("change_events")
 }
+
+model GameConfig {
+  /** Singleton-конфигурация игры. */
+  id          String   @id @default("default")
+  isActive    Boolean  @default(false) @map("is_active")
+  title       String   @default("Поймай своё время")
+  description String   @default("")
+  image       String?  @map("image")
+
+  resultHeaderText     String @default("Ваш результат готов ✨") @map("result_header_text")
+  directionLabelText   String @default("Ваше направление ухода:") @map("direction_label_text")
+  giftLabelText        String @default("Ваш подарок:") @map("gift_label_text")
+  ctaButtonText        String @default("Получить подарок и записаться") @map("cta_button_text")
+  managerMessageHeader String @default("Здравствуйте!\n\nЯ прошла игру «Поймай своё время».") @map("manager_message_header")
+  managerMessageFooter String @default("Хочу узнать условия получения подарка и записаться.") @map("manager_message_footer")
+
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("game_config")
+}
+
+model GameGift {
+  id               String   @id @default(uuid()) @db.Uuid
+  name             String
+  shortDescription String   @map("short_description")
+  image            String?  @map("image")
+  isActive         Boolean  @default(true) @map("is_active")
+  probability      Int      @default(0)
+
+  /** Категоризация подарка для UI/аналитики. */
+  priority  String @default("standard")
+  cardStyle String @default("default") @map("card_style")
+
+  /** Правила доступности: пустой массив = доступно для всех. */
+  allowedGameDirections String[] @default([]) @map("allowed_game_directions")
+  allowedResultTypes    String[] @default([]) @map("allowed_result_types")
+  requiredPremiumLevel  Int      @default(0) @map("required_premium_level")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  plays GamePlay[]
+
+  @@index([isActive])
+  @@index([probability])
+  @@map("game_gifts")
+}
+
+model GamePlay {
+  id            String   @id @default(uuid()) @db.Uuid
+  gameDirection String   @map("game_direction")
+  skinNeed      String   @map("skin_need")
+  resultType    String   @map("result_type")
+  premiumLevel  Int      @default(0) @map("premium_level")
+
+  selectedGiftId String?  @map("selected_gift_id") @db.Uuid
+  selectedGift   GameGift? @relation(fields: [selectedGiftId], references: [id], onDelete: SetNull)
+
+  /** Будущая связь с заявкой/лидом (например bookingRequest.id). */
+  leadId String? @map("lead_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([createdAt])
+  @@index([gameDirection])
+  @@index([resultType])
+  @@index([selectedGiftId])
+  @@map("game_plays")
+}

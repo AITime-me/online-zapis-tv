@@ -23,6 +23,7 @@ export type CreateBookingRequestInput = {
   masterId?: string | null;
   type: BookingRequestType;
   consent: boolean;
+  gamePlayId?: string | null;
 };
 
 export type BookingRequestDto = {
@@ -134,6 +135,17 @@ export async function createBookingRequest(
       master: { select: { publicName: true } },
     },
   });
+
+  if (input.gamePlayId?.trim()) {
+    try {
+      await prisma.gamePlay.update({
+        where: { id: input.gamePlayId.trim() },
+        data: { leadId: request.id },
+      });
+    } catch {
+      // Связка optional: заявку не блокируем.
+    }
+  }
 
   return mapBookingRequest(request);
 }
