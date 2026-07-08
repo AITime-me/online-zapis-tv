@@ -23,6 +23,10 @@ import { ScheduleMonthTable } from "@/components/schedule/schedule-month-table";
 import { QuickDayEditor } from "@/components/schedule/quick-day-editor";
 import { QuickManagerEditor } from "@/components/schedule/quick-manager-editor";
 import { QuickOwnerEditor } from "@/components/schedule/quick-owner-editor";
+import {
+  ScheduleBookingRequestDetailModal,
+} from "@/components/schedule/schedule-booking-request-card";
+import type { ScheduleDayBookingRequest } from "@/types/schedule";
 import { isScheduleDebugEnabled } from "@/lib/schedule/debug";
 import {
   ScheduleDebugBanner,
@@ -60,6 +64,8 @@ export function ScheduleMonthView({
     useState<QuickManagerEditorData | null>(null);
   const [ownerEditorData, setOwnerEditorData] =
     useState<QuickOwnerEditorData | null>(null);
+  const [selectedRequest, setSelectedRequest] =
+    useState<ScheduleDayBookingRequest | null>(null);
   const [debugLastAction, setDebugLastAction] =
     useState<ScheduleDebugLastAction>("idle");
   const canEdit = canManageFullSchedule(userRole);
@@ -93,6 +99,37 @@ export function ScheduleMonthView({
     setEditorData(null);
     setManagerEditorData(null);
     setOwnerEditorData(null);
+    setSelectedRequest(null);
+  };
+
+  const handleRequestStatusUpdated = (updated: ScheduleDayBookingRequest) => {
+    if (updated.status === "CLOSED") {
+      setMonthData((current) => ({
+        ...current,
+        days: current.days.map((day) => ({
+          ...day,
+          bookingRequests: day.bookingRequests.filter(
+            (request) => request.id !== updated.id,
+          ),
+        })),
+      }));
+      setSelectedRequest(null);
+      void refreshSchedule("after-save");
+      return;
+    }
+
+    setMonthData((current) => ({
+      ...current,
+      days: current.days.map((day) => ({
+        ...day,
+        bookingRequests: day.bookingRequests.map((request) =>
+          request.id === updated.id
+            ? { ...request, status: updated.status }
+            : request,
+        ),
+      })),
+    }));
+    setSelectedRequest(updated);
   };
 
   return (
@@ -116,6 +153,10 @@ export function ScheduleMonthView({
           closeAllEditors();
           setOwnerEditorData(ownerData);
         }}
+        onRequestOpen={(request) => {
+          closeAllEditors();
+          setSelectedRequest(request);
+        }}
       />
       {editorData ? (
         <QuickDayEditor
@@ -138,6 +179,14 @@ export function ScheduleMonthView({
           data={ownerEditorData}
           canEdit={canEdit}
           onClose={() => setOwnerEditorData(null)}
+        />
+      ) : null}
+      {selectedRequest ? (
+        <ScheduleBookingRequestDetailModal
+          request={selectedRequest}
+          canEditStatus={canEdit}
+          onClose={() => setSelectedRequest(null)}
+          onStatusUpdated={handleRequestStatusUpdated}
         />
       ) : null}
       <ScheduleDebugBanner

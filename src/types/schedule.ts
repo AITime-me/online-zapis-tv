@@ -1,4 +1,7 @@
 import type { AppliedPromotionRecord } from "@/types/applied-promotion";
+import type { ScheduleDayBookingRequest } from "@/lib/schedule/booking-request-schedule";
+
+export type { ScheduleDayBookingRequest };
 
 export type ScheduleDayAppointment = {
   id: string;
@@ -54,5 +57,6 @@ export type ScheduleDayMaster = {
 export type ScheduleDayData = {
   date: string;
   managerNotes: ScheduleDayManagerNote[];
+  bookingRequests: ScheduleDayBookingRequest[];
   masters: ScheduleDayMaster[];
 };

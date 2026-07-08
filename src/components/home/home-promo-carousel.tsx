@@ -111,7 +111,16 @@ export function HomePromoCarousel({ promotions }: HomePromoCarouselProps) {
               </p>
 
               <div className="mb-6 flex justify-center">
-                <StudioLogo variant="gold" size="md" className="mx-auto object-center" />
+                {promotion.imageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={promotion.imageUrl}
+                    alt=""
+                    className="mx-auto max-h-24 w-auto max-w-[12rem] object-contain object-center sm:max-h-28"
+                  />
+                ) : (
+                  <StudioLogo variant="gold" size="md" className="mx-auto object-center" />
+                )}
               </div>
 
               <h3 className="font-display text-xl font-semibold leading-tight text-[#faf7f2] sm:text-2xl md:text-3xl">

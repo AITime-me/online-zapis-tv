@@ -20,6 +20,8 @@ export type HomePromotion = {
   ctaHref: string;
   /** Короткая метка на карточке (например «Подарок»). */
   badgeLabel?: string;
+  /** URL изображения карточки (если задано — вместо логотипа). */
+  imageUrl?: string;
   sortOrder?: number;
   isActive?: boolean;
 };
@@ -42,18 +44,6 @@ export const HOME_PROMOTIONS: readonly HomePromotion[] = [
     badgeLabel: "Акция",
     sortOrder: 1,
     isActive: true,
-  },
-  {
-    id: "procedure-gift-game",
-    kind: "game",
-    title: "Подарок к Вашей процедуре",
-    description:
-      "Пройдите короткий опрос за 30 секунд — мы подберём процедуру, подарок к ней и готовый текст для отправки администратору.",
-    ctaLabel: "Узнать свой подарок",
-    ctaHref: HOME_PROMO_ROUTES.procedureGiftGame,
-    badgeLabel: "Подарок",
-    sortOrder: 2,
-    isActive: false,
   },
 ];
 

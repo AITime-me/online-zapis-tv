@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import {
   formatDateKeyInStudio,
   getStudioNow,
+  normalizeDate,
   normalizeMonthKey,
 } from "@/lib/datetime/date-layer";
 import { getStudioMonthRangeFromMonthKey } from "@/lib/datetime/studio";
@@ -16,6 +17,11 @@ import type {
   ScheduleMonthData,
   ScheduleMonthDayCell,
 } from "@/types/schedule-month";
+import { listActiveBookingRequestsForRange } from "@/services/BookingRequestService";
+import {
+  SCHEDULE_LOAD_INTERNAL,
+  type ScheduleLoadOptions,
+} from "@/lib/schedule/schedule-load-options";
 
 function mapAppointment(
   appointment: Awaited<
@@ -61,12 +67,16 @@ function sortCellItems(items: ScheduleMonthCellItem[]): ScheduleMonthCellItem[] 
 
 export async function getScheduleMonthData(
   monthKey: string,
+  options: ScheduleLoadOptions = SCHEDULE_LOAD_INTERNAL,
 ): Promise<ScheduleMonthData> {
   const normalizedMonthKey = normalizeMonthKey(monthKey);
   const { days, monthStart, monthEnd } =
     getStudioMonthRangeFromMonthKey(normalizedMonthKey);
+  const includeManagerColumn = options.includeManagerColumn ?? true;
+  const includeBookingRequests =
+    includeManagerColumn && (options.includeBookingRequests ?? true);
 
-  const [masters, managerNotes, appointments, scheduleBlocks, extraWorkWindows] =
+  const [masters, managerNotes, appointments, scheduleBlocks, extraWorkWindows, bookingRequests] =
     await Promise.all([
       prisma.master.findMany({
         where: { isActive: true },
@@ -77,15 +87,26 @@ export async function getScheduleMonthData(
           publicName: true,
         },
       }),
-      prisma.managerNote.findMany({
-        where: {
-          noteDate: {
-            gte: monthStart,
-            lte: monthEnd,
-          },
-        },
-        orderBy: [{ noteDate: "asc" }, { createdAt: "asc" }],
-      }),
+      includeManagerColumn
+        ? prisma.managerNote.findMany({
+            where: {
+              noteDate: {
+                gte: monthStart,
+                lte: monthEnd,
+              },
+            },
+            orderBy: [{ noteDate: "asc" }, { createdAt: "asc" }],
+          })
+        : prisma.managerNote.findMany({
+            where: {
+              noteDate: {
+                gte: monthStart,
+                lte: monthEnd,
+              },
+              noteType: ManagerNoteType.OWNER,
+            },
+            orderBy: [{ noteDate: "asc" }, { createdAt: "asc" }],
+          }),
       prisma.appointment.findMany({
         where: {
           startsAt: { gte: monthStart, lte: monthEnd },
@@ -119,7 +140,22 @@ export async function getScheduleMonthData(
         },
         orderBy: { startsAt: "asc" },
       }),
+      includeBookingRequests
+        ? listActiveBookingRequestsForRange(monthStart, monthEnd)
+        : Promise.resolve([]),
     ]);
+
+  const bookingRequestsByDate = new Map<string, ScheduleMonthDayCell["bookingRequests"]>();
+  for (const request of bookingRequests) {
+    const createdAt = normalizeDate(request.createdAt);
+    if (!createdAt) {
+      continue;
+    }
+    const dateKey = formatDateKeyInStudio(createdAt);
+    const bucket = bookingRequestsByDate.get(dateKey) ?? [];
+    bucket.push(request);
+    bookingRequestsByDate.set(dateKey, bucket);
+  }
 
   const managerNotesByDate = new Map<string, ScheduleMonthDayCell["managerNotes"]>();
   const ownerNotesByDate = new Map<string, ScheduleMonthDayCell["ownerNotes"]>();
@@ -135,6 +171,10 @@ export async function getScheduleMonthData(
       const bucket = ownerNotesByDate.get(dateKey) ?? [];
       bucket.push(mapped);
       ownerNotesByDate.set(dateKey, bucket);
+      continue;
+    }
+
+    if (!includeManagerColumn) {
       continue;
     }
 
@@ -196,6 +236,7 @@ export async function getScheduleMonthData(
     return {
       dateKey,
       managerNotes: managerNotesByDate.get(dateKey) ?? [],
+      bookingRequests: bookingRequestsByDate.get(dateKey) ?? [],
       ownerNotes: ownerNotesByDate.get(dateKey) ?? [],
       masterCells,
     };

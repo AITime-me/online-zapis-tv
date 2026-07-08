@@ -1,6 +1,7 @@
 "use client";
 
 import type { ScheduleMonthData, QuickDayEditorData, QuickManagerEditorData, QuickOwnerEditorData } from "@/types/schedule-month";
+import type { ScheduleDayBookingRequest } from "@/types/schedule";
 import type { ScheduleMonthMaster } from "@/types/schedule-month";
 import { ScheduleMonthManagerCell } from "@/components/schedule/schedule-month-manager-cell";
 import { ScheduleMonthOwnerCell } from "@/components/schedule/schedule-month-owner-cell";
@@ -48,7 +49,9 @@ export function ScheduleMonthRow({
   onCellOpen,
   onManagerCellOpen,
   onOwnerCellOpen,
+  onRequestOpen,
   readOnly = false,
+  showManagerColumn = true,
 }: {
   day: ScheduleMonthData["days"][number];
   rowIndex: number;
@@ -57,7 +60,9 @@ export function ScheduleMonthRow({
   onCellOpen?: (data: QuickDayEditorData) => void;
   onManagerCellOpen?: (data: QuickManagerEditorData) => void;
   onOwnerCellOpen?: (data: QuickOwnerEditorData) => void;
+  onRequestOpen?: (request: ScheduleDayBookingRequest) => void;
   readOnly?: boolean;
+  showManagerColumn?: boolean;
 }) {
   const isToday = day.dateKey === studioToday;
   const weekdayIndex = getWeekdayIndex(day.dateKey);
@@ -104,18 +109,22 @@ export function ScheduleMonthRow({
         </div>
       </td>
 
-      <ScheduleMonthManagerCell
-        notes={day.managerNotes}
-        onOpen={
-          readOnly
-            ? undefined
-            : () =>
-                onManagerCellOpen?.({
-                  dateKey: day.dateKey,
-                  notes: day.managerNotes,
-                })
-        }
-      />
+      {showManagerColumn ? (
+        <ScheduleMonthManagerCell
+          notes={day.managerNotes}
+          bookingRequests={day.bookingRequests}
+          onOpen={
+            readOnly
+              ? undefined
+              : () =>
+                  onManagerCellOpen?.({
+                    dateKey: day.dateKey,
+                    notes: day.managerNotes,
+                  })
+          }
+          onRequestOpen={onRequestOpen}
+        />
+      ) : null}
 
       <ScheduleMonthOwnerCell
         notes={day.ownerNotes}

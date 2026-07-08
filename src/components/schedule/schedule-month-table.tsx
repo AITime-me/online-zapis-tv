@@ -6,6 +6,7 @@ import type {
   QuickManagerEditorData,
   QuickOwnerEditorData,
 } from "@/types/schedule-month";
+import type { ScheduleDayBookingRequest } from "@/types/schedule";
 import { ScheduleMonthRow } from "@/components/schedule/schedule-month-row";
 import {
   BORDER_DATE,
@@ -25,13 +26,17 @@ export function ScheduleMonthTable({
   onCellOpen,
   onManagerCellOpen,
   onOwnerCellOpen,
+  onRequestOpen,
   readOnly = false,
+  showManagerColumn = true,
 }: {
   data: ScheduleMonthData;
   onCellOpen?: (editorData: QuickDayEditorData) => void;
   onManagerCellOpen?: (editorData: QuickManagerEditorData) => void;
   onOwnerCellOpen?: (editorData: QuickOwnerEditorData) => void;
+  onRequestOpen?: (request: ScheduleDayBookingRequest) => void;
   readOnly?: boolean;
+  showManagerColumn?: boolean;
 }) {
   return (
     <div
@@ -46,11 +51,13 @@ export function ScheduleMonthTable({
             >
               Дата
             </th>
-            <th
-              className={`${STICKY_COLUMN_HEADER} ${MANAGER_COL} border-b-2 border-r ${BORDER_INNER} px-1.5 py-1.5 text-[10px] font-semibold text-zinc-800`}
-            >
-              Менеджер / задачи
-            </th>
+            {showManagerColumn ? (
+              <th
+                className={`${STICKY_COLUMN_HEADER} ${MANAGER_COL} border-b-2 border-r ${BORDER_INNER} px-1.5 py-1.5 text-[10px] font-semibold text-zinc-800`}
+              >
+                Менеджер / задачи
+              </th>
+            ) : null}
             <th
               className={`${STICKY_COLUMN_HEADER} ${OWNER_COL} border-b-2 border-r ${BORDER_INNER} px-1.5 py-1.5 text-[10px] font-semibold text-zinc-800`}
             >
@@ -83,7 +90,9 @@ export function ScheduleMonthTable({
               onCellOpen={onCellOpen}
               onManagerCellOpen={onManagerCellOpen}
               onOwnerCellOpen={onOwnerCellOpen}
+              onRequestOpen={onRequestOpen}
               readOnly={readOnly}
+              showManagerColumn={showManagerColumn}
             />
           ))}
         </tbody>

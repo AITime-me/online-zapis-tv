@@ -8,6 +8,7 @@ export type GameConfigDto = {
   directionLabelText: string;
   giftLabelText: string;
   ctaButtonText: string;
+  ctaButtonLink: string;
   managerMessageHeader: string;
   managerMessageFooter: string;
   updatedAt: string;

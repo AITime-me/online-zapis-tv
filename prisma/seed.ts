@@ -924,17 +924,21 @@ async function main() {
 
   await prisma.gameConfig.upsert({
     where: { id: "default" },
-    update: {},
+    update: {
+      isActive: true,
+      ctaButtonLink: "/promo/procedure-gift",
+    },
     create: {
       id: "default",
-      isActive: false,
+      isActive: true,
       title: "Поймай своё время",
       description:
         "Пройдите короткую игру — мы подберём направление ухода, подарок и готовый текст для отправки администратору.",
       resultHeaderText: "Ваш результат готов ✨",
       directionLabelText: "Ваше направление ухода:",
       giftLabelText: "Ваш подарок:",
-      ctaButtonText: "Получить подарок и записаться",
+      ctaButtonText: "Узнать свой подарок",
+      ctaButtonLink: "/promo/procedure-gift",
       managerMessageHeader:
         "Здравствуйте!\n\nЯ прошла игру «Поймай своё время».\n\nМой результат:\n",
       managerMessageFooter:
@@ -964,7 +968,7 @@ async function main() {
       priority: "standard",
       cardStyle: "accent",
       requiredPremiumLevel: 0,
-      allowedGameDirections: ["лицо", "качество кожи", "увлажнение"],
+      allowedGameDirections: ["faceCare", "faceMassage"],
       allowedResultTypes: [],
     },
     {
@@ -976,7 +980,7 @@ async function main() {
       priority: "rare",
       cardStyle: "accent",
       requiredPremiumLevel: 0,
-      allowedGameDirections: ["лицо", "восстановление", "сияние", "качество кожи"],
+      allowedGameDirections: ["faceCare", "recovery", "toneCare"],
       allowedResultTypes: [],
     },
     {
@@ -988,7 +992,7 @@ async function main() {
       priority: "premium",
       cardStyle: "premium",
       requiredPremiumLevel: 2,
-      allowedGameDirections: ["премиум сияние", "премиум восстановление"],
+      allowedGameDirections: ["toneCare", "recovery"],
       allowedResultTypes: [],
     },
   ] as const;
@@ -1018,6 +1022,130 @@ async function main() {
         allowedGameDirections: [...gift.allowedGameDirections],
         allowedResultTypes: [...gift.allowedResultTypes],
         isActive: true,
+      },
+    });
+  }
+
+  const seedPromotions = [
+    {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      title: "Подарок после игры «Поймай своё время»",
+      slug: "podarok-posle-igry-poimay-svoe-vremya",
+      shortDescription:
+        "Персональный подарок и рекомендация после прохождения игры.",
+      description:
+        "После прохождения игры клиент получает персональную рекомендацию и подарок к записи.",
+      type: "GAME" as const,
+      status: "ACTIVE" as const,
+      isActive: true,
+      giftTitle: "Персональный подарок к записи",
+      giftDescription:
+        "После прохождения игры клиент получает персональную рекомендацию и подарок к записи.",
+      source: "GAME" as const,
+      ctaText: "Получить подарок",
+      ctaLink: "/promo/procedure-gift",
+      priority: 10,
+    },
+    {
+      id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      title: "Летнее сияние кожи",
+      slug: "letnee-siyanie-kozhi",
+      shortDescription: "Сезонное предложение для ухоженной кожи.",
+      description:
+        "Сезонное предложение для тех, кто хочет поддержать ухоженный вид кожи.",
+      type: "SEASONAL" as const,
+      status: "DRAFT" as const,
+      isActive: false,
+      giftTitle: "Бонус к уходовой процедуре",
+      giftDescription:
+        "Сезонное предложение для тех, кто хочет поддержать ухоженный вид кожи.",
+      source: "SEASONAL" as const,
+      priority: 50,
+    },
+    {
+      id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      title: "Подбор процедуры с мастером",
+      slug: "podbor-procedury-s-masterom",
+      shortDescription: "Индивидуальная рекомендация по уходу.",
+      description:
+        "Клиент может оставить заявку, а студия подберёт подходящее направление ухода.",
+      type: "CONSULTATION" as const,
+      status: "ACTIVE" as const,
+      isActive: true,
+      giftTitle: "Индивидуальная рекомендация",
+      giftDescription:
+        "Клиент может оставить заявку, а студия подберёт подходящее направление ухода.",
+      source: "MANUAL" as const,
+      priority: 20,
+    },
+    {
+      id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      title: "Скидка -30% на холодную плазму",
+      slug: "skidka-30-holodnaya-plazma",
+      shortDescription: "Скидка на первую процедуру холодной плазмы.",
+      description:
+        "Скидка 30% действует на первую процедуру холодной плазмы.",
+      type: "DISCOUNT" as const,
+      status: "DRAFT" as const,
+      isActive: false,
+      discountValue: 30,
+      discountUnit: "PERCENT" as const,
+      discountDescription:
+        "Скидка на первую процедуру холодной плазмы.",
+      conditions:
+        "Действует для первой записи на процедуру холодной плазмы.",
+      source: "MANUAL" as const,
+      priority: 40,
+    },
+  ] as const;
+
+  for (const promotion of seedPromotions) {
+    const discountFields = {
+      discountValue:
+        "discountValue" in promotion ? promotion.discountValue : null,
+      discountUnit: "discountUnit" in promotion ? promotion.discountUnit : null,
+      discountDescription:
+        "discountDescription" in promotion ? promotion.discountDescription : null,
+    };
+
+    await prisma.promotion.upsert({
+      where: { id: promotion.id },
+      update: {
+        title: promotion.title,
+        slug: promotion.slug,
+        shortDescription: promotion.shortDescription,
+        description: promotion.description,
+        type: promotion.type,
+        status: promotion.status,
+        isActive: promotion.isActive,
+        giftTitle: "giftTitle" in promotion ? promotion.giftTitle : null,
+        giftDescription:
+          "giftDescription" in promotion ? promotion.giftDescription : null,
+        source: promotion.source,
+        ctaText: "ctaText" in promotion ? promotion.ctaText : null,
+        ctaLink: "ctaLink" in promotion ? promotion.ctaLink : null,
+        priority: promotion.priority,
+        conditions: "conditions" in promotion ? promotion.conditions : null,
+        ...discountFields,
+      },
+      create: {
+        id: promotion.id,
+        title: promotion.title,
+        slug: promotion.slug,
+        shortDescription: promotion.shortDescription,
+        description: promotion.description,
+        type: promotion.type,
+        status: promotion.status,
+        isActive: promotion.isActive,
+        giftTitle: "giftTitle" in promotion ? promotion.giftTitle : null,
+        giftDescription:
+          "giftDescription" in promotion ? promotion.giftDescription : null,
+        source: promotion.source,
+        ctaText: "ctaText" in promotion ? promotion.ctaText : null,
+        ctaLink: "ctaLink" in promotion ? promotion.ctaLink : null,
+        priority: promotion.priority,
+        conditions: "conditions" in promotion ? promotion.conditions : null,
+        ...discountFields,
       },
     });
   }

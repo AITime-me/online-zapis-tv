@@ -68,6 +68,11 @@ export function canManageBookingRequests(role: UserRole): boolean {
   return canManageOperationalEntities(role);
 }
 
+/** Заявки в колонке менеджера — только OWNER и MANAGER. */
+export function canViewManagerBookingRequests(role: UserRole): boolean {
+  return canManageOperationalEntities(role);
+}
+
 /** Акции и маркетинговые правила — только владелец. */
 export function canManagePromotionsAdmin(role: UserRole): boolean {
   return isOwner(role);

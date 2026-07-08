@@ -8,6 +8,7 @@ import {
   validateClientData,
 } from "@/lib/booking/client-validation";
 import { prisma } from "@/lib/db";
+import type { ScheduleDayBookingRequest } from "@/lib/schedule/booking-request-schedule";
 
 export class BookingRequestValidationError extends Error {
   constructor(message: string) {
@@ -159,6 +160,50 @@ export async function listBookingRequests(): Promise<BookingRequestDto[]> {
   });
 
   return requests.map(mapBookingRequest);
+}
+
+export async function listActiveBookingRequestsForRange(
+  rangeStart: Date,
+  rangeEnd: Date,
+): Promise<ScheduleDayBookingRequest[]> {
+  const requests = await prisma.bookingRequest.findMany({
+    where: {
+      createdAt: { gte: rangeStart, lte: rangeEnd },
+      status: { in: ["NEW", "CONTACTED"] },
+    },
+    include: {
+      master: { select: { publicName: true } },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  if (requests.length === 0) {
+    return [];
+  }
+
+  const gamePlays = await prisma.gamePlay.findMany({
+    where: {
+      leadId: { in: requests.map((request) => request.id) },
+    },
+    select: { leadId: true },
+  });
+  const gameLeadIds = new Set(
+    gamePlays
+      .map((play) => play.leadId)
+      .filter((leadId): leadId is string => Boolean(leadId)),
+  );
+
+  return requests.map((request) => ({
+    id: request.id,
+    createdAt: request.createdAt.toISOString(),
+    clientName: request.clientName,
+    clientPhone: request.clientPhone,
+    comment: request.comment,
+    status: request.status,
+    type: request.type,
+    isFromGame: gameLeadIds.has(request.id),
+    masterName: request.master?.publicName ?? null,
+  }));
 }
 
 export async function updateBookingRequestStatus(

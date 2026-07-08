@@ -26,6 +26,7 @@ function mapConfig(row: Awaited<ReturnType<typeof prisma.gameConfig.findUnique>>
     directionLabelText: row.directionLabelText,
     giftLabelText: row.giftLabelText,
     ctaButtonText: row.ctaButtonText,
+    ctaButtonLink: row.ctaButtonLink,
     managerMessageHeader: row.managerMessageHeader,
     managerMessageFooter: row.managerMessageFooter,
     updatedAt: row.updatedAt.toISOString(),
@@ -78,6 +79,11 @@ export async function updateGameConfig(
     throw new GameAdminValidationError("Название игры не может быть пустым");
   }
 
+  const ctaButtonLink = input.ctaButtonLink?.trim();
+  if (ctaButtonLink !== undefined && !ctaButtonLink.startsWith("/")) {
+    throw new GameAdminValidationError("Ссылка кнопки должна начинаться с /");
+  }
+
   const updated = await prisma.gameConfig.update({
     where: { id: DEFAULT_CONFIG_ID },
     data: {
@@ -93,6 +99,7 @@ export async function updateGameConfig(
         : {}),
       ...(input.giftLabelText !== undefined ? { giftLabelText: input.giftLabelText } : {}),
       ...(input.ctaButtonText !== undefined ? { ctaButtonText: input.ctaButtonText } : {}),
+      ...(ctaButtonLink !== undefined ? { ctaButtonLink } : {}),
       ...(input.managerMessageHeader !== undefined
         ? { managerMessageHeader: input.managerMessageHeader }
         : {}),

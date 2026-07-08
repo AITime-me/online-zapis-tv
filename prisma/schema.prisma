@@ -80,6 +80,35 @@ enum BookingRequestSource {
   ONLINE
 }
 
+enum PromotionType {
+  GIFT
+  SEASONAL
+  GAME
+  BUNDLE
+  CONSULTATION
+  CUSTOM
+  DISCOUNT
+}
+
+enum DiscountUnit {
+  PERCENT
+  FIXED
+}
+
+enum PromotionStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum PromotionSource {
+  MANUAL
+  GAME
+  VK
+  BOT
+  SEASONAL
+}
+
 model User {
   id           String   @id @default(uuid()) @db.Uuid
   email        String   @unique
@@ -169,6 +198,7 @@ model Service {
   masterServices MasterService[]
   appointments   Appointment[]
   bookingLinks   BookingLink[]
+  promotions     PromotionService[]
 
   @@map("services")
 }
@@ -403,6 +433,7 @@ model GameConfig {
   directionLabelText   String @default("Ваше направление ухода:") @map("direction_label_text")
   giftLabelText        String @default("Ваш подарок:") @map("gift_label_text")
   ctaButtonText        String @default("Получить подарок и записаться") @map("cta_button_text")
+  ctaButtonLink        String @default("/promo/procedure-gift") @map("cta_button_link")
   managerMessageHeader String @default("Здравствуйте!\n\nЯ прошла игру «Поймай своё время».") @map("manager_message_header")
   managerMessageFooter String @default("Хочу узнать условия получения подарка и записаться.") @map("manager_message_footer")
 
@@ -458,4 +489,49 @@ model GamePlay {
   @@index([resultType])
   @@index([selectedGiftId])
   @@map("game_plays")
+}
+
+model Promotion {
+  id               String           @id @default(uuid()) @db.Uuid
+  title            String
+  slug             String           @unique
+  shortDescription String?          @map("short_description")
+  description      String?
+  type             PromotionType
+  status           PromotionStatus  @default(DRAFT)
+  isActive         Boolean          @default(false) @map("is_active")
+  startsAt         DateTime?        @map("starts_at") @db.Timestamptz
+  endsAt           DateTime?        @map("ends_at") @db.Timestamptz
+  giftTitle        String?          @map("gift_title")
+  giftDescription  String?          @map("gift_description")
+  discountValue    Decimal?         @map("discount_value") @db.Decimal(10, 2)
+  discountUnit     DiscountUnit?    @map("discount_unit")
+  discountDescription String?       @map("discount_description")
+  conditions       String?
+  ctaText          String?          @map("cta_text")
+  ctaLink          String?          @map("cta_link")
+  imageUrl         String?          @map("image_url")
+  priority         Int              @default(100)
+  source           PromotionSource  @default(MANUAL)
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime         @updatedAt @map("updated_at") @db.Timestamptz
+
+  services PromotionService[]
+
+  @@index([status, isActive])
+  @@index([priority])
+  @@index([startsAt])
+  @@index([endsAt])
+  @@map("promotions")
+}
+
+model PromotionService {
+  promotionId String @map("promotion_id") @db.Uuid
+  serviceId   String @map("service_id") @db.Uuid
+
+  promotion Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  service   Service   @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@id([promotionId, serviceId])
+  @@map("promotion_services")
 }

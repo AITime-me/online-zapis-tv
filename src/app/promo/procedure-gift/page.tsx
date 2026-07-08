@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { prisma } from "@/lib/db";
-import { ProcedureGiftGame } from "@/components/game/procedure-gift-game";
+import { ProcedureGiftGameVanilla } from "@/components/game/procedure-gift-game-vanilla";
 
 export const metadata: Metadata = {
   title: "Поймай своё время — Твоё время",
@@ -12,7 +12,7 @@ export default async function ProcedureGiftPage() {
   const config = await prisma.gameConfig.findUnique({ where: { id: "default" } });
 
   return (
-    <ProcedureGiftGame
+    <ProcedureGiftGameVanilla
       config={
         config
           ? {

@@ -1,42 +1,40 @@
 import { NextResponse } from "next/server";
+import {
+  validateGamePlayBody,
+  type GamePlayRequestBody,
+} from "@/lib/game/play-contract";
 import { createGamePlayAndSelectGift } from "@/services/GamePlayService";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type PlayBody = {
-  gameDirection?: string;
-  skinNeed?: string;
-  resultType?: string;
-  premiumLevel?: number;
-};
-
 export async function POST(request: Request) {
-  const body = (await request.json()) as PlayBody;
-  const gameDirection =
-    typeof body.gameDirection === "string" ? body.gameDirection.trim() : "";
-  const skinNeed = typeof body.skinNeed === "string" ? body.skinNeed.trim() : "";
-  const resultType =
-    typeof body.resultType === "string" ? body.resultType.trim() : "";
-  const premiumLevel =
-    typeof body.premiumLevel === "number" && Number.isFinite(body.premiumLevel)
-      ? Math.trunc(body.premiumLevel)
-      : 0;
+  try {
+    const body = (await request.json()) as GamePlayRequestBody;
+    const validation = validateGamePlayBody(body);
 
-  if (!gameDirection || !skinNeed || !resultType) {
+    if (!validation.ok) {
+      return NextResponse.json(
+        { ok: false, error: validation.error },
+        { status: 400 },
+      );
+    }
+
+    const { playId, gift } = await createGamePlayAndSelectGift(validation.data);
+
+    return NextResponse.json({ ok: true, playId, gift });
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return NextResponse.json(
+        { ok: false, error: "Некорректный JSON в теле запроса" },
+        { status: 400 },
+      );
+    }
+
+    console.error("[POST /api/game/play]", error);
     return NextResponse.json(
-      { ok: false, error: "gameDirection, skinNeed и resultType обязательны" },
-      { status: 400 },
+      { ok: false, error: "Не удалось обработать результат игры" },
+      { status: 500 },
     );
   }
-
-  const { playId, gift } = await createGamePlayAndSelectGift({
-    gameDirection,
-    skinNeed,
-    resultType,
-    premiumLevel,
-  });
-
-  return NextResponse.json({ ok: true, playId, gift });
 }
-

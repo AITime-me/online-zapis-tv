@@ -7,8 +7,8 @@ import { studioBrand } from "@/lib/brand/studio-brand";
 import {
   HOME_DIRECTIONS,
   HOME_FEATURES,
-  HOME_PROMOTIONS,
   HOME_STEPS,
+  type HomePromotion,
 } from "@/components/home/home-data";
 import { HomeHeader } from "@/components/home/home-header";
 import { HomePromoCarousel } from "@/components/home/home-promo-carousel";
@@ -44,7 +44,7 @@ function useRevealOnScroll() {
   }, []);
 }
 
-export function HomePage() {
+export function HomePage({ promotions }: { promotions: readonly HomePromotion[] }) {
   useRevealOnScroll();
 
   return (
@@ -186,7 +186,7 @@ export function HomePage() {
                 Особенные предложения для Вас
               </h2>
             </header>
-            <HomePromoCarousel promotions={HOME_PROMOTIONS} />
+            <HomePromoCarousel promotions={promotions} />
           </div>
         </section>
 

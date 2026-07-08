@@ -17,6 +17,7 @@ import {
   validateClientData,
 } from "@/lib/booking/client-validation";
 import type { BookingCatalogMaster } from "@/services/BookingService";
+import { BOOKING_REQUEST_SUCCESS_MESSAGE } from "@/lib/booking/request-success-copy";
 
 export type BookingRequestFormType =
   | "MANAGER_REQUEST"
@@ -208,7 +209,7 @@ export function BookingManagerRequestForm({
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">
           {success ? (
             <BookingStepDescription className="text-center">
-              Менеджер студии свяжется с вами для подбора времени.
+              {BOOKING_REQUEST_SUCCESS_MESSAGE}
             </BookingStepDescription>
           ) : (
             <>

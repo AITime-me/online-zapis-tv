@@ -1,16 +1,21 @@
 "use client";
 
-import type { ScheduleDayManagerNote } from "@/types/schedule";
+import type { ScheduleDayBookingRequest, ScheduleDayManagerNote } from "@/types/schedule";
 import { MANAGER_COL } from "@/components/schedule/schedule-month-table-styles";
+import { ScheduleBookingRequestCard } from "@/components/schedule/schedule-booking-request-card";
 
 export function ScheduleMonthManagerCell({
   notes,
+  bookingRequests = [],
   onOpen,
+  onRequestOpen,
 }: {
   notes: ScheduleDayManagerNote[];
+  bookingRequests?: ScheduleDayBookingRequest[];
   onOpen?: () => void;
+  onRequestOpen?: (request: ScheduleDayBookingRequest) => void;
 }) {
-  const isEmpty = notes.length === 0;
+  const isEmpty = notes.length === 0 && bookingRequests.length === 0;
   const isInteractive = Boolean(onOpen);
 
   return (
@@ -43,6 +48,19 @@ export function ScheduleMonthManagerCell({
               className="text-[10px] leading-tight text-zinc-800"
             >
               {note.content}
+            </div>
+          ))}
+          {bookingRequests.map((request) => (
+            <div
+              key={request.id}
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => event.stopPropagation()}
+            >
+              <ScheduleBookingRequestCard
+                request={request}
+                variant="month"
+                onOpen={(selected) => onRequestOpen?.(selected)}
+              />
             </div>
           ))}
         </div>

@@ -4,13 +4,22 @@ import { getStudioDayRangeFromDateKey } from "@/lib/datetime/studio";
 import { getBlockDisplayLabel } from "@/lib/schedule/labels";
 import { mapScheduleDayAppointment } from "@/lib/schedule/map-schedule-appointment";
 import type { ScheduleDayData } from "@/types/schedule";
+import { listActiveBookingRequestsForRange } from "@/services/BookingRequestService";
+import {
+  SCHEDULE_LOAD_INTERNAL,
+  type ScheduleLoadOptions,
+} from "@/lib/schedule/schedule-load-options";
 
 export async function getScheduleDayData(
   dateKey: string,
+  options: ScheduleLoadOptions = SCHEDULE_LOAD_INTERNAL,
 ): Promise<ScheduleDayData> {
   const { dayStart, dayEnd, noteDate } = getStudioDayRangeFromDateKey(dateKey);
+  const includeManagerColumn = options.includeManagerColumn ?? true;
+  const includeBookingRequests =
+    includeManagerColumn && (options.includeBookingRequests ?? true);
 
-  const [masters, managerNotes, extraWorkWindows] = await Promise.all([
+  const [masters, managerNotes, extraWorkWindows, bookingRequests] = await Promise.all([
     prisma.master.findMany({
       where: { isActive: true },
       orderBy: { sortOrder: "asc" },
@@ -40,14 +49,19 @@ export async function getScheduleDayData(
         },
       },
     }),
-    prisma.managerNote.findMany({
-      where: { noteDate, noteType: ManagerNoteType.MANAGER },
-      orderBy: { createdAt: "asc" },
-    }),
+    includeManagerColumn
+      ? prisma.managerNote.findMany({
+          where: { noteDate, noteType: ManagerNoteType.MANAGER },
+          orderBy: { createdAt: "asc" },
+        })
+      : Promise.resolve([]),
     prisma.extraWorkWindow.findMany({
       where: { workDate: noteDate },
       orderBy: { startsAt: "asc" },
     }),
+    includeBookingRequests
+      ? listActiveBookingRequestsForRange(dayStart, dayEnd)
+      : Promise.resolve([]),
   ]);
 
   const extraWorkByMaster = new Map<string, typeof extraWorkWindows>();
@@ -64,6 +78,7 @@ export async function getScheduleDayData(
       content: note.content,
       createdAt: note.createdAt.toISOString(),
     })),
+    bookingRequests,
     masters: masters.map((master) => ({
       id: master.id,
       internalName: master.internalName,

@@ -1,6 +1,7 @@
 import type {
   ScheduleDayAppointment,
   ScheduleDayBlock,
+  ScheduleDayBookingRequest,
   ScheduleDayExtraWork,
   ScheduleDayManagerNote,
 } from "@/types/schedule";
@@ -33,6 +34,7 @@ export type ScheduleMonthCellItem =
 export type ScheduleMonthDayCell = {
   dateKey: string;
   managerNotes: ScheduleDayManagerNote[];
+  bookingRequests: ScheduleDayBookingRequest[];
   ownerNotes: ScheduleDayManagerNote[];
   masterCells: Record<string, ScheduleMonthCellItem[]>;
 };

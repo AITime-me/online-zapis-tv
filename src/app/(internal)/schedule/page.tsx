@@ -1,4 +1,5 @@
 import { requireAuth } from "@/lib/auth/session";
+import { canViewManagerBookingRequests } from "@/lib/auth/permissions";
 import { ScheduleWorkspaceHeader } from "@/components/schedule/schedule-workspace-header";
 import { ScheduleDayView } from "@/components/schedule/schedule-day-view";
 import { ScheduleMonthView } from "@/components/schedule/schedule-month-view";
@@ -27,13 +28,17 @@ export default async function SchedulePage({ searchParams }: SchedulePageProps) 
       : "month";
 
   const pageHeader = <ScheduleWorkspaceHeader user={user} />;
+  const scheduleLoadOptions = {
+    includeManagerColumn: true,
+    includeBookingRequests: canViewManagerBookingRequests(user.role),
+  };
 
   if (view === "day") {
     const dateKey =
       params.date && isValidDateKey(params.date)
         ? params.date
         : studioToday;
-    const data = await getScheduleDayData(dateKey);
+    const data = await getScheduleDayData(dateKey, scheduleLoadOptions);
 
     return (
       <main className="flex min-h-screen min-w-0 flex-col bg-[#f8f9fa] p-2 md:p-3">
@@ -46,7 +51,7 @@ export default async function SchedulePage({ searchParams }: SchedulePageProps) 
   }
 
   const monthKey = normalizeMonthKey(params.month);
-  const monthData = await getScheduleMonthData(monthKey);
+  const monthData = await getScheduleMonthData(monthKey, scheduleLoadOptions);
 
   return (
     <main className="flex min-h-screen min-w-0 flex-col bg-[#f8f9fa] p-2 md:p-3">

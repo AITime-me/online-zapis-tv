@@ -3,6 +3,7 @@ import { isValidScheduleViewToken } from "@/lib/auth/view-schedule-token";
 import { normalizeMonthKey } from "@/lib/datetime/date-layer";
 import { ScheduleReadonlyMonthView } from "@/components/schedule/schedule-readonly-month-view";
 import { getScheduleMonthData } from "@/services/ScheduleMonthService";
+import { SCHEDULE_LOAD_VIEW_ONLY } from "@/lib/schedule/schedule-load-options";
 
 type ViewSchedulePageProps = {
   searchParams: Promise<{ token?: string; month?: string }>;
@@ -18,7 +19,7 @@ export default async function ViewSchedulePage({
   }
 
   const monthKey = normalizeMonthKey(params.month);
-  const monthData = await getScheduleMonthData(monthKey);
+  const monthData = await getScheduleMonthData(monthKey, SCHEDULE_LOAD_VIEW_ONLY);
 
   return (
     <main className="flex min-h-screen min-w-0 flex-col overflow-x-hidden bg-[#f8f9fa] p-2 md:p-3">

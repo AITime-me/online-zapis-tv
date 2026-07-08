@@ -26,6 +26,13 @@ function extractPrismaValidationSummary(message: string): string {
     return `Ошибка схемы БД: неизвестное поле «${field}». Проверьте миграции Prisma.`;
   }
 
+  const invalidEnum = message.match(
+    /Invalid value for argument `([^`]+)`\. Expected (\w+)/,
+  );
+  if (invalidEnum) {
+    return `Ошибка схемы: некорректное значение «${invalidEnum[1]}». Выполните npx prisma generate и перезапустите dev server.`;
+  }
+
   const firstLine = message.split("\n").find((line) => line.trim().length > 0);
   return firstLine?.trim() || DEFAULT_ERROR_MESSAGE;
 }

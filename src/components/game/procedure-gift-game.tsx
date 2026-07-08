@@ -10,6 +10,7 @@ import {
   validateClientData,
 } from "@/lib/booking/client-validation";
 import { studioBrand } from "@/lib/brand/studio-brand";
+import { BOOKING_REQUEST_SUCCESS_MESSAGE } from "@/lib/booking/request-success-copy";
 
 type PublicGameConfig = {
   isActive: boolean;
@@ -429,7 +430,7 @@ export function ProcedureGiftGame({ config }: { config: PublicGameConfig | null 
             {leadSuccess ? (
               <div className="rounded-2xl border px-4 py-4" style={{ borderColor: studioBrand.goldLineSoft }}>
                 <p className="font-body text-sm" style={{ color: studioBrand.inkMuted }}>
-                  Заявка отправлена. Менеджер студии свяжется с вами.
+                  {BOOKING_REQUEST_SUCCESS_MESSAGE}
                 </p>
                 <div className="mt-4 flex justify-center">
                   <Link

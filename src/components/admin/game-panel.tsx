@@ -84,6 +84,7 @@ export function GamePanel({
           directionLabelText: config.directionLabelText,
           giftLabelText: config.giftLabelText,
           ctaButtonText: config.ctaButtonText,
+          ctaButtonLink: config.ctaButtonLink,
           managerMessageHeader: config.managerMessageHeader,
           managerMessageFooter: config.managerMessageFooter,
         }),
@@ -317,6 +318,18 @@ export function GamePanel({
               onChange={(event) =>
                 setConfig((current) => ({ ...current, ctaButtonText: event.target.value }))
               }
+            />
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className={labelClass}>Ссылка кнопки</span>
+            <input
+              className={fieldClass}
+              value={config.ctaButtonLink}
+              onChange={(event) =>
+                setConfig((current) => ({ ...current, ctaButtonLink: event.target.value }))
+              }
+              placeholder="/promo/procedure-gift"
             />
           </label>
 
