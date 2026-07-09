@@ -146,6 +146,7 @@ model User {
   clientDuplicateReviews ClientDuplicateReview[] @relation("DuplicateReviewedBy")
   clientsMergedBy        Client[]                @relation("ClientMergedBy")
   clientMergeLogs        ClientMergeLog[]        @relation("ClientMergePerformedBy")
+  botSettingsUpdated     BotSettings[]           @relation("BotSettingsUpdatedBy")
 
   @@map("users")
 }
@@ -392,6 +393,7 @@ model BookingRequest {
 
   master Master? @relation(fields: [masterId], references: [id], onDelete: SetNull)
   client Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  botEventLogs BotEventLog[]
 
   @@index([status, createdAt(sort: Desc)])
   @@index([clientId])
@@ -648,6 +650,7 @@ model Client {
   mergedSources    Client[]       @relation("ClientMergeTarget")
   mergedByUser     User?          @relation("ClientMergedBy", fields: [mergedByUserId], references: [id], onDelete: SetNull)
   mergeLogsAsTarget ClientMergeLog[] @relation("MergeLogTarget")
+  botEventLogs        BotEventLog[]
 
   @@index([status, isArchived])
   @@index([phone])
@@ -686,4 +689,60 @@ model ClientDuplicateReview {
 
   @@index([status])
   @@map("client_duplicate_reviews")
+}
+
+/** Singleton-настройки будущего AI-бота студии. Без API-ключей и внешних интеграций. */
+model BotSettings {
+  id String @id @default("default")
+
+  isEnabled            Boolean @default(false) @map("is_enabled")
+  mode                 String  @default("OFF")
+  provider             String  @default("YANDEX")
+  responseMode         String  @default("HINTS_ONLY") @map("response_mode")
+  channels             Json    @default("{\"siteWidget\":false,\"vk\":false,\"max\":false,\"telegram\":false}")
+  mainInstruction      String? @map("main_instruction") @db.Text
+  knowledgeBaseNote    String? @map("knowledge_base_note") @db.Text
+  handoffRules         String? @map("handoff_rules") @db.Text
+  taggingRules         String? @map("tagging_rules") @db.Text
+  safetyRules          String? @map("safety_rules") @db.Text
+  maxMessagesPerClient Int     @default(20) @map("max_messages_per_client")
+  maxDailyMessages     Int     @default(200) @map("max_daily_messages")
+  logRetentionDays       Int     @default(30) @map("log_retention_days")
+  errorLogRetentionDays  Int     @default(90) @map("error_log_retention_days")
+  maxStoredBotEvents     Int     @default(5000) @map("max_stored_bot_events")
+  updatedByUserId      String? @map("updated_by_user_id") @db.Uuid
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  updatedByUser User? @relation("BotSettingsUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@map("bot_settings")
+}
+
+/**
+ * Журнал событий бота. Foundation-таблица: записи появятся после подключения бота.
+ * В логах не хранить API-ключи, токены, пароли и чужие персональные данные.
+ */
+model BotEventLog {
+  id               String   @id @default(cuid())
+  level            String
+  type             String
+  channel          String?
+  title            String
+  message          String?  @db.Text
+  clientId         String?  @map("client_id") @db.Uuid
+  bookingRequestId String?  @map("booking_request_id") @db.Uuid
+  metadata         Json?
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  client         Client?         @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  bookingRequest BookingRequest? @relation(fields: [bookingRequestId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt(sort: Desc)])
+  @@index([level])
+  @@index([type])
+  @@index([channel])
+  @@index([clientId])
+  @@index([bookingRequestId])
+  @@map("bot_event_logs")
 }

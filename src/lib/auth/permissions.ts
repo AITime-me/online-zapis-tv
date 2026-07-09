@@ -23,7 +23,8 @@ export type AdminSection =
   | "game"
   | "users"
   | "system-settings"
-  | "emergency-export";
+  | "emergency-export"
+  | "bot";
 
 /** Разделы /admin/*, доступные менеджеру (операционная админка). */
 export const MANAGER_ADMIN_PATH_PREFIXES = [
@@ -31,6 +32,7 @@ export const MANAGER_ADMIN_PATH_PREFIXES = [
   "/admin/services",
   "/admin/booking-requests",
   "/admin/clients",
+  "/admin/bot",
   "/admin/emergency-export",
 ] as const;
 
@@ -117,6 +119,16 @@ export function canAccessEmergencyExport(role: UserRole): boolean {
   return canManageOperationalEntities(role);
 }
 
+/** Настройки будущего бота — просмотр владельцу и менеджеру. */
+export function canViewBotAdmin(role: UserRole): boolean {
+  return canManageOperationalEntities(role);
+}
+
+/** Изменение настроек бота — только владелец. */
+export function canEditBotAdmin(role: UserRole): boolean {
+  return isOwner(role);
+}
+
 export function isOwnerOnlyAdminPath(pathname: string): boolean {
   return OWNER_ONLY_ADMIN_PATH_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
@@ -154,6 +166,8 @@ export function canAccessAdminSection(
       return canManageSystemSettings(role);
     case "emergency-export":
       return canAccessEmergencyExport(role);
+    case "bot":
+      return canViewBotAdmin(role);
     default:
       return false;
   }

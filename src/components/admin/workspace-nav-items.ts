@@ -10,6 +10,7 @@ export type WorkspaceNavKey =
   | "game"
   | "users"
   | "settings"
+  | "bot"
   | "export";
 
 export type WorkspaceNavItem = {
@@ -63,6 +64,12 @@ export const WORKSPACE_NAV_ITEMS: WorkspaceNavItem[] = [
     section: "game",
     href: "/admin/game",
     label: "Игра",
+  },
+  {
+    key: "bot",
+    section: "bot",
+    href: "/admin/bot",
+    label: "Бот",
   },
   {
     key: "users",
