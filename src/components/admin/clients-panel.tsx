@@ -150,6 +150,8 @@ export function ClientsPanel({
   const [form, setForm] = useState<ClientFormState>(emptyForm());
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   useEffect(() => {
     setClients(initialClients);
@@ -280,6 +282,58 @@ export function ClientsPanel({
     }
   };
 
+  const exportClientsCsv = async () => {
+    setExporting(true);
+    setExportError(null);
+
+    try {
+      const params = new URLSearchParams();
+      const query = search.trim();
+      if (query) {
+        params.set("q", query);
+      }
+      if (statusFilter !== "all") {
+        params.set("status", statusFilter);
+      }
+      params.set("archived", archiveFilter);
+
+      const response = await fetch(
+        `/api/admin/clients/export?${params.toString()}`,
+        { cache: "no-store" },
+      );
+
+      if (!response.ok) {
+        const contentType = response.headers.get("content-type") ?? "";
+        if (contentType.includes("application/json")) {
+          const payload = await readApiJsonResponse<{ error?: string }>(response);
+          throw new Error(
+            payload.error ?? "Не удалось выгрузить клиентов. Попробуйте ещё раз.",
+          );
+        }
+        throw new Error("Не удалось выгрузить клиентов. Попробуйте ещё раз.");
+      }
+
+      const blob = await response.blob();
+      const disposition = response.headers.get("Content-Disposition") ?? "";
+      const filenameMatch = disposition.match(/filename="([^"]+)"/);
+      const filename = filenameMatch?.[1] ?? "tvoe-vremya-clients.csv";
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (error) {
+      setExportError(
+        error instanceof Error
+          ? error.message
+          : "Не удалось выгрузить клиентов. Попробуйте ещё раз.",
+      );
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-zinc-200 bg-white p-4">
@@ -311,6 +365,12 @@ export function ClientsPanel({
 
       {mode === "list" ? (
         <>
+          {exportError ? (
+            <div className="rounded border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              {exportError}
+            </div>
+          ) : null}
+
           <section className="grid gap-3 rounded border border-zinc-200 bg-white p-4 md:grid-cols-[minmax(0,1.4fr)_12rem_12rem_auto] md:items-end">
             <label className="flex flex-col gap-1">
               <span className={labelClass}>Поиск</span>
@@ -360,6 +420,20 @@ export function ClientsPanel({
               Сбросить фильтры
             </button>
           </section>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void exportClientsCsv()}
+              disabled={exporting}
+              className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-60"
+            >
+              {exporting ? "Экспорт…" : "Экспорт CSV"}
+            </button>
+            <span className="text-xs text-zinc-500">
+              Выгружаются клиенты с учётом текущих фильтров
+            </span>
+          </div>
 
           {filteredClients.length === 0 ? (
             <div className="rounded border border-dashed border-zinc-300 bg-white px-4 py-10 text-center text-sm text-zinc-600">
