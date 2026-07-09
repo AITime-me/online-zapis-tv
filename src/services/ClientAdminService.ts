@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { CLIENT_STATUSES } from "@/lib/clients/defaults";
 import { mergeClientTags, normalizeTagValue } from "@/lib/clients/tags";
 import { normalizePhone } from "@/lib/phone/normalize-phone";
+import { getActiveDuplicateClientIdSet } from "@/services/ClientDuplicateService";
 import type {
   ClientAdminCreateInput,
   ClientAdminDto,
@@ -28,13 +29,19 @@ const clientSelect = {
   totalSpent: true,
   lastVisitAt: true,
   lastContactAt: true,
+  mergedIntoClientId: true,
   createdAt: true,
   updatedAt: true,
+  mergedIntoClient: {
+    select: {
+      id: true,
+      fullName: true,
+    },
+  },
 } satisfies Prisma.ClientSelect;
 
 const clientListSelect = {
   ...clientSelect,
-  createdAt: true,
   _count: {
     select: { bookingRequests: true },
   },
@@ -120,7 +127,7 @@ function normalizeTags(tags: string[] | undefined): string[] {
   return mergeClientTags([], tags.map(normalizeTagValue));
 }
 
-function mapClient(row: ClientRow): ClientAdminDto {
+function mapClient(row: ClientRow, hasActiveDuplicate = false): ClientAdminDto {
   return {
     id: row.id,
     fullName: row.fullName,
@@ -142,12 +149,18 @@ function mapClient(row: ClientRow): ClientAdminDto {
     updatedAt: row.updatedAt.toISOString(),
     bookingRequestCount: 0,
     lastBookingRequestAt: null,
+    hasActiveDuplicate,
+    mergedIntoClientId: row.mergedIntoClientId,
+    mergedIntoClientName: row.mergedIntoClient?.fullName ?? null,
   };
 }
 
-function mapClientListRow(row: ClientListRow): ClientAdminDto {
+function mapClientListRow(
+  row: ClientListRow,
+  hasActiveDuplicate = false,
+): ClientAdminDto {
   return {
-    ...mapClient(row),
+    ...mapClient(row, hasActiveDuplicate),
     bookingRequestCount: row._count.bookingRequests,
     lastBookingRequestAt:
       row.bookingRequests[0]?.createdAt.toISOString() ?? null,
@@ -209,19 +222,28 @@ function buildUpdateData(input: ClientAdminUpdateInput): Prisma.ClientUpdateInpu
 }
 
 export async function listClientsForAdmin(): Promise<ClientAdminDto[]> {
-  const rows = await prisma.client.findMany({
-    select: clientListSelect,
-    orderBy: [{ isArchived: "asc" }, { updatedAt: "desc" }],
-  });
-  return rows.map(mapClientListRow);
+  const [rows, activeDuplicateIds] = await Promise.all([
+    prisma.client.findMany({
+      select: clientListSelect,
+      orderBy: [{ isArchived: "asc" }, { updatedAt: "desc" }],
+    }),
+    getActiveDuplicateClientIdSet(),
+  ]);
+
+  return rows.map((row) =>
+    mapClientListRow(row, activeDuplicateIds.has(row.id)),
+  );
 }
 
 export async function getClientForAdmin(id: string): Promise<ClientAdminDto | null> {
-  const row = await prisma.client.findUnique({
-    where: { id },
-    select: clientListSelect,
-  });
-  return row ? mapClientListRow(row) : null;
+  const [row, activeDuplicateIds] = await Promise.all([
+    prisma.client.findUnique({
+      where: { id },
+      select: clientListSelect,
+    }),
+    getActiveDuplicateClientIdSet(),
+  ]);
+  return row ? mapClientListRow(row, activeDuplicateIds.has(row.id)) : null;
 }
 
 export async function createClientForAdmin(
@@ -249,7 +271,8 @@ export async function createClientForAdmin(
     select: clientSelect,
   });
 
-  return mapClient(created);
+  const activeDuplicateIds = await getActiveDuplicateClientIdSet();
+  return mapClient(created, activeDuplicateIds.has(created.id));
 }
 
 export async function updateClientForAdmin(
@@ -260,15 +283,23 @@ export async function updateClientForAdmin(
   if (!existing) {
     throw new ClientAdminValidationError("Клиент не найден");
   }
+  if (existing.mergedIntoClientId) {
+    throw new ClientAdminValidationError(
+      "Объединённый клиент нельзя редактировать",
+    );
+  }
 
   const data = buildUpdateData(input);
-  const updated = await prisma.client.update({
-    where: { id },
-    data,
-    select: clientListSelect,
-  });
+  const [updated, activeDuplicateIds] = await Promise.all([
+    prisma.client.update({
+      where: { id },
+      data,
+      select: clientListSelect,
+    }),
+    getActiveDuplicateClientIdSet(),
+  ]);
 
-  return mapClientListRow(updated);
+  return mapClientListRow(updated, activeDuplicateIds.has(updated.id));
 }
 
 export async function archiveClientForAdmin(id: string): Promise<ClientAdminDto> {

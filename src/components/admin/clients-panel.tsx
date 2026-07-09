@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import type { ClientStatus } from "@prisma/client";
 import { readApiJsonResponse } from "@/lib/api/read-json-response";
 import {
@@ -9,6 +10,7 @@ import {
 } from "@/lib/clients/defaults";
 import { clientMatchesTagSearch } from "@/lib/clients/tags";
 import { ClientTagsEditor } from "@/components/admin/client-tags-editor";
+import { ClientTagBadge } from "@/components/admin/client-tag-badges";
 import { ClientTagsInlineEditor } from "@/components/admin/client-tags-inline-editor";
 import { ClientsImportModal } from "@/components/admin/clients-import-modal";
 import type { ClientAdminDto } from "@/types/client-admin";
@@ -154,6 +156,7 @@ export function ClientsPanel({
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     setClients(initialClients);
@@ -229,6 +232,11 @@ export function ClientsPanel({
       if (mode === "create") {
         const client = await requestClientMutation("POST", payload);
         setClients((current) => [client, ...current]);
+        if (client.hasActiveDuplicate) {
+          setMessage(
+            "В базе уже есть клиент с таким ФИО. Проверьте возможный дубль.",
+          );
+        }
         closeForm();
       } else if (mode === "edit" && editingClient) {
         const client = await requestClientMutation("PATCH", {
@@ -281,6 +289,31 @@ export function ClientsPanel({
     if (editingClient?.id === clientId) {
       setEditingClient((current) => (current ? { ...current, tags } : current));
       setForm((current) => ({ ...current, tags }));
+    }
+  };
+
+  const refreshClients = async () => {
+    setRefreshing(true);
+    setExportError(null);
+    try {
+      const response = await fetch("/api/admin/clients", { cache: "no-store" });
+      const payload = await readApiJsonResponse<{
+        ok: boolean;
+        clients?: ClientAdminDto[];
+        error?: string;
+      }>(response);
+      if (!response.ok || !payload.ok || !payload.clients) {
+        throw new Error(payload.error ?? "Не удалось обновить список клиентов");
+      }
+      setClients(payload.clients);
+    } catch (error) {
+      setExportError(
+        error instanceof Error
+          ? error.message
+          : "Не удалось обновить список клиентов",
+      );
+    } finally {
+      setRefreshing(false);
     }
   };
 
@@ -426,6 +459,20 @@ export function ClientsPanel({
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
+              onClick={() => void refreshClients()}
+              disabled={refreshing}
+              className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-60"
+            >
+              {refreshing ? "Обновление…" : "Обновить"}
+            </button>
+            <Link
+              href="/admin/clients/duplicates"
+              className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50"
+            >
+              Возможные дубли
+            </Link>
+            <button
+              type="button"
               onClick={() => setImportOpen(true)}
               className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50"
             >
@@ -477,23 +524,62 @@ export function ClientsPanel({
                       }`}
                     >
                       <td className="px-4 py-3 font-medium text-zinc-900">
-                        {client.fullName}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span>{client.fullName}</span>
+                          {client.hasActiveDuplicate ? (
+                            <Link
+                              href={`/admin/clients/duplicates?q=${encodeURIComponent(client.phone ?? client.fullName)}`}
+                              className="inline-flex rounded bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900 hover:bg-amber-100"
+                            >
+                              Возможный дубль
+                            </Link>
+                          ) : null}
+                          {client.mergedIntoClientId ? (
+                            <Link
+                              href={`/admin/clients?q=${encodeURIComponent(client.mergedIntoClientName ?? client.fullName)}`}
+                              className="inline-flex rounded bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-900 hover:bg-violet-100"
+                            >
+                              Объединён
+                            </Link>
+                          ) : null}
+                        </div>
+                        {client.mergedIntoClientId && client.mergedIntoClientName ? (
+                          <span className="mt-1 block text-xs text-zinc-500">
+                            Объединён в{" "}
+                            <Link
+                              href={`/admin/clients?q=${encodeURIComponent(client.mergedIntoClientName)}`}
+                              className="font-medium text-[#1a73e8] hover:underline"
+                            >
+                              {client.mergedIntoClientName}
+                            </Link>
+                          </span>
+                        ) : null}
                         {client.isArchived ? (
-                          <span className="ml-2 text-xs text-zinc-500">(архив)</span>
+                          <span className="mt-1 block text-xs text-zinc-500">
+                            (архив)
+                          </span>
                         ) : null}
                       </td>
                       <td className="px-4 py-3 text-zinc-700">{client.phone ?? "—"}</td>
                       <td className="px-4 py-3 text-zinc-700">{client.email ?? "—"}</td>
                       <td className="px-4 py-3">{getClientStatusLabel(client.status)}</td>
                       <td className="px-4 py-3">
-                        <ClientTagsInlineEditor
-                          clientId={client.id}
-                          tags={client.tags}
-                          onTagsChange={(tags) =>
-                            handleInlineTagsChange(client.id, tags)
-                          }
-                          compact
-                        />
+                        {client.mergedIntoClientId ? (
+                          <div className="flex flex-wrap gap-1">
+                            {client.tags.map((tag) => (
+                              <ClientTagBadge key={`${client.id}-${tag}`} tag={tag} compact />
+                            ))}
+                          </div>
+                        ) : (
+                          <ClientTagsInlineEditor
+                            clientId={client.id}
+                            tags={client.tags}
+                            onTagsChange={(tags) =>
+                              handleInlineTagsChange(client.id, tags)
+                            }
+                            compact
+                          />
+                        )}
                       </td>
                       <td className="px-4 py-3 text-zinc-600">{client.source ?? "—"}</td>
                       <td className="px-4 py-3 text-zinc-600">

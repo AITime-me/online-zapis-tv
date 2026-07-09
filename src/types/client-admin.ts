@@ -21,6 +21,9 @@ export type ClientAdminDto = {
   updatedAt: string;
   bookingRequestCount: number;
   lastBookingRequestAt: string | null;
+  hasActiveDuplicate: boolean;
+  mergedIntoClientId: string | null;
+  mergedIntoClientName: string | null;
 };
 
 export type ClientAdminCreateInput = {

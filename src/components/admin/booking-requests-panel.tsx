@@ -6,6 +6,7 @@ import type { BookingRequestStatus } from "@prisma/client";
 import { readApiJsonResponse } from "@/lib/api/read-json-response";
 import { getStudioNow, normalizeDate } from "@/lib/datetime/date-layer";
 import { ClientTagsInlineEditor } from "@/components/admin/client-tags-inline-editor";
+import { ClientTagBadge } from "@/components/admin/client-tag-badges";
 import {
   getBookingRequestClientLinkLabel,
   getBookingRequestStatusLabel,
@@ -152,7 +153,8 @@ function ClientLinkBadge({
       ? "bg-emerald-50 text-emerald-800"
       : request.clientLinkStatus === "new"
         ? "bg-sky-50 text-sky-800"
-        : request.clientLinkStatus === "duplicate"
+        : request.clientLinkStatus === "duplicate" ||
+            request.clientLinkStatus === "name_duplicate"
           ? "bg-amber-50 text-amber-900"
           : "bg-zinc-100 text-zinc-600";
 
@@ -165,12 +167,86 @@ function ClientLinkBadge({
   );
 }
 
+function PossibleDuplicateCandidates({
+  request,
+  acting,
+  onLinkClient,
+  onCreateSeparateClient,
+}: {
+  request: BookingRequestDto;
+  acting: boolean;
+  onLinkClient: (clientId: string) => void;
+  onCreateSeparateClient: () => void;
+}) {
+  if (!request.hasPossibleClientDuplicates) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-2 rounded border border-amber-200 bg-amber-50/60 p-2">
+      <p className="text-xs text-amber-900">
+        {request.duplicateReason ?? "Найдены возможные совпадения"}
+      </p>
+      <div className="space-y-2">
+        {request.possibleDuplicateClients.map((candidate) => (
+          <div
+            key={candidate.id}
+            className="rounded border border-amber-100 bg-white p-2 text-xs text-zinc-700"
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-medium text-zinc-900">
+                {candidate.fullName}
+              </span>
+              {candidate.isArchived ? (
+                <span className="rounded bg-zinc-200 px-1.5 py-0.5 text-[10px]">
+                  Архив
+                </span>
+              ) : null}
+            </div>
+            {candidate.phone ? <div>{candidate.phone}</div> : null}
+            {candidate.email ? <div>{candidate.email}</div> : null}
+            {candidate.tags.length > 0 ? (
+              <div className="mt-1 flex flex-wrap gap-1">
+                {candidate.tags.map((tag) => (
+                  <ClientTagBadge key={`${candidate.id}-${tag}`} tag={tag} compact />
+                ))}
+              </div>
+            ) : null}
+            <button
+              type="button"
+              disabled={acting}
+              onClick={() => onLinkClient(candidate.id)}
+              className="mt-2 rounded border border-zinc-300 bg-white px-2 py-1 text-xs font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-60"
+            >
+              Связать
+            </button>
+          </div>
+        ))}
+      </div>
+      <button
+        type="button"
+        disabled={acting}
+        onClick={onCreateSeparateClient}
+        className="rounded border border-zinc-300 bg-white px-2 py-1 text-xs font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-60"
+      >
+        Создать отдельного клиента
+      </button>
+    </div>
+  );
+}
+
 function ClientLinkCell({
   request,
+  acting,
+  onLinkClient,
+  onCreateSeparateClient,
   onClientTagsChange,
   onTagInteractionChange,
 }: {
   request: BookingRequestDto;
+  acting: boolean;
+  onLinkClient: (clientId: string) => void;
+  onCreateSeparateClient: () => void;
   onClientTagsChange: (clientId: string, tags: string[]) => void;
   onTagInteractionChange?: (busy: boolean) => void;
 }) {
@@ -179,6 +255,14 @@ function ClientLinkCell({
   return (
     <div className="space-y-1">
       <ClientLinkBadge request={request} />
+      {request.hasPossibleClientDuplicates ? (
+        <PossibleDuplicateCandidates
+          request={request}
+          acting={acting}
+          onLinkClient={onLinkClient}
+          onCreateSeparateClient={onCreateSeparateClient}
+        />
+      ) : null}
       {client && request.clientId ? (
         <div className="space-y-1 text-xs text-zinc-600">
           <div className="font-medium text-zinc-800">{client.fullName}</div>
@@ -261,13 +345,19 @@ function CommentCell({ comment }: { comment: string | null }) {
 function RequestTable({
   requests,
   updatingId,
+  clientActionId,
   onStatusChange,
+  onLinkClient,
+  onCreateSeparateClient,
   onClientTagsChange,
   onTagInteractionChange,
 }: {
   requests: BookingRequestDto[];
   updatingId: string | null;
+  clientActionId: string | null;
   onStatusChange: (id: string, status: BookingRequestStatus) => void;
+  onLinkClient: (requestId: string, clientId: string) => void;
+  onCreateSeparateClient: (requestId: string) => void;
   onClientTagsChange: (clientId: string, tags: string[]) => void;
   onTagInteractionChange?: (busy: boolean) => void;
 }) {
@@ -305,6 +395,9 @@ function RequestTable({
               <td className="px-3 py-2">
                 <ClientLinkCell
                   request={request}
+                  acting={clientActionId === request.id}
+                  onLinkClient={(clientId) => onLinkClient(request.id, clientId)}
+                  onCreateSeparateClient={() => onCreateSeparateClient(request.id)}
                   onClientTagsChange={onClientTagsChange}
                   onTagInteractionChange={onTagInteractionChange}
                 />
@@ -356,6 +449,7 @@ export function BookingRequestsPanel({
   const [filters, setFilters] = useState<RequestFilters>(DEFAULT_FILTERS);
   const [closedExpanded, setClosedExpanded] = useState(false);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [clientActionId, setClientActionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
@@ -379,9 +473,11 @@ export function BookingRequestsPanel({
 
   const isAutoRefreshPaused = useCallback(() => {
     return (
-      updatingIdRef.current !== null || tagInteractionCountRef.current > 0
+      updatingIdRef.current !== null ||
+      tagInteractionCountRef.current > 0 ||
+      clientActionId !== null
     );
-  }, []);
+  }, [clientActionId]);
 
   useEffect(() => {
     setRequests(initialRequests);
@@ -493,6 +589,73 @@ export function BookingRequestsPanel({
           : request,
       ),
     );
+  }, []);
+
+  const linkRequestToClient = useCallback(
+    async (requestId: string, clientId: string) => {
+      setClientActionId(requestId);
+      setError(null);
+      try {
+        const response = await fetch("/api/admin/booking-requests/link-client", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ requestId, clientId }),
+        });
+        const data = await readApiJsonResponse<{
+          ok?: boolean;
+          request?: BookingRequestDto;
+          error?: string;
+        }>(response);
+        if (!response.ok || !data.ok || !data.request) {
+          throw new Error(data.error ?? "Не удалось связать заявку с клиентом");
+        }
+        setRequests((current) =>
+          current.map((entry) => (entry.id === requestId ? data.request! : entry)),
+        );
+        setLastUpdatedAt(new Date());
+      } catch (linkError) {
+        setError(
+          linkError instanceof Error
+            ? linkError.message
+            : "Не удалось связать заявку с клиентом",
+        );
+      } finally {
+        setClientActionId(null);
+      }
+    },
+    [],
+  );
+
+  const createSeparateClient = useCallback(async (requestId: string) => {
+    setClientActionId(requestId);
+    setError(null);
+    try {
+      const response = await fetch("/api/admin/booking-requests/create-client", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId }),
+      });
+      const data = await readApiJsonResponse<{
+        ok?: boolean;
+        request?: BookingRequestDto;
+        error?: string;
+      }>(response);
+      if (!response.ok || !data.ok || !data.request) {
+        throw new Error(data.error ?? "Не удалось создать отдельного клиента");
+      }
+      setRequests((current) =>
+        current.map((entry) => (entry.id === requestId ? data.request! : entry)),
+      );
+      setLastUpdatedAt(new Date());
+    } catch (createError) {
+      setError(
+        createError instanceof Error
+          ? createError.message
+          : "Не удалось создать отдельного клиента",
+      );
+    } finally {
+      setClientActionId(null);
+    }
   }, []);
 
   const filteredByFields = useMemo(
@@ -676,7 +839,14 @@ export function BookingRequestsPanel({
             <RequestTable
               requests={activeRequests}
               updatingId={updatingId}
+              clientActionId={clientActionId}
               onStatusChange={(id, status) => void updateStatus(id, status)}
+              onLinkClient={(requestId, clientId) =>
+                void linkRequestToClient(requestId, clientId)
+              }
+              onCreateSeparateClient={(requestId) =>
+                void createSeparateClient(requestId)
+              }
               onClientTagsChange={handleClientTagsChange}
               onTagInteractionChange={handleTagInteractionChange}
             />
@@ -704,7 +874,14 @@ export function BookingRequestsPanel({
               <RequestTable
                 requests={closedRequests}
                 updatingId={updatingId}
+                clientActionId={clientActionId}
                 onStatusChange={(id, status) => void updateStatus(id, status)}
+                onLinkClient={(requestId, clientId) =>
+                  void linkRequestToClient(requestId, clientId)
+                }
+                onCreateSeparateClient={(requestId) =>
+                  void createSeparateClient(requestId)
+                }
                 onClientTagsChange={handleClientTagsChange}
                 onTagInteractionChange={handleTagInteractionChange}
               />

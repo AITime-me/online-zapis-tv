@@ -108,6 +108,12 @@ enum ClientStatus {
   BLOCKED
 }
 
+enum ClientDuplicateReviewStatus {
+  REVIEW
+  NOT_DUPLICATE
+  POSTPONED
+}
+
 enum PromotionSource {
   MANUAL
   GAME
@@ -137,6 +143,9 @@ model User {
   managerNotes          ManagerNote[]
   requestedExports      EmergencyExport[]   @relation("ExportRequestedBy")
   auditLogs             AuditLog[]
+  clientDuplicateReviews ClientDuplicateReview[] @relation("DuplicateReviewedBy")
+  clientsMergedBy        Client[]                @relation("ClientMergedBy")
+  clientMergeLogs        ClientMergeLog[]        @relation("ClientMergePerformedBy")
 
   @@map("users")
 }
@@ -625,16 +634,56 @@ model Client {
   bonusBalance  Int          @default(0) @map("bonus_balance")
   totalSpent    Int          @default(0) @map("total_spent")
   lastVisitAt   DateTime?    @map("last_visit_at") @db.Timestamptz
-  lastContactAt DateTime?    @map("last_contact_at") @db.Timestamptz
-  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt     DateTime     @updatedAt @map("updated_at") @db.Timestamptz
+  lastContactAt    DateTime?    @map("last_contact_at") @db.Timestamptz
+  mergedIntoClientId String?    @map("merged_into_client_id") @db.Uuid
+  mergedAt         DateTime?  @map("merged_at") @db.Timestamptz
+  mergedByUserId   String?    @map("merged_by_user_id") @db.Uuid
+  mergeNote        String?    @map("merge_note")
+  createdAt        DateTime   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime   @updatedAt @map("updated_at") @db.Timestamptz
 
-  appointments    Appointment[]
-  bookingRequests BookingRequest[]
+  appointments     Appointment[]
+  bookingRequests  BookingRequest[]
+  mergedIntoClient Client?        @relation("ClientMergeTarget", fields: [mergedIntoClientId], references: [id], onDelete: SetNull)
+  mergedSources    Client[]       @relation("ClientMergeTarget")
+  mergedByUser     User?          @relation("ClientMergedBy", fields: [mergedByUserId], references: [id], onDelete: SetNull)
+  mergeLogsAsTarget ClientMergeLog[] @relation("MergeLogTarget")
 
   @@index([status, isArchived])
   @@index([phone])
   @@index([normalizedPhone])
   @@index([email])
+  @@index([mergedIntoClientId])
   @@map("clients")
+}
+
+model ClientMergeLog {
+  id              String   @id @default(cuid())
+  targetClientId  String   @map("target_client_id") @db.Uuid
+  sourceClientIds Json     @map("source_client_ids")
+  mergedByUserId  String?  @map("merged_by_user_id") @db.Uuid
+  reason          String?
+  snapshot        Json
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  targetClient Client @relation("MergeLogTarget", fields: [targetClientId], references: [id], onDelete: Restrict)
+  mergedByUser User?  @relation("ClientMergePerformedBy", fields: [mergedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([targetClientId, createdAt(sort: Desc)])
+  @@map("client_merge_logs")
+}
+
+model ClientDuplicateReview {
+  id               String                      @id @default(uuid()) @db.Uuid
+  fingerprint      String                      @unique
+  status           ClientDuplicateReviewStatus @default(REVIEW)
+  note             String?
+  reviewedByUserId String?                     @map("reviewed_by_user_id") @db.Uuid
+  createdAt        DateTime                    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime                    @updatedAt @map("updated_at") @db.Timestamptz
+
+  reviewedBy User? @relation("DuplicateReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@map("client_duplicate_reviews")
 }

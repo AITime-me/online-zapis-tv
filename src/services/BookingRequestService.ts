@@ -9,9 +9,18 @@ import {
 } from "@/lib/booking/client-validation";
 import { prisma } from "@/lib/db";
 import type { ScheduleDayBookingRequest } from "@/lib/schedule/booking-request-schedule";
+import type { ClientStatus } from "@prisma/client";
 import {
   appendDuplicateNote,
-  isDuplicateClientComment,
+  appendManagerDecisionNote,
+  buildManagerCreateSeparateNote,
+  buildManagerLinkNote,
+  createClientFromLead,
+  enrichExistingClient,
+  findExactClientsByContact,
+  hasPossibleDuplicateComment,
+  isFioDuplicateComment,
+  parsePossibleDuplicateClientIds,
   resolveClientForLead,
   type ClientLeadSource,
 } from "@/services/ClientLinkService";
@@ -38,7 +47,8 @@ export type BookingRequestClientLinkStatus =
   | "linked"
   | "new"
   | "none"
-  | "duplicate";
+  | "duplicate"
+  | "name_duplicate";
 
 export type BookingRequestClientSummary = {
   id: string;
@@ -46,6 +56,8 @@ export type BookingRequestClientSummary = {
   phone: string | null;
   email: string | null;
   tags: string[];
+  status: ClientStatus;
+  isArchived: boolean;
 };
 
 export type BookingRequestDto = {
@@ -62,6 +74,9 @@ export type BookingRequestDto = {
   clientId: string | null;
   clientLinkStatus: BookingRequestClientLinkStatus;
   client: BookingRequestClientSummary | null;
+  hasPossibleClientDuplicates: boolean;
+  possibleDuplicateClients: BookingRequestClientSummary[];
+  duplicateReason: string | null;
 };
 
 const REQUEST_TYPE_LABELS: Record<BookingRequestType, string> = {
@@ -84,6 +99,8 @@ const bookingRequestInclude = {
       phone: true,
       email: true,
       tags: true,
+      status: true,
+      isArchived: true,
       createdAt: true,
     },
   },
@@ -99,15 +116,27 @@ type BookingRequestRow = Awaited<
     phone: string | null;
     email: string | null;
     tags: string[];
+    status: ClientStatus;
+    isArchived: boolean;
     createdAt: Date;
   } | null;
 };
 
+const possibleDuplicateClientSelect = {
+  id: true,
+  fullName: true,
+  phone: true,
+  email: true,
+  tags: true,
+  status: true,
+  isArchived: true,
+} as const;
+
 function resolveClientLinkStatus(
   request: Pick<BookingRequestRow, "clientId" | "comment" | "createdAt" | "client">,
 ): BookingRequestClientLinkStatus {
-  if (isDuplicateClientComment(request.comment)) {
-    return "duplicate";
+  if (!request.clientId && hasPossibleDuplicateComment(request.comment)) {
+    return isFioDuplicateComment(request.comment) ? "name_duplicate" : "duplicate";
   }
   if (!request.clientId) {
     return "none";
@@ -123,7 +152,70 @@ function resolveClientLinkStatus(
   return "linked";
 }
 
-function mapBookingRequest(request: BookingRequestRow): BookingRequestDto {
+function mapClientSummary(
+  client: {
+    id: string;
+    fullName: string;
+    phone: string | null;
+    email: string | null;
+    tags: string[];
+    status: ClientStatus;
+    isArchived: boolean;
+  },
+): BookingRequestClientSummary {
+  return {
+    id: client.id,
+    fullName: client.fullName,
+    phone: client.phone,
+    email: client.email,
+    tags: client.tags,
+    status: client.status,
+    isArchived: client.isArchived,
+  };
+}
+
+function resolveDuplicateReason(
+  comment: string | null | undefined,
+): string | null {
+  if (!hasPossibleDuplicateComment(comment)) {
+    return null;
+  }
+  if (isFioDuplicateComment(comment)) {
+    return "Совпадает ФИО, но телефон/email другой";
+  }
+  return "Найдено несколько клиентов с таким телефоном или email";
+}
+
+async function loadPossibleDuplicateClients(
+  comment: string | null | undefined,
+): Promise<BookingRequestClientSummary[]> {
+  const ids = parsePossibleDuplicateClientIds(comment);
+  if (ids.length === 0) {
+    return [];
+  }
+
+  const clients = await prisma.client.findMany({
+    where: { id: { in: ids } },
+    select: possibleDuplicateClientSelect,
+  });
+
+  const clientMap = new Map(
+    clients.map((client) => [client.id, mapClientSummary(client)]),
+  );
+
+  return ids
+    .map((id) => clientMap.get(id))
+    .filter((client): client is BookingRequestClientSummary => Boolean(client));
+}
+
+async function mapBookingRequest(
+  request: BookingRequestRow,
+): Promise<BookingRequestDto> {
+  const possibleDuplicateClients =
+    !request.clientId && hasPossibleDuplicateComment(request.comment)
+      ? await loadPossibleDuplicateClients(request.comment)
+      : [];
+
   return {
     id: request.id,
     clientName: request.clientName,
@@ -137,15 +229,10 @@ function mapBookingRequest(request: BookingRequestRow): BookingRequestDto {
     createdAt: request.createdAt.toISOString(),
     clientId: request.clientId,
     clientLinkStatus: resolveClientLinkStatus(request),
-    client: request.client
-      ? {
-          id: request.client.id,
-          fullName: request.client.fullName,
-          phone: request.client.phone,
-          email: request.client.email,
-          tags: request.client.tags,
-        }
-      : null,
+    client: request.client ? mapClientSummary(request.client) : null,
+    hasPossibleClientDuplicates: possibleDuplicateClients.length > 0,
+    possibleDuplicateClients,
+    duplicateReason: resolveDuplicateReason(request.comment),
   };
 }
 
@@ -171,6 +258,7 @@ const CLIENT_LINK_LABELS: Record<BookingRequestClientLinkStatus, string> = {
   new: "Новый клиент",
   none: "Без клиента",
   duplicate: "Возможный дубль",
+  name_duplicate: "Возможный дубль",
 };
 
 export function getBookingRequestClientLinkLabel(
@@ -260,13 +348,119 @@ export async function createBookingRequest(
   return mapBookingRequest(request);
 }
 
+async function findExactClientMatchesForBookingRequest(
+  clientPhone: string,
+): Promise<string[]> {
+  const matches = await findExactClientsByContact(clientPhone, null);
+  return matches.map((client) => client.id);
+}
+
+export async function linkBookingRequestToClient(
+  requestId: string,
+  clientId: string,
+): Promise<BookingRequestDto> {
+  const request = await prisma.bookingRequest.findUnique({
+    where: { id: requestId },
+    include: bookingRequestInclude,
+  });
+
+  if (!request) {
+    throw new BookingRequestValidationError("Заявка не найдена");
+  }
+
+  if (request.clientId) {
+    throw new BookingRequestValidationError("Заявка уже связана с клиентом");
+  }
+
+  const client = await prisma.client.findUnique({
+    where: { id: clientId },
+  });
+
+  if (!client) {
+    throw new BookingRequestValidationError("Клиент не найден");
+  }
+
+  await enrichExistingClient(client, {
+    fullName: request.clientName,
+    phone: request.clientPhone,
+    source: request.source === "ONLINE" ? "online_booking" : "unknown",
+  });
+
+  const updated = await prisma.bookingRequest.update({
+    where: { id: requestId },
+    data: {
+      clientId,
+      comment: appendManagerDecisionNote(
+        request.comment,
+        buildManagerLinkNote(client),
+      ),
+    },
+    include: bookingRequestInclude,
+  });
+
+  return mapBookingRequest(updated);
+}
+
+export async function createSeparateClientForBookingRequest(
+  requestId: string,
+): Promise<BookingRequestDto> {
+  const request = await prisma.bookingRequest.findUnique({
+    where: { id: requestId },
+    include: bookingRequestInclude,
+  });
+
+  if (!request) {
+    throw new BookingRequestValidationError("Заявка не найдена");
+  }
+
+  if (request.clientId) {
+    throw new BookingRequestValidationError("Заявка уже связана с клиентом");
+  }
+
+  const exactMatches = await findExactClientMatchesForBookingRequest(
+    request.clientPhone,
+  );
+
+  if (exactMatches.length === 1) {
+    throw new BookingRequestValidationError(
+      "Найден клиент с таким телефоном. Свяжите заявку с существующим клиентом.",
+    );
+  }
+
+  if (exactMatches.length > 1) {
+    throw new BookingRequestValidationError(
+      "Найдено несколько клиентов с таким телефоном. Свяжите заявку вручную.",
+    );
+  }
+
+  const created = await createClientFromLead({
+    fullName: request.clientName,
+    phone: request.clientPhone,
+    source: request.source === "ONLINE" ? "online_booking" : "unknown",
+  });
+
+  const updated = await prisma.bookingRequest.update({
+    where: { id: requestId },
+    data: {
+      clientId: created.id,
+      comment: appendManagerDecisionNote(
+        request.comment,
+        buildManagerCreateSeparateNote(),
+      ),
+    },
+    include: bookingRequestInclude,
+  });
+
+  return mapBookingRequest(updated);
+}
+
 export async function listBookingRequests(): Promise<BookingRequestDto[]> {
   const requests = await prisma.bookingRequest.findMany({
     orderBy: [{ status: "asc" }, { createdAt: "desc" }],
     include: bookingRequestInclude,
   });
 
-  return requests.map(mapBookingRequest);
+  return Promise.all(requests.map((request) => mapBookingRequest(request)));
 }
 
 export async function listActiveBookingRequestsForRange(

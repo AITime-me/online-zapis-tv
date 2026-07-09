@@ -1252,6 +1252,33 @@ async function main() {
       totalSpent: 0,
       lastContactAt: studioDate(2026, 6, 28, 18, 0),
     },
+    {
+      id: CLIENT_SEED_IDS.duplicatePhoneA,
+      fullName: "Дубль Телефон А",
+      phone: "+7 900 111-22-33",
+      email: "duplicate.phone.a@example.local",
+      status: "ACTIVE" as const,
+      source: "Тест дублей",
+      tags: ["тест-дубль"],
+      loyaltyLevel: null,
+      bonusBalance: 0,
+      totalSpent: 0,
+      lastContactAt: studioDate(2026, 7, 5, 12, 0),
+    },
+    {
+      id: CLIENT_SEED_IDS.duplicatePhoneB,
+      fullName: "Дубль Телефон Б",
+      phone: "89001112233",
+      email: null,
+      status: "NEW" as const,
+      source: "Импорт тест",
+      tags: ["тест-дубль"],
+      notes: "Тестовый дубль для проверки normalizedPhone.",
+      loyaltyLevel: null,
+      bonusBalance: 0,
+      totalSpent: 0,
+      lastContactAt: null,
+    },
   ] as const;
 
   for (const client of clientSeeds) {
