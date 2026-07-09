@@ -110,14 +110,18 @@ enum PromotionSource {
 }
 
 model User {
-  id           String   @id @default(uuid()) @db.Uuid
-  email        String   @unique
-  passwordHash String   @map("password_hash")
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique
+  passwordHash String    @map("password_hash")
   role         UserRole
   name         String
-  isActive     Boolean  @default(true) @map("is_active")
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  phone        String?
+  positionTitle String?  @map("position_title")
+  notes        String?
+  isActive     Boolean   @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at") @db.Timestamptz
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz
 
   master              Master?
   createdAppointments   Appointment[]       @relation("AppointmentCreatedBy")
@@ -534,4 +538,55 @@ model PromotionService {
 
   @@id([promotionId, serviceId])
   @@map("promotion_services")
+}
+
+model StudioSettings {
+  /** Singleton-настройки студии. */
+  id String @id @default("default")
+
+  studioName  String @default("Твоё время") @map("studio_name")
+  legalName   String @default("ИП Кузнецова Светлана Викторовна") @map("legal_name")
+  inn         String @default("450144605881")
+  ogrnip      String @default("324450000034680")
+  phone       String @default("8 912 979-30-90")
+  email       String @default("ipku82@bk.ru")
+  address     String @default("г. Курган, ул. Володарского, 30")
+  vkUrl       String @default("https://vk.me/tvoiovremya") @map("vk_url")
+  maxUrl      String @default("https://web.max.ru/267619155") @map("max_url")
+  telegramUrl String @default("") @map("telegram_url")
+  whatsappUrl String @default("") @map("whatsapp_url")
+  workingHoursText String @default("") @map("working_hours_text")
+
+  bookingSuccessMessage String @default("Спасибо! Заявка отправлена. Менеджер студии свяжется с вами, чтобы уточнить детали и помочь с записью.") @map("booking_success_message")
+  requestSuccessMessage String @default("Спасибо! Заявка отправлена. Менеджер студии свяжется с вами, чтобы уточнить детали и помочь с записью.") @map("request_success_message")
+  gameSuccessMessage    String @default("Спасибо! Заявка отправлена. Менеджер студии свяжется с вами, чтобы уточнить детали и помочь с записью.") @map("game_success_message")
+
+  privacyUrl String @default("/privacy") @map("privacy_url")
+  termsUrl   String @default("/terms") @map("terms_url")
+  consentUrl String @default("/consent") @map("consent_url")
+  offerUrl   String @default("/offer") @map("offer_url")
+
+  isOnlineBookingEnabled Boolean @default(true) @map("is_online_booking_enabled")
+  isGameEnabled          Boolean @default(true) @map("is_game_enabled")
+  isPromotionsEnabled    Boolean @default(true) @map("is_promotions_enabled")
+
+  cookieBannerText String @default("Мы используем cookie, чтобы сайт работал корректно и становился удобнее. Продолжая пользоваться сайтом, вы соглашаетесь с использованием cookie.") @map("cookie_banner_text")
+  cookieDetailsUrl String @default("/cookies") @map("cookie_details_url")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("studio_settings")
+}
+
+model LegalDocument {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  title       String
+  content     String   @db.Text
+  isPublished Boolean  @default(true) @map("is_published")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("legal_documents")
 }

@@ -96,6 +96,11 @@ export function canManageUsersAdmin(role: UserRole): boolean {
   return isOwner(role);
 }
 
+/**
+ * Фундамент CRM: пользователь User — сотрудник студии (владелец, менеджер, мастер).
+ * В будущем те же учётные записи смогут быть ответственными за клиентов, заявки,
+ * задачи, переписки (VK / MAX / Telegram / виджет), аналитику и лояльность.
+ */
 /** Глобальные настройки системы — только владелец. */
 export function canManageSystemSettings(role: UserRole): boolean {
   return isOwner(role);

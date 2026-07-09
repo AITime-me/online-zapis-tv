@@ -1,0 +1,30 @@
+-- CreateTable
+CREATE TABLE "studio_settings" (
+    "id" TEXT NOT NULL DEFAULT 'default',
+    "studio_name" TEXT NOT NULL DEFAULT 'Твоё время',
+    "legal_name" TEXT NOT NULL DEFAULT 'ИП Кузнецова Светлана Викторовна',
+    "inn" TEXT NOT NULL DEFAULT '450144605881',
+    "ogrnip" TEXT NOT NULL DEFAULT '324450000034680',
+    "phone" TEXT NOT NULL DEFAULT '8 912 979-30-90',
+    "email" TEXT NOT NULL DEFAULT 'ipku82@bk.ru',
+    "address" TEXT NOT NULL DEFAULT 'г. Курган, ул. Володарского, 30',
+    "vk_url" TEXT NOT NULL DEFAULT 'https://vk.me/tvoiovremya',
+    "max_url" TEXT NOT NULL DEFAULT 'https://web.max.ru/267619155',
+    "telegram_url" TEXT NOT NULL DEFAULT '',
+    "whatsapp_url" TEXT NOT NULL DEFAULT '',
+    "working_hours_text" TEXT NOT NULL DEFAULT '',
+    "booking_success_message" TEXT NOT NULL DEFAULT 'Спасибо! Заявка отправлена. Менеджер студии свяжется с вами, чтобы уточнить детали и помочь с записью.',
+    "request_success_message" TEXT NOT NULL DEFAULT 'Спасибо! Заявка отправлена. Менеджер студии свяжется с вами, чтобы уточнить детали и помочь с записью.',
+    "game_success_message" TEXT NOT NULL DEFAULT 'Спасибо! Заявка отправлена. Менеджер студии свяжется с вами, чтобы уточнить детали и помочь с записью.',
+    "privacy_url" TEXT NOT NULL DEFAULT '/privacy',
+    "terms_url" TEXT NOT NULL DEFAULT '/terms',
+    "consent_url" TEXT NOT NULL DEFAULT '/consent',
+    "offer_url" TEXT NOT NULL DEFAULT '/offer',
+    "is_online_booking_enabled" BOOLEAN NOT NULL DEFAULT true,
+    "is_game_enabled" BOOLEAN NOT NULL DEFAULT true,
+    "is_promotions_enabled" BOOLEAN NOT NULL DEFAULT true,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL,
+
+    CONSTRAINT "studio_settings_pkey" PRIMARY KEY ("id")
+);

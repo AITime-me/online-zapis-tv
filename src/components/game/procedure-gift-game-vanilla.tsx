@@ -33,8 +33,6 @@ type PublicGameConfig = {
 };
 
 const POIMAY_GAME_BASE = "/poimay-game";
-const VK_URL = "https://vk.me/tvoiovremya";
-const MAX_URL = "https://web.max.ru/267619155";
 
 function readDomDirectionLabel(): string | null {
   return document.getElementById("result-direction")?.textContent?.trim() || null;
@@ -87,8 +85,14 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
 
 export function ProcedureGiftGameVanilla({
   config,
+  vkUrl = "https://vk.me/tvoiovremya",
+  maxUrl = "https://web.max.ru/267619155",
+  gameSuccessMessage = BOOKING_REQUEST_SUCCESS_MESSAGE,
 }: {
   config: PublicGameConfig | null;
+  vkUrl?: string;
+  maxUrl?: string;
+  gameSuccessMessage?: string;
 }) {
   const [leadOpen, setLeadOpen] = useState(false);
   const [playSession, setPlaySession] = useState<GameLeadSession | null>(null);
@@ -556,14 +560,14 @@ export function ProcedureGiftGameVanilla({
                     <div className="flex flex-col gap-3">
                       <button
                         type="button"
-                        onClick={() => void openMessengerChannel(VK_URL)}
+                        onClick={() => void openMessengerChannel(vkUrl)}
                         className="btn btn--primary w-full"
                       >
                         Написать в VK
                       </button>
                       <button
                         type="button"
-                        onClick={() => void openMessengerChannel(MAX_URL)}
+                        onClick={() => void openMessengerChannel(maxUrl)}
                         className="btn btn--secondary w-full"
                       >
                         Написать в MAX
@@ -580,7 +584,7 @@ export function ProcedureGiftGameVanilla({
                 ) : (
                   <div className="mt-4 rounded-2xl border px-4 py-4" style={{ borderColor: studioBrand.goldLineSoft }}>
                     <p className="font-body text-sm" style={{ color: studioBrand.inkMuted }}>
-                      {BOOKING_REQUEST_SUCCESS_MESSAGE}
+                      {gameSuccessMessage}
                     </p>
                   </div>
                 )}

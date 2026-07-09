@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { LEGAL_DOCUMENT_SEEDS } from "@/lib/legal-document/defaults";
 
 const prisma = new PrismaClient();
 
@@ -53,23 +54,37 @@ async function main() {
 
   const owner = await prisma.user.upsert({
     where: { email: "owner@example.local" },
-    update: { passwordHash, isActive: true },
+    update: {
+      passwordHash,
+      isActive: true,
+      role: "OWNER",
+      name: "Тестовый владелец",
+      positionTitle: "Владелец студии",
+    },
     create: {
       email: "owner@example.local",
       passwordHash,
       role: "OWNER",
       name: "Тестовый владелец",
+      positionTitle: "Владелец студии",
     },
   });
 
   const manager = await prisma.user.upsert({
     where: { email: "manager@example.local" },
-    update: { passwordHash, isActive: true },
+    update: {
+      passwordHash,
+      isActive: true,
+      role: "MANAGER",
+      name: "Тестовый менеджер",
+      positionTitle: "Менеджер студии",
+    },
     create: {
       email: "manager@example.local",
       passwordHash,
       role: "MANAGER",
       name: "Тестовый менеджер",
+      positionTitle: "Менеджер студии",
     },
   });
 
@@ -921,6 +936,49 @@ async function main() {
     `Services: ${serviceHaircut.publicName}, ${serviceManicure.publicName}, ${servicePmu.publicName}, ${serviceArchived.internalName} (archived)`,
   );
   console.log("Booking link token: test-bot-token-demo");
+
+  await prisma.studioSettings.upsert({
+    where: { id: "default" },
+    update: {},
+    create: {
+      id: "default",
+      studioName: "Твоё время",
+      legalName: "ИП Кузнецова Светлана Викторовна",
+      inn: "450144605881",
+      ogrnip: "324450000034680",
+      phone: "8 912 979-30-90",
+      email: "ipku82@bk.ru",
+      address: "г. Курган, ул. Володарского, 30",
+      vkUrl: "https://vk.me/tvoiovremya",
+      maxUrl: "https://web.max.ru/267619155",
+      bookingSuccessMessage:
+        "Спасибо! Заявка отправлена. Менеджер студии свяжется с вами, чтобы уточнить детали и помочь с записью.",
+      requestSuccessMessage:
+        "Спасибо! Заявка отправлена. Менеджер студии свяжется с вами, чтобы уточнить детали и помочь с записью.",
+      gameSuccessMessage:
+        "Спасибо! Заявка отправлена. Менеджер студии свяжется с вами, чтобы уточнить детали и помочь с записью.",
+      privacyUrl: "/privacy",
+      termsUrl: "/terms",
+      consentUrl: "/consent",
+      offerUrl: "/offer",
+      cookieBannerText:
+        "Мы используем cookie, чтобы сайт работал корректно и становился удобнее. Продолжая пользоваться сайтом, вы соглашаетесь с использованием cookie.",
+      cookieDetailsUrl: "/cookies",
+    },
+  });
+
+  for (const document of LEGAL_DOCUMENT_SEEDS) {
+    await prisma.legalDocument.upsert({
+      where: { slug: document.slug },
+      update: {},
+      create: {
+        slug: document.slug,
+        title: document.title,
+        content: document.content,
+        isPublished: document.isPublished,
+      },
+    });
+  }
 
   await prisma.gameConfig.upsert({
     where: { id: "default" },

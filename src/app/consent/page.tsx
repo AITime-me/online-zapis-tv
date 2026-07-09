@@ -1,12 +1,29 @@
-import { LegalDocumentPage } from "@/components/legal/legal-document-page";
-import { personalDataConsent } from "@/content/legal/personal-data-consent";
+import type { Metadata } from "next";
+import {
+  LegalTextDocumentPage,
+  LegalUnavailablePage,
+} from "@/components/legal/legal-text-document-page";
+import { loadPublishedLegalDocument } from "@/lib/legal-document/load-published";
 
-export const metadata = {
-  title: "Согласие на обработку персональных данных | Студия красоты «Твоё время»",
+export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Согласие на обработку персональных данных — Твоё время",
   description:
-    "Согласие на обработку персональных данных при использовании сервиса онлайн-записи студии красоты «Твоё время».",
+    "Согласие на обработку персональных данных студии красоты «Твоё время»",
 };
 
-export default function ConsentPage() {
-  return <LegalDocumentPage document={personalDataConsent} backHref="/" />;
+export default async function ConsentPage() {
+  const document = await loadPublishedLegalDocument("consent");
+
+  if (!document) {
+    return (
+      <LegalUnavailablePage
+        title="Согласие на обработку персональных данных"
+        backHref="/"
+      />
+    );
+  }
+
+  return <LegalTextDocumentPage document={document} backHref="/" />;
 }

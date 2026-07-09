@@ -1,2 +1,3 @@
-export const BOOKING_REQUEST_SUCCESS_MESSAGE =
-  "Спасибо! Заявка отправлена. Менеджер студии свяжется с вами, чтобы уточнить детали и помочь с записью.";
+import { DEFAULT_REQUEST_SUCCESS_MESSAGE } from "@/lib/studio-settings/defaults";
+
+export const BOOKING_REQUEST_SUCCESS_MESSAGE = DEFAULT_REQUEST_SUCCESS_MESSAGE;

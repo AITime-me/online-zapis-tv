@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { fontBody, fontDisplay } from "@/lib/brand/fonts";
+import { PublicSiteChrome } from "@/components/legal/public-site-chrome";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -18,7 +19,9 @@ export default function RootLayout({
       lang="ru"
       className={`${fontDisplay.variable} ${fontBody.variable} h-full antialiased`}
     >
-      <body className="font-body min-h-full flex flex-col">{children}</body>
+      <body className="font-body min-h-full flex flex-col">
+        <PublicSiteChrome>{children}</PublicSiteChrome>
+      </body>
     </html>
   );
 }

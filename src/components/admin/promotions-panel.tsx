@@ -45,7 +45,7 @@ type FormState = {
   ctaText: string;
   ctaLink: string;
   imageUrl: string;
-  priority: number;
+  priority: string;
   source: PromotionSourceDto;
   serviceIds: string[];
 };
@@ -132,6 +132,29 @@ function formatPeriod(startsAt: string | null, endsAt: string | null): string {
   return `до ${format(endsAt!)}`;
 }
 
+const DEFAULT_PROMOTION_PRIORITY = 100;
+
+function sanitizePriorityDigits(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
+function normalizePriorityInput(value: string): string {
+  const digits = sanitizePriorityDigits(value);
+  if (!digits) {
+    return "";
+  }
+  return String(Number.parseInt(digits, 10));
+}
+
+function parsePriorityForSave(value: string): number {
+  const normalized = normalizePriorityInput(value);
+  if (!normalized) {
+    return DEFAULT_PROMOTION_PRIORITY;
+  }
+  const parsed = Number.parseInt(normalized, 10);
+  return Number.isFinite(parsed) ? parsed : DEFAULT_PROMOTION_PRIORITY;
+}
+
 function emptyForm(): FormState {
   return {
     title: "",
@@ -152,7 +175,7 @@ function emptyForm(): FormState {
     ctaText: "",
     ctaLink: "",
     imageUrl: "",
-    priority: 100,
+    priority: String(DEFAULT_PROMOTION_PRIORITY),
     source: "manual",
     serviceIds: [],
   };
@@ -179,7 +202,7 @@ function formFromPromotion(promotion: PromotionDto): FormState {
     ctaText: promotion.ctaText ?? "",
     ctaLink: promotion.ctaLink ?? "",
     imageUrl: promotion.imageUrl ?? "",
-    priority: promotion.priority,
+    priority: String(promotion.priority),
     source: promotion.source,
     serviceIds: [...promotion.serviceIds],
   };
@@ -214,7 +237,7 @@ function formToWriteInput(form: FormState): PromotionWriteInput {
     ctaText: form.ctaText || null,
     ctaLink: form.ctaLink || null,
     imageUrl: form.imageUrl || null,
-    priority: form.priority,
+    priority: parsePriorityForSave(form.priority),
     source: form.source,
     serviceIds: form.serviceIds,
   };
@@ -748,13 +771,30 @@ export function PromotionsPanel({
             <label className="flex flex-col gap-1">
               <span className={labelClass}>Приоритет</span>
               <input
-                type="number"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 value={form.priority}
                 onChange={(event) =>
-                  updateForm("priority", Number(event.target.value))
+                  updateForm("priority", sanitizePriorityDigits(event.target.value))
                 }
+                onBlur={() =>
+                  setForm((current) => ({
+                    ...current,
+                    priority: normalizePriorityInput(current.priority),
+                  }))
+                }
+                placeholder={String(DEFAULT_PROMOTION_PRIORITY)}
                 className={fieldClass}
               />
+              <p className="text-xs leading-relaxed text-zinc-500">
+                Чем меньше число, тем выше акция в списке. Например: 10 — главная,
+                20 — ниже, 30 — ещё ниже.
+              </p>
+              <p className="text-xs leading-relaxed text-zinc-500">
+                10 — игра · 20 — консультация · 30 — текущая акция · 50+ —
+                дополнительные предложения
+              </p>
             </label>
 
             <label className="flex flex-col gap-1">

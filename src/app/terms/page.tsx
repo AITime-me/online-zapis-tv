@@ -1,11 +1,23 @@
-import { LegalDocumentPage } from "@/components/legal/legal-document-page";
-import { termsOfService } from "@/content/legal/terms-of-service";
+import type { Metadata } from "next";
+import {
+  LegalTextDocumentPage,
+  LegalUnavailablePage,
+} from "@/components/legal/legal-text-document-page";
+import { loadPublishedLegalDocument } from "@/lib/legal-document/load-published";
 
-export const metadata = {
+export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
   title: "Публичная оферта — Твоё время",
   description: "Публичная оферта студии красоты «Твоё время»",
 };
 
-export default function TermsPage() {
-  return <LegalDocumentPage document={termsOfService} />;
+export default async function TermsPage() {
+  const document = await loadPublishedLegalDocument("terms");
+
+  if (!document) {
+    return <LegalUnavailablePage title="Публичная оферта" backHref="/booking" />;
+  }
+
+  return <LegalTextDocumentPage document={document} />;
 }
