@@ -10,6 +10,7 @@ import {
 import { clientMatchesTagSearch } from "@/lib/clients/tags";
 import { ClientTagsEditor } from "@/components/admin/client-tags-editor";
 import { ClientTagsInlineEditor } from "@/components/admin/client-tags-inline-editor";
+import { ClientsImportModal } from "@/components/admin/clients-import-modal";
 import type { ClientAdminDto } from "@/types/client-admin";
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -152,6 +153,7 @@ export function ClientsPanel({
   const [message, setMessage] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   useEffect(() => {
     setClients(initialClients);
@@ -422,6 +424,13 @@ export function ClientsPanel({
           </section>
 
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setImportOpen(true)}
+              className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50"
+            >
+              Импорт CSV
+            </button>
             <button
               type="button"
               onClick={() => void exportClientsCsv()}
@@ -733,6 +742,15 @@ export function ClientsPanel({
           </div>
         </div>
       )}
+
+      {importOpen ? (
+        <ClientsImportModal
+          onClose={() => setImportOpen(false)}
+          onImported={(nextClients) => {
+            setClients(nextClients);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
