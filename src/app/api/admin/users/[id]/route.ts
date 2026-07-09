@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 import { USERS_ADMIN_ROLES, requireApiRoles } from "@/lib/auth/api-access";
 import {
-  UserAdminValidationError,
+  readUserAdminWriteBody,
+  userAdminErrorResponse,
+} from "@/lib/api/user-admin-route";
+import {
   deactivateUserForAdmin,
   getUserForAdmin,
   updateUserForAdmin,
 } from "@/services/UserAdminService";
-import type { UserAdminUpdateInput } from "@/types/user-admin";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -22,12 +24,19 @@ export async function GET(_request: Request, context: RouteContext) {
   }
 
   const { id } = await context.params;
-  const user = await getUserForAdmin(id);
-  if (!user) {
-    return NextResponse.json({ ok: false, error: "Пользователь не найден" }, { status: 404 });
-  }
 
-  return NextResponse.json({ ok: true, user });
+  try {
+    const user = await getUserForAdmin(id);
+    if (!user) {
+      return NextResponse.json(
+        { ok: false, error: "Пользователь не найден" },
+        { status: 404 },
+      );
+    }
+    return NextResponse.json({ ok: true, user });
+  } catch (error) {
+    return userAdminErrorResponse(error);
+  }
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
@@ -37,16 +46,18 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
 
   const { id } = await context.params;
+  const body = await readUserAdminWriteBody(request);
+  if (body instanceof NextResponse) {
+    return body;
+  }
+
+  const { id: _bodyId, ...input } = body;
 
   try {
-    const body = (await request.json()) as UserAdminUpdateInput;
-    const user = await updateUserForAdmin(id, body);
+    const user = await updateUserForAdmin(id, input);
     return NextResponse.json({ ok: true, user });
   } catch (error) {
-    if (error instanceof UserAdminValidationError) {
-      return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
-    }
-    throw error;
+    return userAdminErrorResponse(error);
   }
 }
 
@@ -62,9 +73,6 @@ export async function DELETE(_request: Request, context: RouteContext) {
     const user = await deactivateUserForAdmin(id);
     return NextResponse.json({ ok: true, user });
   } catch (error) {
-    if (error instanceof UserAdminValidationError) {
-      return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
-    }
-    throw error;
+    return userAdminErrorResponse(error);
   }
 }

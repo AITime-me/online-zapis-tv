@@ -6,11 +6,18 @@ import {
   ASSIGNABLE_USER_ROLES,
   getUserRoleLabel,
 } from "@/lib/auth/role-catalog";
+import { readApiJsonResponse } from "@/lib/api/read-json-response";
 import type { UserAdminDto } from "@/types/user-admin";
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 type StatusFilter = "all" | "active" | "inactive";
 type RoleFilter = "all" | UserRole;
+
+type UserApiPayload = {
+  ok: boolean;
+  user?: UserAdminDto;
+  error?: string;
+};
 
 type UserFormState = {
   name: string;
@@ -67,6 +74,22 @@ function formatDateTime(value: string | null): string {
 
 function replaceUser(users: UserAdminDto[], updated: UserAdminDto): UserAdminDto[] {
   return users.map((item) => (item.id === updated.id ? updated : item));
+}
+
+async function requestUserMutation(
+  method: "POST" | "PATCH",
+  body: Record<string, unknown>,
+): Promise<UserAdminDto> {
+  const response = await fetch("/api/admin/users", {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const payload = await readApiJsonResponse<UserApiPayload>(response);
+  if (!response.ok || !payload.ok || !payload.user) {
+    throw new Error(payload.error ?? "Ошибка сохранения");
+  }
+  return payload.user;
 }
 
 export function UsersPanel({ initialUsers }: { initialUsers: UserAdminDto[] }) {
@@ -151,49 +174,34 @@ export function UsersPanel({ initialUsers }: { initialUsers: UserAdminDto[] }) {
 
     try {
       if (mode === "create") {
-        const response = await fetch("/api/admin/users", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: form.name,
-            email: form.email,
-            role: form.role,
-            phone: form.phone,
-            positionTitle: form.positionTitle,
-            notes: form.notes,
-            temporaryPassword: form.temporaryPassword,
-          }),
+        const user = await requestUserMutation("POST", {
+          name: form.name,
+          email: form.email,
+          role: form.role,
+          phone: form.phone,
+          positionTitle: form.positionTitle,
+          notes: form.notes,
+          temporaryPassword: form.temporaryPassword,
         });
-        const payload = await response.json();
-        if (!response.ok || !payload.ok || !payload.user) {
-          throw new Error(payload.error ?? "Ошибка создания");
-        }
-        setUsers((current) => [...current, payload.user]);
+        setUsers((current) => [...current, user]);
         closeForm();
       } else if (mode === "edit" && editingUser) {
-        const response = await fetch(`/api/admin/users/${editingUser.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: form.name,
-            email: form.email,
-            role: form.role,
-            phone: form.phone,
-            positionTitle: form.positionTitle,
-            notes: form.notes,
-            isActive: form.isActive,
-            ...(form.temporaryPassword.trim()
-              ? { temporaryPassword: form.temporaryPassword }
-              : {}),
-          }),
+        const user = await requestUserMutation("PATCH", {
+          id: editingUser.id,
+          name: form.name,
+          email: form.email,
+          role: form.role,
+          phone: form.phone,
+          positionTitle: form.positionTitle,
+          notes: form.notes,
+          isActive: form.isActive,
+          ...(form.temporaryPassword.trim()
+            ? { temporaryPassword: form.temporaryPassword }
+            : {}),
         });
-        const payload = await response.json();
-        if (!response.ok || !payload.ok || !payload.user) {
-          throw new Error(payload.error ?? "Ошибка сохранения");
-        }
-        setUsers((current) => replaceUser(current, payload.user));
-        setEditingUser(payload.user);
-        setForm((current) => ({ ...formFromUser(payload.user), temporaryPassword: "" }));
+        setUsers((current) => replaceUser(current, user));
+        setEditingUser(user);
+        setForm((current) => ({ ...formFromUser(user), temporaryPassword: "" }));
       }
 
       setStatus("saved");
@@ -210,19 +218,14 @@ export function UsersPanel({ initialUsers }: { initialUsers: UserAdminDto[] }) {
     setMessage(null);
 
     try {
-      const response = await fetch(`/api/admin/users/${user.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isActive: !user.isActive }),
+      const updatedUser = await requestUserMutation("PATCH", {
+        id: user.id,
+        isActive: !user.isActive,
       });
-      const payload = await response.json();
-      if (!response.ok || !payload.ok || !payload.user) {
-        throw new Error(payload.error ?? "Ошибка изменения статуса");
-      }
-      setUsers((current) => replaceUser(current, payload.user));
+      setUsers((current) => replaceUser(current, updatedUser));
       if (editingUser?.id === user.id) {
-        setEditingUser(payload.user);
-        setForm(formFromUser(payload.user));
+        setEditingUser(updatedUser);
+        setForm(formFromUser(updatedUser));
       }
       setStatus("saved");
       window.setTimeout(() => setStatus("idle"), 1500);
