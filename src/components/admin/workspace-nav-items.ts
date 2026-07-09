@@ -5,6 +5,7 @@ export type WorkspaceNavKey =
   | "masters"
   | "services"
   | "booking-requests"
+  | "clients"
   | "promotions"
   | "game"
   | "users"
@@ -44,6 +45,12 @@ export const WORKSPACE_NAV_ITEMS: WorkspaceNavItem[] = [
     section: "booking-requests",
     href: "/admin/booking-requests",
     label: "Заявки",
+  },
+  {
+    key: "clients",
+    section: "clients",
+    href: "/admin/clients",
+    label: "Клиенты",
   },
   {
     key: "promotions",

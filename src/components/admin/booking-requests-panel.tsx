@@ -1,9 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BookingRequestStatus } from "@prisma/client";
+import { readApiJsonResponse } from "@/lib/api/read-json-response";
 import { getStudioNow, normalizeDate } from "@/lib/datetime/date-layer";
+import { ClientTagsInlineEditor } from "@/components/admin/client-tags-inline-editor";
 import {
+  getBookingRequestClientLinkLabel,
   getBookingRequestStatusLabel,
   getBookingRequestTypeLabel,
   type BookingRequestDto,
@@ -38,7 +42,7 @@ const STATUS_FILTER_OPTIONS: { value: StatusFilter; label: string }[] = [
 ];
 
 const PREVIEW_LINE_COUNT = 3;
-const AUTO_REFRESH_INTERVAL_MS = 20_000;
+const AUTO_REFRESH_INTERVAL_MS = 15_000;
 
 function formatLastUpdated(value: Date): string {
   return new Intl.DateTimeFormat("ru-RU", {
@@ -137,6 +141,68 @@ function hasNonDefaultFilters(filters: RequestFilters): boolean {
   );
 }
 
+function ClientLinkBadge({
+  request,
+}: {
+  request: BookingRequestDto;
+}) {
+  const label = getBookingRequestClientLinkLabel(request.clientLinkStatus);
+  const tone =
+    request.clientLinkStatus === "linked"
+      ? "bg-emerald-50 text-emerald-800"
+      : request.clientLinkStatus === "new"
+        ? "bg-sky-50 text-sky-800"
+        : request.clientLinkStatus === "duplicate"
+          ? "bg-amber-50 text-amber-900"
+          : "bg-zinc-100 text-zinc-600";
+
+  return (
+    <span
+      className={`inline-flex rounded px-2 py-0.5 text-xs font-medium ${tone}`}
+    >
+      {label}
+    </span>
+  );
+}
+
+function ClientLinkCell({
+  request,
+  onClientTagsChange,
+  onTagInteractionChange,
+}: {
+  request: BookingRequestDto;
+  onClientTagsChange: (clientId: string, tags: string[]) => void;
+  onTagInteractionChange?: (busy: boolean) => void;
+}) {
+  const client = request.client;
+
+  return (
+    <div className="space-y-1">
+      <ClientLinkBadge request={request} />
+      {client && request.clientId ? (
+        <div className="space-y-1 text-xs text-zinc-600">
+          <div className="font-medium text-zinc-800">{client.fullName}</div>
+          {client.phone ? <div>{client.phone}</div> : null}
+          {client.email ? <div>{client.email}</div> : null}
+          <ClientTagsInlineEditor
+            clientId={request.clientId}
+            tags={client.tags}
+            onTagsChange={(tags) => onClientTagsChange(request.clientId!, tags)}
+            onInteractionChange={onTagInteractionChange}
+            compact
+          />
+          <Link
+            href={`/admin/clients?q=${encodeURIComponent(client.phone ?? client.fullName)}`}
+            className="inline-block font-medium text-[#1a73e8] hover:underline"
+          >
+            Открыть клиента
+          </Link>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function CommentCell({ comment }: { comment: string | null }) {
   const [expanded, setExpanded] = useState(false);
   const text = comment?.trim() || "—";
@@ -196,10 +262,14 @@ function RequestTable({
   requests,
   updatingId,
   onStatusChange,
+  onClientTagsChange,
+  onTagInteractionChange,
 }: {
   requests: BookingRequestDto[];
   updatingId: string | null;
   onStatusChange: (id: string, status: BookingRequestStatus) => void;
+  onClientTagsChange: (clientId: string, tags: string[]) => void;
+  onTagInteractionChange?: (busy: boolean) => void;
 }) {
   return (
     <div className="overflow-x-auto rounded border border-[#dadce0] bg-white">
@@ -211,6 +281,7 @@ function RequestTable({
             <th className="px-3 py-2 font-medium">Телефон</th>
             <th className="px-3 py-2 font-medium">Мастер</th>
             <th className="px-3 py-2 font-medium">Тип</th>
+            <th className="px-3 py-2 font-medium">Клиент CRM</th>
             <th className="px-3 py-2 font-medium">Комментарий</th>
             <th className="px-3 py-2 font-medium">Статус</th>
           </tr>
@@ -230,6 +301,13 @@ function RequestTable({
               </td>
               <td className="px-3 py-2 whitespace-nowrap">
                 {getBookingRequestTypeLabel(request.type)}
+              </td>
+              <td className="px-3 py-2">
+                <ClientLinkCell
+                  request={request}
+                  onClientTagsChange={onClientTagsChange}
+                  onTagInteractionChange={onTagInteractionChange}
+                />
               </td>
               <td className="px-3 py-2">
                 <CommentCell comment={request.comment} />
@@ -282,6 +360,28 @@ export function BookingRequestsPanel({
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState(() => new Date());
+  const [isFetching, setIsFetching] = useState(false);
+
+  const refreshInFlightRef = useRef(false);
+  const updatingIdRef = useRef<string | null>(null);
+  const tagInteractionCountRef = useRef(0);
+
+  useEffect(() => {
+    updatingIdRef.current = updatingId;
+  }, [updatingId]);
+
+  const handleTagInteractionChange = useCallback((busy: boolean) => {
+    tagInteractionCountRef.current = Math.max(
+      0,
+      tagInteractionCountRef.current + (busy ? 1 : -1),
+    );
+  }, []);
+
+  const isAutoRefreshPaused = useCallback(() => {
+    return (
+      updatingIdRef.current !== null || tagInteractionCountRef.current > 0
+    );
+  }, []);
 
   useEffect(() => {
     setRequests(initialRequests);
@@ -289,19 +389,29 @@ export function BookingRequestsPanel({
   }, [initialRequests]);
 
   const refreshRequests = useCallback(async (options?: { manual?: boolean }) => {
+    if (refreshInFlightRef.current) {
+      return;
+    }
+
+    if (!options?.manual && isAutoRefreshPaused()) {
+      return;
+    }
+
+    refreshInFlightRef.current = true;
     if (options?.manual) {
       setRefreshing(true);
     }
+    setIsFetching(true);
 
     try {
       const response = await fetch("/api/booking/requests", {
         cache: "no-store",
       });
-      const data = (await response.json()) as {
+      const data = await readApiJsonResponse<{
         ok?: boolean;
         requests?: BookingRequestDto[];
         error?: string;
-      };
+      }>(response);
 
       if (!response.ok || !data.ok || !data.requests) {
         throw new Error(data.error ?? "Не удалось обновить заявки");
@@ -313,11 +423,13 @@ export function BookingRequestsPanel({
     } catch {
       setRefreshError("Не удалось обновить заявки. Попробуйте ещё раз.");
     } finally {
+      refreshInFlightRef.current = false;
+      setIsFetching(false);
       if (options?.manual) {
         setRefreshing(false);
       }
     }
-  }, []);
+  }, [isAutoRefreshPaused]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -343,11 +455,11 @@ export function BookingRequestsPanel({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id, status }),
         });
-        const data = (await response.json()) as {
+        const data = await readApiJsonResponse<{
           ok?: boolean;
           request?: BookingRequestDto;
           error?: string;
-        };
+        }>(response);
         if (!response.ok || !data.ok || !data.request) {
           throw new Error(data.error ?? "Не удалось обновить статус");
         }
@@ -369,6 +481,19 @@ export function BookingRequestsPanel({
     },
     [],
   );
+
+  const handleClientTagsChange = useCallback((clientId: string, tags: string[]) => {
+    setRequests((current) =>
+      current.map((request) =>
+        request.client?.id === clientId
+          ? {
+              ...request,
+              client: request.client ? { ...request.client, tags } : null,
+            }
+          : request,
+      ),
+    );
+  }, []);
 
   const filteredByFields = useMemo(
     () => requests.filter((request) => matchesRequestFilters(request, filters)),
@@ -521,7 +646,7 @@ export function BookingRequestsPanel({
             <button
               type="button"
               onClick={() => void refreshRequests({ manual: true })}
-              disabled={refreshing}
+              disabled={refreshing || isFetching}
               className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-60"
             >
               {refreshing ? "Обновляем..." : "Обновить"}
@@ -536,6 +661,7 @@ export function BookingRequestsPanel({
           </div>
           <span className="text-xs text-zinc-500">
             Последнее обновление: {formatLastUpdated(lastUpdatedAt)}
+            {isFetching && !refreshing ? " · обновляем…" : null}
           </span>
         </div>
       </section>
@@ -551,6 +677,8 @@ export function BookingRequestsPanel({
               requests={activeRequests}
               updatingId={updatingId}
               onStatusChange={(id, status) => void updateStatus(id, status)}
+              onClientTagsChange={handleClientTagsChange}
+              onTagInteractionChange={handleTagInteractionChange}
             />
           ) : (
             <EmptyState message={activeEmptyMessage} />
@@ -577,6 +705,8 @@ export function BookingRequestsPanel({
                 requests={closedRequests}
                 updatingId={updatingId}
                 onStatusChange={(id, status) => void updateStatus(id, status)}
+                onClientTagsChange={handleClientTagsChange}
+                onTagInteractionChange={handleTagInteractionChange}
               />
             ) : (
               <EmptyState message={closedEmptyMessage} />

@@ -22,6 +22,7 @@ type CreateBookingRequestBody = {
   type?: BookingRequestType;
   consent?: boolean;
   gamePlayId?: string | null;
+  serviceName?: string | null;
 };
 
 export async function POST(request: Request) {
@@ -71,6 +72,8 @@ export async function POST(request: Request) {
       consent: body.consent === true,
       gamePlayId:
         typeof body.gamePlayId === "string" ? body.gamePlayId : body.gamePlayId ?? null,
+      serviceName:
+        typeof body.serviceName === "string" ? body.serviceName : body.serviceName ?? null,
     });
 
     return NextResponse.json({ ok: true, request: bookingRequest });

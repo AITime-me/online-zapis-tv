@@ -219,6 +219,7 @@ export function ProcedureGiftGame({ config }: { config: PublicGameConfig | null 
           type: "CONSULTATION_REQUEST",
           consent,
           gamePlayId: playId,
+          serviceName: gift?.name ?? null,
         }),
       });
       const payload = (await response.json()) as { ok?: boolean; error?: string };

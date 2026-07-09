@@ -101,6 +101,13 @@ enum PromotionStatus {
   ARCHIVED
 }
 
+enum ClientStatus {
+  NEW
+  ACTIVE
+  INACTIVE
+  BLOCKED
+}
+
 enum PromotionSource {
   MANUAL
   GAME
@@ -269,6 +276,7 @@ model Appointment {
   rescheduleRequestText     String?           @map("reschedule_request_text")
   rescheduleRequestedAt     DateTime?         @map("reschedule_requested_at") @db.Timestamptz
   createdByUserId           String?           @map("created_by_user_id") @db.Uuid
+  clientId                  String?           @map("client_id") @db.Uuid
   cancelledAt               DateTime?         @map("cancelled_at") @db.Timestamptz
   createdAt                 DateTime          @default(now()) @map("created_at") @db.Timestamptz
   updatedAt                 DateTime          @updatedAt @map("updated_at") @db.Timestamptz
@@ -276,9 +284,11 @@ model Appointment {
   master        Master   @relation(fields: [masterId], references: [id], onDelete: Restrict)
   service       Service? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
   createdByUser User?    @relation("AppointmentCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  client        Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
 
   @@index([masterId, startsAt, endsAt])
   @@index([startsAt])
+  @@index([clientId])
   @@map("appointments")
 }
 
@@ -367,12 +377,15 @@ model BookingRequest {
   status      BookingRequestStatus @default(NEW)
   source      BookingRequestSource @default(ONLINE)
   type        BookingRequestType
+  clientId    String?              @map("client_id") @db.Uuid
   createdAt   DateTime             @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime             @updatedAt @map("updated_at") @db.Timestamptz
 
   master Master? @relation(fields: [masterId], references: [id], onDelete: SetNull)
+  client Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
 
   @@index([status, createdAt(sort: Desc)])
+  @@index([clientId])
   @@map("booking_requests")
 }
 
@@ -589,4 +602,39 @@ model LegalDocument {
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   @@map("legal_documents")
+}
+
+/**
+ * Клиент студии — фундамент CRM.
+ * В будущем: заявки, записи, задачи, переписки, лояльность, аналитика.
+ */
+model Client {
+  id               String       @id @default(uuid()) @db.Uuid
+  fullName         String       @map("full_name")
+  phone            String?
+  normalizedPhone  String?      @map("normalized_phone")
+  email            String?
+  birthDate     DateTime?    @map("birth_date") @db.Date
+  gender        String?
+  source        String?
+  status        ClientStatus @default(NEW)
+  notes         String?
+  tags          String[]     @default([])
+  isArchived    Boolean      @default(false) @map("is_archived")
+  loyaltyLevel  String?      @map("loyalty_level")
+  bonusBalance  Int          @default(0) @map("bonus_balance")
+  totalSpent    Int          @default(0) @map("total_spent")
+  lastVisitAt   DateTime?    @map("last_visit_at") @db.Timestamptz
+  lastContactAt DateTime?    @map("last_contact_at") @db.Timestamptz
+  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime     @updatedAt @map("updated_at") @db.Timestamptz
+
+  appointments    Appointment[]
+  bookingRequests BookingRequest[]
+
+  @@index([status, isArchived])
+  @@index([phone])
+  @@index([normalizedPhone])
+  @@index([email])
+  @@map("clients")
 }

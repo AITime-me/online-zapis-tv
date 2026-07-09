@@ -228,6 +228,7 @@ export function ProcedureGiftGameVanilla({
           type: "CONSULTATION_REQUEST",
           consent,
           gamePlayId: playId,
+          serviceName: session.giftName,
         }),
       });
 

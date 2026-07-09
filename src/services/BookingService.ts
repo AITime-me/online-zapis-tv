@@ -14,6 +14,7 @@ import {
   AppointmentValidationError,
   createOnlineAppointment,
 } from "@/services/AppointmentService";
+import { resolveClientForLead } from "@/services/ClientLinkService";
 import { checkMasterIntervalAvailability } from "@/services/MasterAvailabilityService";
 import { blocksForDayWhere } from "@/services/ScheduleBlockService";
 import { resolveServiceTimingForMaster } from "@/services/ServiceTimingService";
@@ -107,6 +108,7 @@ async function loadServicePromoContext(serviceId: string) {
     where: { id: serviceId },
     select: {
       categoryId: true,
+      publicName: true,
       price: true,
       priceFrom: true,
       priceTo: true,
@@ -661,6 +663,13 @@ export async function createOnlineBooking(input: OnlineBookingInput) {
     timing.durationMinutes,
   );
 
+  const clientLink = await resolveClientForLead({
+    fullName: name,
+    phone,
+    source: "online_booking",
+    serviceName: serviceContext?.publicName ?? null,
+  });
+
   return createOnlineAppointment({
     masterId: input.masterId,
     dateKey: input.date,
@@ -671,5 +680,6 @@ export async function createOnlineBooking(input: OnlineBookingInput) {
     clientPhone: phone,
     comment: input.comment?.trim() || null,
     appliedPromotions,
+    clientId: clientLink.clientId,
   });
 }

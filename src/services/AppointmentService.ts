@@ -58,6 +58,7 @@ export type AppointmentWriteInput = {
   isBold?: boolean;
   isManualTimeOverride?: boolean;
   appliedPromotions?: AppliedPromotionRecord[] | null;
+  clientId?: string | null;
 };
 
 export type AppointmentDto = {
@@ -381,6 +382,9 @@ async function createAppointmentRecord(
         ? {
             appliedPromotions: input.appliedPromotions as Prisma.InputJsonValue,
           }
+        : {}),
+      ...(input.clientId
+        ? { client: { connect: { id: input.clientId } } }
         : {}),
       ...timingFields,
     };

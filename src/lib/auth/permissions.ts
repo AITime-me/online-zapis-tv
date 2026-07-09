@@ -17,6 +17,7 @@ export type AdminSection =
   | "masters"
   | "services"
   | "booking-requests"
+  | "clients"
   | "schedule"
   | "promotions"
   | "game"
@@ -29,6 +30,7 @@ export const MANAGER_ADMIN_PATH_PREFIXES = [
   "/admin/masters",
   "/admin/services",
   "/admin/booking-requests",
+  "/admin/clients",
   "/admin/emergency-export",
 ] as const;
 
@@ -65,6 +67,11 @@ export function canManageServices(role: UserRole): boolean {
 }
 
 export function canManageBookingRequests(role: UserRole): boolean {
+  return canManageOperationalEntities(role);
+}
+
+/** База клиентов CRM — владелец и менеджер. */
+export function canManageClientsAdmin(role: UserRole): boolean {
   return canManageOperationalEntities(role);
 }
 
@@ -133,6 +140,8 @@ export function canAccessAdminSection(
       return canManageServices(role);
     case "booking-requests":
       return canManageBookingRequests(role);
+    case "clients":
+      return canManageClientsAdmin(role);
     case "schedule":
       return canManageFullSchedule(role);
     case "promotions":

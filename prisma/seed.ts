@@ -1,6 +1,9 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { CLIENT_SEED_IDS } from "@/lib/clients/defaults";
+import { normalizePhone } from "@/lib/phone/normalize-phone";
 import { LEGAL_DOCUMENT_SEEDS } from "@/lib/legal-document/defaults";
+import { backfillClientNormalizedPhones } from "@/services/ClientLinkService";
 
 const prisma = new PrismaClient();
 
@@ -1207,6 +1210,88 @@ async function main() {
       },
     });
   }
+
+  const clientSeeds = [
+    {
+      id: CLIENT_SEED_IDS.anna,
+      fullName: "Анна Тестова",
+      phone: "+7 900 000-00-01",
+      email: "anna.test@example.local",
+      status: "ACTIVE" as const,
+      source: "Онлайн-запись",
+      tags: ["тест", "маникюр"],
+      loyaltyLevel: "базовый",
+      bonusBalance: 150,
+      totalSpent: 12000,
+      lastContactAt: studioDate(2026, 7, 1, 14, 30),
+    },
+    {
+      id: CLIENT_SEED_IDS.maria,
+      fullName: "Мария Проверка",
+      phone: "+7 900 000-00-02",
+      email: "maria.test@example.local",
+      status: "NEW" as const,
+      source: "Админка",
+      tags: ["тест"],
+      notes: "Тестовый клиент для проверки CRM-раздела.",
+      loyaltyLevel: null,
+      bonusBalance: 0,
+      totalSpent: 0,
+      lastContactAt: null,
+    },
+    {
+      id: CLIENT_SEED_IDS.game,
+      fullName: "Клиент из игры",
+      phone: "+7 900 000-00-03",
+      email: null,
+      status: "ACTIVE" as const,
+      source: "Игра",
+      tags: ["игра", "подарок"],
+      loyaltyLevel: "стартовый",
+      bonusBalance: 50,
+      totalSpent: 0,
+      lastContactAt: studioDate(2026, 6, 28, 18, 0),
+    },
+  ] as const;
+
+  for (const client of clientSeeds) {
+    const normalizedPhone = normalizePhone(client.phone);
+    await prisma.client.upsert({
+      where: { id: client.id },
+      update: {
+        fullName: client.fullName,
+        phone: client.phone,
+        normalizedPhone,
+        email: client.email,
+        status: client.status,
+        source: client.source,
+        tags: [...client.tags],
+        notes: "notes" in client ? client.notes : null,
+        loyaltyLevel: client.loyaltyLevel,
+        bonusBalance: client.bonusBalance,
+        totalSpent: client.totalSpent,
+        lastContactAt: client.lastContactAt,
+        isArchived: false,
+      },
+      create: {
+        id: client.id,
+        fullName: client.fullName,
+        phone: client.phone,
+        normalizedPhone,
+        email: client.email,
+        status: client.status,
+        source: client.source,
+        tags: [...client.tags],
+        notes: "notes" in client ? client.notes : null,
+        loyaltyLevel: client.loyaltyLevel,
+        bonusBalance: client.bonusBalance,
+        totalSpent: client.totalSpent,
+        lastContactAt: client.lastContactAt,
+      },
+    });
+  }
+
+  await backfillClientNormalizedPhones();
 }
 
 main()
