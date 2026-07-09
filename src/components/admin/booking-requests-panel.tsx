@@ -276,7 +276,7 @@ function ClientLinkCell({
             compact
           />
           <Link
-            href={`/admin/clients?q=${encodeURIComponent(client.phone ?? client.fullName)}`}
+            href={`/admin/clients/${request.clientId}`}
             className="inline-block font-medium text-[#1a73e8] hover:underline"
           >
             Открыть клиента

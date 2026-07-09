@@ -525,7 +525,12 @@ export function ClientsPanel({
                     >
                       <td className="px-4 py-3 font-medium text-zinc-900">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span>{client.fullName}</span>
+                          <Link
+                            href={`/admin/clients/${client.id}`}
+                            className="text-[#1a73e8] hover:underline"
+                          >
+                            {client.fullName}
+                          </Link>
                           {client.hasActiveDuplicate ? (
                             <Link
                               href={`/admin/clients/duplicates?q=${encodeURIComponent(client.phone ?? client.fullName)}`}
@@ -536,7 +541,7 @@ export function ClientsPanel({
                           ) : null}
                           {client.mergedIntoClientId ? (
                             <Link
-                              href={`/admin/clients?q=${encodeURIComponent(client.mergedIntoClientName ?? client.fullName)}`}
+                              href={`/admin/clients/${client.mergedIntoClientId}`}
                               className="inline-flex rounded bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-900 hover:bg-violet-100"
                             >
                               Объединён
@@ -547,7 +552,7 @@ export function ClientsPanel({
                           <span className="mt-1 block text-xs text-zinc-500">
                             Объединён в{" "}
                             <Link
-                              href={`/admin/clients?q=${encodeURIComponent(client.mergedIntoClientName)}`}
+                              href={`/admin/clients/${client.mergedIntoClientId}`}
                               className="font-medium text-[#1a73e8] hover:underline"
                             >
                               {client.mergedIntoClientName}
@@ -599,6 +604,12 @@ export function ClientsPanel({
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap gap-2">
+                          <Link
+                            href={`/admin/clients/${client.id}`}
+                            className="font-medium text-[#1a73e8] hover:underline"
+                          >
+                            Открыть
+                          </Link>
                           <button
                             type="button"
                             onClick={() => openEdit(client)}

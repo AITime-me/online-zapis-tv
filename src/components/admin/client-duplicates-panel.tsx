@@ -383,7 +383,18 @@ function DuplicateGroupCard({
             className="rounded border border-zinc-100 bg-zinc-50 px-3 py-3 text-sm"
           >
             <div className="flex flex-wrap items-center gap-2">
-              <p className="font-medium text-zinc-900">{client.fullName}</p>
+              <Link
+                href={`/admin/clients/${client.id}`}
+                className="font-medium text-[#1a73e8] hover:underline"
+              >
+                {client.fullName}
+              </Link>
+              <Link
+                href={`/admin/clients/${client.id}`}
+                className="text-xs font-medium text-zinc-600 hover:underline"
+              >
+                Открыть
+              </Link>
               {client.isArchived ? (
                 <span className="rounded bg-zinc-200 px-2 py-0.5 text-xs text-zinc-700">
                   Архив
