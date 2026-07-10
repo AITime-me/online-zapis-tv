@@ -10,13 +10,16 @@ import {
   getBookingRequestCommentPreview,
   getScheduleBookingRequestShortSourceLabel,
   getScheduleBookingRequestSourceLabel,
+  isFullScheduleBookingRequest,
   truncateScheduleText,
 } from "@/lib/schedule/booking-request-schedule";
 import {
   getBookingRequestStatusLabel,
   getBookingRequestTypeLabel,
-} from "@/services/BookingRequestService";
+} from "@/lib/booking-requests/booking-request-contract";
 import type { ScheduleDayBookingRequest } from "@/types/schedule";
+
+export type ScheduleBookingRequestDetailLevel = "full" | "sanitized";
 
 function formatRequestDateTime(value: string): string {
   const date = normalizeDate(value) ?? getStudioNow();
@@ -28,6 +31,86 @@ function formatRequestDateTime(value: string): string {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+export function ScheduleBookingRequestSafeDetailModal({
+  request,
+  onClose,
+}: {
+  request: ScheduleDayBookingRequest;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30 p-3 sm:p-4"
+      role="presentation"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-lg rounded-xl border border-[#dadce0] bg-white shadow-lg"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="booking-request-safe-detail-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="flex items-start justify-between gap-3 border-b border-[#dadce0] px-4 py-3">
+          <div>
+            <h2
+              id="booking-request-safe-detail-title"
+              className="text-base font-semibold text-[#124032]"
+            >
+              Заявка · {formatStudioTime(request.createdAt)}
+            </h2>
+            <p className="mt-1 text-xs text-zinc-500">
+              {formatRequestDateTime(request.createdAt)}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded px-2 py-1 text-sm text-zinc-500 hover:bg-zinc-100"
+          >
+            Закрыть
+          </button>
+        </header>
+
+        <div className="space-y-3 px-4 py-4 text-sm">
+          <div>
+            <div className="text-xs text-zinc-500">Клиент</div>
+            <div className="font-medium text-zinc-900">{request.clientName}</div>
+          </div>
+
+          <div>
+            <div className="text-xs text-zinc-500">Направление</div>
+            <div className="text-zinc-900">
+              {getScheduleBookingRequestSourceLabel(request)}
+            </div>
+            <div className="text-xs text-zinc-500">
+              {getBookingRequestTypeLabel(request.type)}
+              {request.masterName ? ` · ${request.masterName}` : ""}
+            </div>
+          </div>
+
+          <div>
+            <div className="text-xs text-zinc-500">Статус</div>
+            <div className="text-zinc-900">
+              {getBookingRequestStatusLabel(request.status)}
+            </div>
+          </div>
+        </div>
+
+        <footer className="flex justify-end border-t border-[#dadce0] px-4 py-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50"
+          >
+            Готово
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
 }
 
 export function ScheduleBookingRequestDetailModal({
@@ -44,6 +127,12 @@ export function ScheduleBookingRequestDetailModal({
   const [status, setStatus] = useState<BookingRequestStatus>(request.status);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  if (!isFullScheduleBookingRequest(request)) {
+    return (
+      <ScheduleBookingRequestSafeDetailModal request={request} onClose={onClose} />
+    );
+  }
 
   const handleStatusChange = async (nextStatus: BookingRequestStatus) => {
     setStatus(nextStatus);
@@ -204,37 +293,52 @@ export function ScheduleBookingRequestDetailModal({
 export function ScheduleBookingRequestCard({
   request,
   variant = "day",
+  detailLevel = "full",
   onOpen,
 }: {
   request: ScheduleDayBookingRequest;
   variant?: "month" | "day";
+  detailLevel?: ScheduleBookingRequestDetailLevel;
   onOpen: (request: ScheduleDayBookingRequest) => void;
 }) {
   if (variant === "month") {
     return (
-      <ScheduleBookingRequestMonthCard request={request} onOpen={onOpen} />
+      <ScheduleBookingRequestMonthCard
+        request={request}
+        detailLevel={detailLevel}
+        onOpen={onOpen}
+      />
     );
   }
 
   return (
-    <ScheduleBookingRequestDayCard request={request} onOpen={onOpen} />
+    <ScheduleBookingRequestDayCard
+      request={request}
+      detailLevel={detailLevel}
+      onOpen={onOpen}
+    />
   );
 }
 
 function ScheduleBookingRequestMonthCard({
   request,
+  detailLevel,
   onOpen,
 }: {
   request: ScheduleDayBookingRequest;
+  detailLevel: ScheduleBookingRequestDetailLevel;
   onOpen: (request: ScheduleDayBookingRequest) => void;
 }) {
   const shortSource = getScheduleBookingRequestShortSourceLabel(request);
-  const giftName = request.isFromGame
-    ? extractGiftFromBookingComment(request.comment)
-    : null;
-  const giftLine = giftName
-    ? `Подарок: ${truncateScheduleText(giftName, 22)}`
-    : null;
+  const giftLine =
+    detailLevel === "full" && isFullScheduleBookingRequest(request) && request.isFromGame
+      ? (() => {
+          const giftName = extractGiftFromBookingComment(request.comment);
+          return giftName
+            ? `Подарок: ${truncateScheduleText(giftName, 22)}`
+            : null;
+        })()
+      : null;
 
   return (
     <button
@@ -247,9 +351,7 @@ function ScheduleBookingRequestMonthCard({
           <span className="tabular-nums">{formatStudioTime(request.createdAt)}</span>
           <span className="ml-1">· Заявка</span>
         </div>
-        <div className="truncate">
-          {request.clientName} · {request.clientPhone}
-        </div>
+        <div className="truncate">{request.clientName}</div>
         <div className="truncate">{shortSource}</div>
         {giftLine ? (
           <div className="truncate text-[#2a5648]">{giftLine}</div>
@@ -261,17 +363,25 @@ function ScheduleBookingRequestMonthCard({
 
 function ScheduleBookingRequestDayCard({
   request,
+  detailLevel,
   onOpen,
 }: {
   request: ScheduleDayBookingRequest;
+  detailLevel: ScheduleBookingRequestDetailLevel;
   onOpen: (request: ScheduleDayBookingRequest) => void;
 }) {
   const sourceLabel = getScheduleBookingRequestSourceLabel(request);
-  const preview = getBookingRequestCommentPreview(request.comment, 1);
-  const giftName = request.isFromGame
-    ? extractGiftFromBookingComment(request.comment)
-    : null;
-  const giftLine = giftName ? `Подарок: ${giftName}` : null;
+  const preview =
+    detailLevel === "full" && isFullScheduleBookingRequest(request)
+      ? getBookingRequestCommentPreview(request.comment, 1)
+      : null;
+  const giftLine =
+    detailLevel === "full" && isFullScheduleBookingRequest(request) && request.isFromGame
+      ? (() => {
+          const giftName = extractGiftFromBookingComment(request.comment);
+          return giftName ? `Подарок: ${giftName}` : null;
+        })()
+      : null;
 
   return (
     <button
@@ -284,9 +394,7 @@ function ScheduleBookingRequestDayCard({
           <span className="tabular-nums">{formatStudioTime(request.createdAt)}</span>
           <span className="ml-1.5">· Заявка</span>
         </div>
-        <div className="mt-0.5 truncate">
-          {request.clientName} · {request.clientPhone}
-        </div>
+        <div className="mt-0.5 truncate">{request.clientName}</div>
         <div className="mt-0.5 truncate">{sourceLabel}</div>
         {giftLine ? (
           <div className="mt-0.5 truncate text-[#2a5648]">{giftLine}</div>

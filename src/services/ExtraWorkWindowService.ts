@@ -1,3 +1,4 @@
+import { NON_BLOCKING_APPOINTMENT_STATUSES } from "@/lib/schedule/non-blocking-appointment-statuses";
 import { prisma } from "@/lib/db";
 import {
   formatDateKeyInStudio,
@@ -92,7 +93,7 @@ export async function getCellEditorData(
       where: {
         masterId,
         startsAt: { gte: dayStart, lte: dayEnd },
-        status: { not: "CANCELLED" },
+        status: { notIn: [...NON_BLOCKING_APPOINTMENT_STATUSES] },
       },
       include: { service: true },
       orderBy: { startsAt: "asc" },

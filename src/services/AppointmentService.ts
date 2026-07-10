@@ -1,4 +1,10 @@
-import { AppointmentSource, AppointmentStatus, type Appointment, type Prisma } from "@prisma/client";
+import {
+  AppointmentSource,
+  AppointmentStatus,
+  type Appointment,
+  type Prisma,
+} from "@prisma/client";
+import { isBlockingAppointmentStatus } from "@/lib/schedule/non-blocking-appointment-statuses";
 import { prisma } from "@/lib/db";
 import { logServiceError } from "@/lib/errors/format-service-error";
 import { parseAppliedPromotions } from "@/lib/promo/applied-promotions";
@@ -454,7 +460,7 @@ export async function updateAppointment(
       input.isManualTimeOverride ?? existing.isManualTimeOverride,
   };
 
-  if (merged.status !== "CANCELLED") {
+  if (isBlockingAppointmentStatus(merged.status)) {
     await assertNoBlockingConflict(merged, id);
   }
 

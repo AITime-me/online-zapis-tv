@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireInternalApiAuth } from "@/lib/auth/api-access";
 import { normalizeMonthKey } from "@/lib/datetime/date-layer";
+import { scheduleLoadOptionsForRole } from "@/lib/schedule/schedule-load-options";
 import { getScheduleMonthData } from "@/services/ScheduleMonthService";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +15,10 @@ export async function GET(request: Request) {
 
   const monthParam = new URL(request.url).searchParams.get("month");
   const monthKey = normalizeMonthKey(monthParam);
-  const data = await getScheduleMonthData(monthKey);
+  const data = await getScheduleMonthData(
+    monthKey,
+    scheduleLoadOptionsForRole(authResult.user.role),
+  );
 
   return NextResponse.json({ ok: true, ...data });
 }

@@ -55,6 +55,7 @@ export function ServicesPanel({
   const [editingService, setEditingService] = useState<ServiceAdminRow | null>(
     null,
   );
+  const [isCreating, setIsCreating] = useState(false);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [masterFilter, setMasterFilter] = useState("all");
@@ -154,7 +155,13 @@ export function ServicesPanel({
   };
 
   const openEditForm = (service: ServiceAdminRow) => {
+    setIsCreating(false);
     setEditingService(service);
+  };
+
+  const openCreateForm = () => {
+    setEditingService(null);
+    setIsCreating(true);
   };
 
   const statusLabel =
@@ -251,10 +258,19 @@ export function ServicesPanel({
           </label>
         </div>
 
-        <div className="mt-3 flex items-center justify-between gap-3">
-          <p className="text-xs text-zinc-500">
-            Показано {filteredServices.length} из {services.length} услуг
-          </p>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="text-xs text-zinc-500">
+              Показано {filteredServices.length} из {services.length} услуг
+            </p>
+            <button
+              type="button"
+              onClick={openCreateForm}
+              className="rounded bg-[#1a73e8] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#1557b0]"
+            >
+              Добавить услугу
+            </button>
+          </div>
           {statusLabel ? (
             <p
               className={`text-xs ${
@@ -271,17 +287,27 @@ export function ServicesPanel({
         </div>
       </div>
 
-      {editingService ? (
+      {isCreating || editingService ? (
         <ServiceForm
-          service={editingService}
+          service={editingService ?? undefined}
+          mode={isCreating ? "create" : "edit"}
           categories={formCategories}
           masters={formMasters}
           onSaved={(updated) => {
-            setServices((current) => replaceService(current, updated));
-            setEditingService(updated);
+            if (isCreating) {
+              setServices((current) => [updated, ...current]);
+              setIsCreating(false);
+              setEditingService(updated);
+            } else {
+              setServices((current) => replaceService(current, updated));
+              setEditingService(updated);
+            }
             void refreshServices();
           }}
-          onCancel={() => setEditingService(null)}
+          onCancel={() => {
+            setIsCreating(false);
+            setEditingService(null);
+          }}
           onSaveStatus={handleSaveStatus}
         />
       ) : null}

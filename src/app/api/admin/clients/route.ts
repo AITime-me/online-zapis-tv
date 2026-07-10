@@ -7,24 +7,27 @@ import {
 import {
   archiveClientForAdmin,
   createClientForAdmin,
-  listClientsForAdmin,
+  listClientsForAdminPaginated,
   restoreClientForAdmin,
   updateClientForAdmin,
 } from "@/services/ClientAdminService";
+import { parseClientListQuery } from "@/lib/clients/list-query";
 import type { ClientAdminCreateInput } from "@/types/client-admin";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export async function GET() {
+export async function GET(request: Request) {
   const authResult = await requireApiRoles(CLIENTS_ADMIN_ROLES);
   if ("response" in authResult) {
     return authResult.response;
   }
 
   try {
-    const clients = await listClientsForAdmin();
-    return NextResponse.json({ ok: true, clients });
+    const { searchParams } = new URL(request.url);
+    const query = parseClientListQuery(searchParams);
+    const result = await listClientsForAdminPaginated(query);
+    return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     return clientAdminErrorResponse(error);
   }

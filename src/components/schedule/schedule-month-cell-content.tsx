@@ -3,6 +3,7 @@ import { formatStudioTimeRange } from "@/lib/datetime/date-layer";
 import {
   buildScheduleAppointmentDisplay,
   getScheduleAppointmentTitle,
+  isScheduleAppointmentBold,
 } from "@/lib/schedule/appointment-display";
 import { formatMonthAppointmentClientLine } from "@/components/schedule/appointment-detail-summary";
 
@@ -21,7 +22,7 @@ export function formatMonthCellLine(item: ScheduleMonthCellItem): {
     return {
       title: `${display.timeLabel} · ${getScheduleAppointmentTitle(item.serviceName)}`,
       subtitle: formatMonthAppointmentClientLine(item),
-      isBold: item.isBold,
+      isBold: isScheduleAppointmentBold(item),
       isBlock: false,
       isFullDayBlock: false,
       isExtraWork: false,

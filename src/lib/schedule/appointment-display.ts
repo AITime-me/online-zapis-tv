@@ -39,6 +39,13 @@ export type ScheduleAppointmentDisplay = {
   comment: string | null;
 };
 
+/** Подтверждённая клиентом запись выделяется жирным в расписании. */
+export function isScheduleAppointmentBold(
+  appointment: Pick<ScheduleDayAppointment, "isBold" | "statusCode">,
+): boolean {
+  return appointment.isBold || appointment.statusCode === "CONFIRMED";
+}
+
 export function buildScheduleAppointmentDisplay(
   appointment: Pick<
     ScheduleDayAppointment,

@@ -6,6 +6,7 @@ import { mapScheduleDayAppointment } from "@/lib/schedule/map-schedule-appointme
 import type { ScheduleDayData } from "@/types/schedule";
 import { listActiveBookingRequestsForRange } from "@/services/BookingRequestService";
 import {
+  resolveBookingRequestVisibility,
   SCHEDULE_LOAD_INTERNAL,
   type ScheduleLoadOptions,
 } from "@/lib/schedule/schedule-load-options";
@@ -16,8 +17,9 @@ export async function getScheduleDayData(
 ): Promise<ScheduleDayData> {
   const { dayStart, dayEnd, noteDate } = getStudioDayRangeFromDateKey(dateKey);
   const includeManagerColumn = options.includeManagerColumn ?? true;
+  const bookingRequestVisibility = resolveBookingRequestVisibility(options);
   const includeBookingRequests =
-    includeManagerColumn && (options.includeBookingRequests ?? true);
+    includeManagerColumn && bookingRequestVisibility !== "none";
 
   const [masters, managerNotes, extraWorkWindows, bookingRequests] = await Promise.all([
     prisma.master.findMany({
@@ -27,7 +29,6 @@ export async function getScheduleDayData(
         appointments: {
           where: {
             startsAt: { gte: dayStart, lte: dayEnd },
-            status: { not: "CANCELLED" },
           },
           include: { service: true },
           orderBy: { startsAt: "asc" },
@@ -60,7 +61,11 @@ export async function getScheduleDayData(
       orderBy: { startsAt: "asc" },
     }),
     includeBookingRequests
-      ? listActiveBookingRequestsForRange(dayStart, dayEnd)
+      ? listActiveBookingRequestsForRange(
+          dayStart,
+          dayEnd,
+          bookingRequestVisibility,
+        )
       : Promise.resolve([]),
   ]);
 

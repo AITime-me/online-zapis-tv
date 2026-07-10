@@ -16,7 +16,7 @@ import {
   type PhoneCountryCode,
   validateClientData,
 } from "@/lib/booking/client-validation";
-import type { BookingCatalogMaster } from "@/services/BookingService";
+import type { BookingCatalogMaster } from "@/lib/booking/catalog-types";
 import { BOOKING_REQUEST_SUCCESS_MESSAGE } from "@/lib/booking/request-success-copy";
 
 export type BookingRequestFormType =

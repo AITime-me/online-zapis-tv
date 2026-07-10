@@ -61,7 +61,11 @@ import type {
   BookingCatalogCategory,
   BookingCatalogMaster,
   BookingCatalogService,
-} from "@/services/BookingService";
+} from "@/lib/booking/catalog-types";
+import {
+  ONLINE_SERVICE_UNAVAILABLE_MESSAGE,
+  SERVICE_UNAVAILABLE_CODE,
+} from "@/lib/booking/public-booking-errors";
 
 type Step = "service" | "master" | "date" | "time" | "confirm" | "success";
 
@@ -93,6 +97,8 @@ const STEPS: { id: Step; label: string }[] = [
   { id: "confirm", label: "Подтверждение" },
 ];
 
+const CATALOG_REFRESH_INTERVAL_MS = 45_000;
+
 function stepIndex(step: Step): number {
   if (step === "success") {
     return STEPS.length;
@@ -123,6 +129,15 @@ function findCategoryIdForService(
     }
   }
   return null;
+}
+
+function isServiceInCatalog(
+  categories: BookingCatalogCategory[],
+  serviceId: string,
+): boolean {
+  return categories.some((category) =>
+    category.services.some((service) => service.id === serviceId),
+  );
 }
 
 export function BookingWizard() {
@@ -220,39 +235,100 @@ export function BookingWizard() {
     return !phoneErrors.phone;
   }, [confirmPhone, selection.name]);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadCatalog() {
+  const loadCatalog = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) {
       setLoading(true);
-      setError(null);
-      try {
-        const data = await fetchJson<{
-          categories: BookingCatalogCategory[];
-        }>("/api/booking/catalog");
-        if (!cancelled) {
-          setCategories(data.categories);
-        }
-      } catch (loadError) {
-        if (!cancelled) {
-          setError(
-            loadError instanceof Error
-              ? loadError.message
-              : "Не удалось загрузить услуги",
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+    }
+    setError(null);
+    try {
+      const data = await fetchJson<{
+        categories: BookingCatalogCategory[];
+      }>("/api/booking/catalog");
+      setCategories(data.categories);
+      return data.categories;
+    } catch (loadError) {
+      if (!options?.silent) {
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Не удалось загрузить услуги",
+        );
+      }
+      return null;
+    } finally {
+      if (!options?.silent) {
+        setLoading(false);
       }
     }
-
-    void loadCatalog();
-    return () => {
-      cancelled = true;
-    };
   }, []);
+
+  const clearUnavailableServiceSelection = useCallback(
+    (nextCategories: BookingCatalogCategory[], notifyIfRemoved: boolean) => {
+      const selectedServiceId = selection.service?.id;
+      if (!selectedServiceId) {
+        return false;
+      }
+      if (isServiceInCatalog(nextCategories, selectedServiceId)) {
+        return false;
+      }
+      setSelection((prev) => ({
+        ...prev,
+        service: null,
+        master: null,
+        dateKey: null,
+        startTime: null,
+      }));
+      if (notifyIfRemoved) {
+        setError(ONLINE_SERVICE_UNAVAILABLE_MESSAGE);
+        setStep("service");
+      }
+      return true;
+    },
+    [selection.service?.id],
+  );
+
+  const refreshCatalog = useCallback(
+    async (options?: { silent?: boolean; notifyIfRemoved?: boolean }) => {
+      const nextCategories = await loadCatalog({
+        silent: options?.silent ?? true,
+      });
+      if (!nextCategories) {
+        return;
+      }
+      clearUnavailableServiceSelection(
+        nextCategories,
+        options?.notifyIfRemoved ?? false,
+      );
+    },
+    [clearUnavailableServiceSelection, loadCatalog],
+  );
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        void refreshCatalog({ silent: true, notifyIfRemoved: true });
+      }
+    };
+    const onFocus = () => {
+      void refreshCatalog({ silent: true, notifyIfRemoved: true });
+    };
+
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onFocus);
+    const intervalId = window.setInterval(() => {
+      void refreshCatalog({ silent: true, notifyIfRemoved: true });
+    }, CATALOG_REFRESH_INTERVAL_MS);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onFocus);
+      window.clearInterval(intervalId);
+    };
+  }, [refreshCatalog]);
+
+  useEffect(() => {
+    void loadCatalog();
+  }, [loadCatalog]);
 
   const loadMasters = useCallback(async (serviceId: string) => {
     setStepLoading(true);
@@ -624,6 +700,9 @@ export function BookingWizard() {
         console.error("[booking/create] failed:", failurePayload);
         if (data.fieldErrors) {
           setClientFieldErrors(data.fieldErrors);
+        }
+        if (data.code === SERVICE_UNAVAILABLE_CODE) {
+          void refreshCatalog({ silent: true, notifyIfRemoved: true });
         }
         throw new Error(
           typeof data.error === "string" && data.error.trim()

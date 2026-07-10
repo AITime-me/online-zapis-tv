@@ -1,6 +1,7 @@
 import {
   buildScheduleAppointmentDisplay,
   formatScheduleClientName,
+  isScheduleAppointmentBold,
 } from "@/lib/schedule/appointment-display";
 import { formatDateKeyLabel } from "@/lib/datetime/date-layer";
 import type { ScheduleDayAppointment } from "@/types/schedule";
@@ -12,20 +13,21 @@ export function AppointmentScheduleSummary({
   appointment: ScheduleDayAppointment;
 }) {
   const display = buildScheduleAppointmentDisplay(appointment);
+  const isBold = isScheduleAppointmentBold(appointment);
 
   return (
     <div className="space-y-0.5">
       <div
         className={`tabular-nums text-zinc-900 ${
-          appointment.isBold ? "font-bold" : "font-semibold"
+          isBold ? "font-bold" : "font-semibold"
         }`}
       >
         {display.timeLabel}
       </div>
-      <div className={`text-zinc-900 ${appointment.isBold ? "font-bold" : ""}`}>
+      <div className={`text-zinc-900 ${isBold ? "font-bold" : ""}`}>
         {display.serviceTitle}
       </div>
-      <div className={`text-zinc-700 ${appointment.isBold ? "font-bold" : ""}`}>
+      <div className={`text-zinc-700 ${isBold ? "font-bold" : ""}`}>
         {display.clientLabel}
       </div>
     </div>

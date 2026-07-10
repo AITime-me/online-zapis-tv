@@ -20,7 +20,7 @@ import { getServiceCardPromotion } from "@/lib/booking/promotions";
 import type {
   BookingCatalogMaster,
   BookingCatalogService,
-} from "@/services/BookingService";
+} from "@/lib/booking/catalog-types";
 
 type MasterFirstView = "masters" | "services";
 

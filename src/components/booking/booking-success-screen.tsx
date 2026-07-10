@@ -23,7 +23,7 @@ import type { RulesEngineResult } from "@/lib/promo/rules-engine";
 import type {
   BookingCatalogMaster,
   BookingCatalogService,
-} from "@/services/BookingService";
+} from "@/lib/booking/catalog-types";
 
 type BookingSuccessScreenProps = {
   service: BookingCatalogService;

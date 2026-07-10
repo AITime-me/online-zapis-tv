@@ -76,8 +76,9 @@ export function EmergencyExportPanel({
     <div className="flex flex-col gap-6">
       <section className="rounded border border-zinc-200 p-4">
         <p className="text-sm text-zinc-600">
-          Сформируйте XLSX-файл расписания на сегодня для аварийного доступа
-          команды. Файл сохраняется локально в `exports/emergency`.
+          Сформируйте XLSX-файл расписания на три календарных дня: сегодня,
+          завтра и послезавтра (часовой пояс студии). Файл сохраняется локально
+          в `exports/emergency`. В названии файла указан диапазон дат.
         </p>
 
         <button
@@ -86,7 +87,7 @@ export function EmergencyExportPanel({
           disabled={loading}
           className="mt-4 rounded bg-zinc-900 px-4 py-2 text-white disabled:opacity-60"
         >
-          {loading ? "Формирование..." : "Сформировать выгрузку на сегодня"}
+          {loading ? "Формирование..." : "Сформировать выгрузку на 3 дня"}
         </button>
 
         {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}

@@ -59,6 +59,7 @@ export type QuickDayEditorData = {
 export type QuickManagerEditorData = {
   dateKey: string;
   notes: ScheduleDayManagerNote[];
+  bookingRequests: ScheduleDayBookingRequest[];
 };
 
 export type QuickOwnerEditorData = {

@@ -187,9 +187,10 @@ export async function getScheduleEditorOptions(
       workEnd: workHours.workEnd,
     },
     services,
-    statuses: Object.entries(APPOINTMENT_STATUS_LABELS)
-      .filter(([code]) => code !== "CANCELLED")
-      .map(([value, label]) => ({ value, label })),
+    statuses: Object.entries(APPOINTMENT_STATUS_LABELS).map(([value, label]) => ({
+      value,
+      label,
+    })),
     sources: Object.entries(APPOINTMENT_SOURCE_LABELS).map(
       ([value, label]) => ({ value, label }),
     ),

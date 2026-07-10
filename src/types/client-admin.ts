@@ -52,3 +52,10 @@ export type ClientAdminPatchBody = ClientAdminUpdateInput & {
   archive?: boolean;
   restore?: boolean;
 };
+
+export type ClientListResult = {
+  clients: ClientAdminDto[];
+  total: number;
+  page: number;
+  pageSize: number;
+};

@@ -1,46 +1,31 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { BookingRequestStatus } from "@prisma/client";
 import { readApiJsonResponse } from "@/lib/api/read-json-response";
 import { getStudioNow, normalizeDate } from "@/lib/datetime/date-layer";
-import { ClientTagsInlineEditor } from "@/components/admin/client-tags-inline-editor";
-import { ClientTagBadge } from "@/components/admin/client-tag-badges";
+import {
+  BOOKING_REQUEST_LIST_PAGE_SIZES,
+  BOOKING_REQUEST_STATUS_FILTER_OPTIONS,
+  DEFAULT_BOOKING_REQUEST_FILTERS,
+  DEFAULT_BOOKING_REQUEST_LIST_PAGE_SIZE,
+  buildBookingRequestsListUrl,
+  hasNonDefaultBookingRequestFilters,
+  type BookingRequestListFilters,
+} from "@/lib/booking-requests/list-contract";
 import {
   getBookingRequestClientLinkLabel,
   getBookingRequestStatusLabel,
   getBookingRequestTypeLabel,
   type BookingRequestDto,
-} from "@/services/BookingRequestService";
+  type BookingRequestListApiPayload,
+} from "@/lib/booking-requests/booking-request-contract";
+import { ClientTagsInlineEditor } from "@/components/admin/client-tags-inline-editor";
+import { ClientTagBadge } from "@/components/admin/client-tag-badges";
+import { ListPaginationBar } from "@/components/admin/list-pagination-bar";
 
 const STATUS_OPTIONS: BookingRequestStatus[] = ["NEW", "CONTACTED", "CLOSED"];
-
-type StatusFilter = "ACTIVE" | "NEW" | "CONTACTED" | "CLOSED" | "ALL";
-
-type RequestFilters = {
-  phone: string;
-  name: string;
-  dateFrom: string;
-  dateTo: string;
-  status: StatusFilter;
-};
-
-const DEFAULT_FILTERS: RequestFilters = {
-  phone: "",
-  name: "",
-  dateFrom: "",
-  dateTo: "",
-  status: "ACTIVE",
-};
-
-const STATUS_FILTER_OPTIONS: { value: StatusFilter; label: string }[] = [
-  { value: "ACTIVE", label: "Все активные" },
-  { value: "NEW", label: "Новая" },
-  { value: "CONTACTED", label: "Связались" },
-  { value: "CLOSED", label: "Закрыта" },
-  { value: "ALL", label: "Все" },
-];
 
 const PREVIEW_LINE_COUNT = 3;
 const AUTO_REFRESH_INTERVAL_MS = 15_000;
@@ -64,82 +49,11 @@ function formatCreatedAt(value: string): string {
   }).format(normalizeDate(value) ?? getStudioNow());
 }
 
-function toStudioDateKey(value: string): string | null {
-  const date = normalizeDate(value);
-  if (!date) return null;
-
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Yekaterinburg",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
-}
-
-function matchesRequestFilters(
-  request: BookingRequestDto,
-  filters: RequestFilters,
-): boolean {
-  const phoneQuery = filters.phone.trim();
-  if (phoneQuery && !request.clientPhone.includes(phoneQuery)) {
-    return false;
-  }
-
-  const nameQuery = filters.name.trim().toLowerCase();
-  if (nameQuery && !request.clientName.toLowerCase().includes(nameQuery)) {
-    return false;
-  }
-
-  const createdKey = toStudioDateKey(request.createdAt);
-  if (filters.dateFrom && createdKey && createdKey < filters.dateFrom) {
-    return false;
-  }
-  if (filters.dateTo && createdKey && createdKey > filters.dateTo) {
-    return false;
-  }
-
-  return true;
-}
-
-function matchesStatusFilter(
-  request: BookingRequestDto,
-  statusFilter: StatusFilter,
-  section: "active" | "closed",
-): boolean {
-  if (statusFilter === "CLOSED") {
-    return section === "closed" && request.status === "CLOSED";
-  }
-
-  if (statusFilter === "NEW") {
-    return section === "active" && request.status === "NEW";
-  }
-
-  if (statusFilter === "CONTACTED") {
-    return section === "active" && request.status === "CONTACTED";
-  }
-
-  if (statusFilter === "ACTIVE") {
-    if (section === "active") {
-      return request.status === "NEW" || request.status === "CONTACTED";
-    }
-    return request.status === "CLOSED";
-  }
-
-  // ALL
-  if (section === "active") {
-    return request.status === "NEW" || request.status === "CONTACTED";
-  }
-  return request.status === "CLOSED";
-}
-
-function hasNonDefaultFilters(filters: RequestFilters): boolean {
-  return (
-    filters.phone.trim().length > 0 ||
-    filters.name.trim().length > 0 ||
-    filters.dateFrom.length > 0 ||
-    filters.dateTo.length > 0 ||
-    filters.status !== "ACTIVE"
-  );
+function patchRequestInList(
+  requests: BookingRequestDto[],
+  updated: BookingRequestDto,
+): BookingRequestDto[] {
+  return requests.map((entry) => (entry.id === updated.id ? updated : entry));
 }
 
 function ClientLinkBadge({
@@ -157,10 +71,15 @@ function ClientLinkBadge({
             request.clientLinkStatus === "name_duplicate"
           ? "bg-amber-50 text-amber-900"
           : "bg-zinc-100 text-zinc-600";
+  const title =
+    request.clientLinkStatus === "none"
+      ? "У заявки есть контактные данные, но она пока не связана с карточкой клиента"
+      : undefined;
 
   return (
     <span
       className={`inline-flex rounded px-2 py-0.5 text-xs font-medium ${tone}`}
+      title={title}
     >
       {label}
     </span>
@@ -441,12 +360,34 @@ function EmptyState({ message }: { message: string }) {
 }
 
 export function BookingRequestsPanel({
-  initialRequests,
+  initialActiveRequests,
+  initialActiveTotal,
+  initialActivePage = 1,
+  initialActivePageSize = DEFAULT_BOOKING_REQUEST_LIST_PAGE_SIZE,
+  initialClosedTotal = 0,
 }: {
-  initialRequests: BookingRequestDto[];
+  initialActiveRequests: BookingRequestDto[];
+  initialActiveTotal: number;
+  initialActivePage?: number;
+  initialActivePageSize?: number;
+  initialClosedTotal?: number;
 }) {
-  const [requests, setRequests] = useState(initialRequests);
-  const [filters, setFilters] = useState<RequestFilters>(DEFAULT_FILTERS);
+  const [activeRequests, setActiveRequests] = useState(initialActiveRequests);
+  const [activeTotal, setActiveTotal] = useState(initialActiveTotal);
+  const [activePage, setActivePage] = useState(initialActivePage);
+  const [activePageSize, setActivePageSize] = useState(initialActivePageSize);
+  const [activeLoading, setActiveLoading] = useState(false);
+
+  const [closedRequests, setClosedRequests] = useState<BookingRequestDto[]>([]);
+  const [closedTotal, setClosedTotal] = useState(initialClosedTotal);
+  const [closedPage, setClosedPage] = useState(1);
+  const [closedPageSize, setClosedPageSize] = useState(
+    DEFAULT_BOOKING_REQUEST_LIST_PAGE_SIZE,
+  );
+  const [closedLoading, setClosedLoading] = useState(false);
+  const [closedLoaded, setClosedLoaded] = useState(false);
+
+  const [filters, setFilters] = useState<BookingRequestListFilters>(DEFAULT_BOOKING_REQUEST_FILTERS);
   const [closedExpanded, setClosedExpanded] = useState(false);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [clientActionId, setClientActionId] = useState<string | null>(null);
@@ -459,6 +400,36 @@ export function BookingRequestsPanel({
   const refreshInFlightRef = useRef(false);
   const updatingIdRef = useRef<string | null>(null);
   const tagInteractionCountRef = useRef(0);
+  const filtersRef = useRef(filters);
+  const activePageRef = useRef(activePage);
+  const activePageSizeRef = useRef(activePageSize);
+  const closedPageRef = useRef(closedPage);
+  const closedPageSizeRef = useRef(closedPageSize);
+  const closedExpandedRef = useRef(closedExpanded);
+
+  useEffect(() => {
+    filtersRef.current = filters;
+  }, [filters]);
+
+  useEffect(() => {
+    activePageRef.current = activePage;
+  }, [activePage]);
+
+  useEffect(() => {
+    activePageSizeRef.current = activePageSize;
+  }, [activePageSize]);
+
+  useEffect(() => {
+    closedPageRef.current = closedPage;
+  }, [closedPage]);
+
+  useEffect(() => {
+    closedPageSizeRef.current = closedPageSize;
+  }, [closedPageSize]);
+
+  useEffect(() => {
+    closedExpandedRef.current = closedExpanded;
+  }, [closedExpanded]);
 
   useEffect(() => {
     updatingIdRef.current = updatingId;
@@ -480,66 +451,246 @@ export function BookingRequestsPanel({
   }, [clientActionId]);
 
   useEffect(() => {
-    setRequests(initialRequests);
+    setActiveRequests(initialActiveRequests);
+    setActiveTotal(initialActiveTotal);
+    setActivePage(initialActivePage);
+    setActivePageSize(initialActivePageSize);
+    setClosedTotal(initialClosedTotal);
     setLastUpdatedAt(new Date());
-  }, [initialRequests]);
+  }, [
+    initialActiveRequests,
+    initialActiveTotal,
+    initialActivePage,
+    initialActivePageSize,
+    initialClosedTotal,
+  ]);
 
-  const refreshRequests = useCallback(async (options?: { manual?: boolean }) => {
-    if (refreshInFlightRef.current) {
-      return;
-    }
+  const activeTotalPages = Math.max(1, Math.ceil(activeTotal / activePageSize));
+  const closedTotalPages = Math.max(1, Math.ceil(closedTotal / closedPageSize));
 
-    if (!options?.manual && isAutoRefreshPaused()) {
-      return;
-    }
-
-    refreshInFlightRef.current = true;
-    if (options?.manual) {
-      setRefreshing(true);
-    }
-    setIsFetching(true);
-
-    try {
-      const response = await fetch("/api/booking/requests", {
-        cache: "no-store",
-      });
-      const data = await readApiJsonResponse<{
-        ok?: boolean;
-        requests?: BookingRequestDto[];
-        error?: string;
-      }>(response);
-
+  const fetchSection = useCallback(
+    async (
+      section: "active" | "closed",
+      targetPage: number,
+      pageSize: number,
+      currentFilters: BookingRequestListFilters,
+    ): Promise<BookingRequestListApiPayload> => {
+      const response = await fetch(
+        buildBookingRequestsListUrl({
+          section,
+          page: targetPage,
+          pageSize,
+          filters: currentFilters,
+        }),
+        { cache: "no-store" },
+      );
+      const data =
+        await readApiJsonResponse<BookingRequestListApiPayload>(response);
       if (!response.ok || !data.ok || !data.requests) {
-        throw new Error(data.error ?? "Не удалось обновить заявки");
+        throw new Error(data.error ?? "Не удалось загрузить заявки");
+      }
+      return data;
+    },
+    [],
+  );
+
+  const applyActivePayload = useCallback((payload: BookingRequestListApiPayload) => {
+    setActiveRequests(payload.requests ?? []);
+    setActivePage(payload.page ?? 1);
+    setActiveTotal(payload.activeTotal ?? payload.total ?? 0);
+    if (typeof payload.closedTotal === "number") {
+      setClosedTotal(payload.closedTotal);
+    }
+  }, []);
+
+  const applyClosedPayload = useCallback((payload: BookingRequestListApiPayload) => {
+    setClosedRequests(payload.requests ?? []);
+    setClosedPage(payload.page ?? 1);
+    setClosedTotal(payload.closedTotal ?? payload.total ?? 0);
+    setClosedLoaded(true);
+    if (typeof payload.activeTotal === "number") {
+      setActiveTotal(payload.activeTotal);
+    }
+  }, []);
+
+  const loadActivePage = useCallback(
+    async (targetPage: number, options?: { silent?: boolean }) => {
+      if (!options?.silent) {
+        setActiveLoading(true);
+      }
+      try {
+        const payload = await fetchSection(
+          "active",
+          targetPage,
+          activePageSizeRef.current,
+          filtersRef.current,
+        );
+        const totalPages = Math.max(
+          1,
+          Math.ceil((payload.total ?? 0) / activePageSizeRef.current),
+        );
+        const nextPage =
+          payload.requests && payload.requests.length === 0 && targetPage > 1
+            ? totalPages
+            : targetPage;
+        if (nextPage !== targetPage) {
+          const adjusted = await fetchSection(
+            "active",
+            nextPage,
+            activePageSizeRef.current,
+            filtersRef.current,
+          );
+          applyActivePayload(adjusted);
+          setActivePage(nextPage);
+        } else {
+          applyActivePayload(payload);
+          setActivePage(targetPage);
+        }
+        setLastUpdatedAt(new Date());
+        setRefreshError(null);
+      } catch {
+        setRefreshError("Не удалось обновить заявки. Попробуйте ещё раз.");
+      } finally {
+        if (!options?.silent) {
+          setActiveLoading(false);
+        }
+      }
+    },
+    [applyActivePayload, fetchSection],
+  );
+
+  const loadClosedPage = useCallback(
+    async (targetPage: number, options?: { silent?: boolean }) => {
+      if (!options?.silent) {
+        setClosedLoading(true);
+      }
+      try {
+        const payload = await fetchSection(
+          "closed",
+          targetPage,
+          closedPageSizeRef.current,
+          filtersRef.current,
+        );
+        const totalPages = Math.max(
+          1,
+          Math.ceil((payload.total ?? 0) / closedPageSizeRef.current),
+        );
+        const nextPage =
+          payload.requests && payload.requests.length === 0 && targetPage > 1
+            ? totalPages
+            : targetPage;
+        if (nextPage !== targetPage) {
+          const adjusted = await fetchSection(
+            "closed",
+            nextPage,
+            closedPageSizeRef.current,
+            filtersRef.current,
+          );
+          applyClosedPayload(adjusted);
+          setClosedPage(nextPage);
+        } else {
+          applyClosedPayload(payload);
+          setClosedPage(targetPage);
+        }
+        setLastUpdatedAt(new Date());
+        setRefreshError(null);
+      } catch {
+        setRefreshError("Не удалось обновить заявки. Попробуйте ещё раз.");
+      } finally {
+        if (!options?.silent) {
+          setClosedLoading(false);
+        }
+      }
+    },
+    [applyClosedPayload, fetchSection],
+  );
+
+  const refreshCurrentPages = useCallback(
+    async (options?: { manual?: boolean }) => {
+      if (refreshInFlightRef.current) {
+        return;
       }
 
-      setRequests(data.requests);
-      setLastUpdatedAt(new Date());
-      setRefreshError(null);
-    } catch {
-      setRefreshError("Не удалось обновить заявки. Попробуйте ещё раз.");
-    } finally {
-      refreshInFlightRef.current = false;
-      setIsFetching(false);
-      if (options?.manual) {
-        setRefreshing(false);
+      if (!options?.manual && isAutoRefreshPaused()) {
+        return;
       }
+
+      refreshInFlightRef.current = true;
+      if (options?.manual) {
+        setRefreshing(true);
+      }
+      setIsFetching(true);
+
+      try {
+        const tasks = [
+          loadActivePage(activePageRef.current, { silent: true }),
+        ];
+        if (closedExpandedRef.current) {
+          tasks.push(loadClosedPage(closedPageRef.current, { silent: true }));
+        }
+        await Promise.all(tasks);
+      } finally {
+        refreshInFlightRef.current = false;
+        setIsFetching(false);
+        if (options?.manual) {
+          setRefreshing(false);
+        }
+      }
+    },
+    [isAutoRefreshPaused, loadActivePage, loadClosedPage],
+  );
+
+  useEffect(() => {
+    void loadActivePage(activePage);
+  }, [
+    activePage,
+    activePageSize,
+    filters.phone,
+    filters.name,
+    filters.dateFrom,
+    filters.dateTo,
+    filters.status,
+    loadActivePage,
+  ]);
+
+  useEffect(() => {
+    if (!closedExpanded) {
+      return;
     }
-  }, [isAutoRefreshPaused]);
+    void loadClosedPage(closedPage);
+  }, [
+    closedExpanded,
+    closedPage,
+    closedPageSize,
+    filters.phone,
+    filters.name,
+    filters.dateFrom,
+    filters.dateTo,
+    filters.status,
+    loadClosedPage,
+  ]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
-      void refreshRequests();
+      void refreshCurrentPages();
     }, AUTO_REFRESH_INTERVAL_MS);
 
     return () => window.clearInterval(intervalId);
-  }, [refreshRequests]);
+  }, [refreshCurrentPages]);
 
   useEffect(() => {
     if (filters.status === "CLOSED") {
       setClosedExpanded(true);
     }
   }, [filters.status]);
+
+  const resetFilters = () => {
+    setFilters(DEFAULT_BOOKING_REQUEST_FILTERS);
+    setActivePage(1);
+    setClosedPage(1);
+    setClosedLoaded(false);
+    setClosedExpanded(false);
+  };
 
   const updateStatus = useCallback(
     async (id: string, status: BookingRequestStatus) => {
@@ -559,11 +710,13 @@ export function BookingRequestsPanel({
         if (!response.ok || !data.ok || !data.request) {
           throw new Error(data.error ?? "Не удалось обновить статус");
         }
-        setRequests((current) =>
-          current.map((entry) =>
-            entry.id === id ? data.request! : entry,
-          ),
-        );
+
+        await Promise.all([
+          loadActivePage(activePageRef.current, { silent: true }),
+          closedExpandedRef.current
+            ? loadClosedPage(closedPageRef.current, { silent: true })
+            : Promise.resolve(),
+        ]);
         setLastUpdatedAt(new Date());
       } catch (updateError) {
         setError(
@@ -575,20 +728,21 @@ export function BookingRequestsPanel({
         setUpdatingId(null);
       }
     },
-    [],
+    [loadActivePage, loadClosedPage],
   );
 
   const handleClientTagsChange = useCallback((clientId: string, tags: string[]) => {
-    setRequests((current) =>
-      current.map((request) =>
+    const patchTags = (requests: BookingRequestDto[]) =>
+      requests.map((request) =>
         request.client?.id === clientId
           ? {
               ...request,
               client: request.client ? { ...request.client, tags } : null,
             }
           : request,
-      ),
-    );
+      );
+    setActiveRequests((current) => patchTags(current));
+    setClosedRequests((current) => patchTags(current));
   }, []);
 
   const linkRequestToClient = useCallback(
@@ -609,8 +763,11 @@ export function BookingRequestsPanel({
         if (!response.ok || !data.ok || !data.request) {
           throw new Error(data.error ?? "Не удалось связать заявку с клиентом");
         }
-        setRequests((current) =>
-          current.map((entry) => (entry.id === requestId ? data.request! : entry)),
+        setActiveRequests((current) =>
+          patchRequestInList(current, data.request!),
+        );
+        setClosedRequests((current) =>
+          patchRequestInList(current, data.request!),
         );
         setLastUpdatedAt(new Date());
       } catch (linkError) {
@@ -643,8 +800,11 @@ export function BookingRequestsPanel({
       if (!response.ok || !data.ok || !data.request) {
         throw new Error(data.error ?? "Не удалось создать отдельного клиента");
       }
-      setRequests((current) =>
-        current.map((entry) => (entry.id === requestId ? data.request! : entry)),
+      setActiveRequests((current) =>
+        patchRequestInList(current, data.request!),
+      );
+      setClosedRequests((current) =>
+        patchRequestInList(current, data.request!),
       );
       setLastUpdatedAt(new Date());
     } catch (createError) {
@@ -658,34 +818,7 @@ export function BookingRequestsPanel({
     }
   }, []);
 
-  const filteredByFields = useMemo(
-    () => requests.filter((request) => matchesRequestFilters(request, filters)),
-    [requests, filters],
-  );
-
-  const activeRequests = useMemo(
-    () =>
-      filteredByFields.filter((request) =>
-        matchesStatusFilter(request, filters.status, "active"),
-      ),
-    [filteredByFields, filters.status],
-  );
-
-  const closedRequests = useMemo(
-    () =>
-      filteredByFields.filter((request) =>
-        matchesStatusFilter(request, filters.status, "closed"),
-      ),
-    [filteredByFields, filters.status],
-  );
-
-  const closedArchiveCount = useMemo(
-    () =>
-      filteredByFields.filter((request) => request.status === "CLOSED").length,
-    [filteredByFields],
-  );
-
-  const filtersApplied = hasNonDefaultFilters(filters);
+  const filtersApplied = hasNonDefaultBookingRequestFilters(filters);
   const showActiveSection = filters.status !== "CLOSED";
   const showClosedSection =
     filters.status === "CLOSED" ||
@@ -699,11 +832,6 @@ export function BookingRequestsPanel({
   const closedEmptyMessage = filtersApplied
     ? "По выбранным фильтрам заявок не найдено."
     : "Закрытых заявок пока нет.";
-
-  const resetFilters = () => {
-    setFilters(DEFAULT_FILTERS);
-    setClosedExpanded(false);
-  };
 
   return (
     <div className="space-y-4">
@@ -726,12 +854,14 @@ export function BookingRequestsPanel({
             <input
               type="text"
               value={filters.phone}
-              onChange={(event) =>
+              onChange={(event) => {
+                setActivePage(1);
+                setClosedPage(1);
                 setFilters((current) => ({
                   ...current,
                   phone: event.target.value,
-                }))
-              }
+                }));
+              }}
               placeholder="Телефон"
               className="w-full rounded border border-zinc-300 px-3 py-2 text-sm"
             />
@@ -742,12 +872,14 @@ export function BookingRequestsPanel({
             <input
               type="text"
               value={filters.name}
-              onChange={(event) =>
+              onChange={(event) => {
+                setActivePage(1);
+                setClosedPage(1);
                 setFilters((current) => ({
                   ...current,
                   name: event.target.value,
-                }))
-              }
+                }));
+              }}
               placeholder="Имя"
               className="w-full rounded border border-zinc-300 px-3 py-2 text-sm"
             />
@@ -758,12 +890,14 @@ export function BookingRequestsPanel({
             <input
               type="date"
               value={filters.dateFrom}
-              onChange={(event) =>
+              onChange={(event) => {
+                setActivePage(1);
+                setClosedPage(1);
                 setFilters((current) => ({
                   ...current,
                   dateFrom: event.target.value,
-                }))
-              }
+                }));
+              }}
               className="w-full rounded border border-zinc-300 px-3 py-2 text-sm"
             />
           </label>
@@ -773,12 +907,14 @@ export function BookingRequestsPanel({
             <input
               type="date"
               value={filters.dateTo}
-              onChange={(event) =>
+              onChange={(event) => {
+                setActivePage(1);
+                setClosedPage(1);
                 setFilters((current) => ({
                   ...current,
                   dateTo: event.target.value,
-                }))
-              }
+                }));
+              }}
               className="w-full rounded border border-zinc-300 px-3 py-2 text-sm"
             />
           </label>
@@ -787,15 +923,17 @@ export function BookingRequestsPanel({
             <span className="mb-1 block text-zinc-600">Статус</span>
             <select
               value={filters.status}
-              onChange={(event) =>
+              onChange={(event) => {
+                setActivePage(1);
+                setClosedPage(1);
                 setFilters((current) => ({
                   ...current,
-                  status: event.target.value as StatusFilter,
-                }))
-              }
+                  status: event.target.value as BookingRequestListFilters["status"],
+                }));
+              }}
               className="w-full rounded border border-zinc-300 px-3 py-2 text-sm"
             >
-              {STATUS_FILTER_OPTIONS.map((option) => (
+              {BOOKING_REQUEST_STATUS_FILTER_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
@@ -808,7 +946,7 @@ export function BookingRequestsPanel({
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => void refreshRequests({ manual: true })}
+              onClick={() => void refreshCurrentPages({ manual: true })}
               disabled={refreshing || isFetching}
               className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-60"
             >
@@ -833,23 +971,50 @@ export function BookingRequestsPanel({
         <section className="space-y-3">
           <h2 className="text-base font-semibold text-zinc-800">
             Активные заявки
-            {activeRequests.length > 0 ? ` (${activeRequests.length})` : ""}
+            {activeTotal > 0 ? ` (${activeTotal})` : ""}
           </h2>
           {activeRequests.length > 0 ? (
-            <RequestTable
-              requests={activeRequests}
-              updatingId={updatingId}
-              clientActionId={clientActionId}
-              onStatusChange={(id, status) => void updateStatus(id, status)}
-              onLinkClient={(requestId, clientId) =>
-                void linkRequestToClient(requestId, clientId)
-              }
-              onCreateSeparateClient={(requestId) =>
-                void createSeparateClient(requestId)
-              }
-              onClientTagsChange={handleClientTagsChange}
-              onTagInteractionChange={handleTagInteractionChange}
-            />
+            <>
+              <RequestTable
+                requests={activeRequests}
+                updatingId={updatingId}
+                clientActionId={clientActionId}
+                onStatusChange={(id, status) => void updateStatus(id, status)}
+                onLinkClient={(requestId, clientId) =>
+                  void linkRequestToClient(requestId, clientId)
+                }
+                onCreateSeparateClient={(requestId) =>
+                  void createSeparateClient(requestId)
+                }
+                onClientTagsChange={handleClientTagsChange}
+                onTagInteractionChange={handleTagInteractionChange}
+              />
+              <ListPaginationBar
+                shownCount={activeRequests.length}
+                total={activeTotal}
+                page={activePage}
+                totalPages={activeTotalPages}
+                pageSize={activePageSize}
+                pageSizes={BOOKING_REQUEST_LIST_PAGE_SIZES}
+                loading={activeLoading}
+                onPageSizeChange={(size) => {
+                  setActivePageSize(size);
+                  setActivePage(1);
+                }}
+                onPrevious={() =>
+                  setActivePage((current) => Math.max(1, current - 1))
+                }
+                onNext={() =>
+                  setActivePage((current) =>
+                    Math.min(activeTotalPages, current + 1),
+                  )
+                }
+              />
+            </>
+          ) : activeLoading ? (
+            <div className="rounded border border-[#dadce0] bg-white px-4 py-8 text-center text-sm text-zinc-500">
+              Загрузка…
+            </div>
           ) : (
             <EmptyState message={activeEmptyMessage} />
           )}
@@ -863,31 +1028,58 @@ export function BookingRequestsPanel({
             onClick={() => setClosedExpanded((current) => !current)}
             className="flex w-full items-center justify-between rounded border border-[#dadce0] bg-zinc-50 px-4 py-3 text-left text-sm font-semibold text-zinc-800 hover:bg-zinc-100"
           >
-            <span>
-              Закрытые заявки ({closedArchiveCount})
-            </span>
+            <span>Закрытые заявки ({closedTotal})</span>
             <span aria-hidden="true">{closedExpanded ? "▲" : "▼"}</span>
           </button>
 
           {closedExpanded ? (
-            closedRequests.length > 0 ? (
-              <RequestTable
-                requests={closedRequests}
-                updatingId={updatingId}
-                clientActionId={clientActionId}
-                onStatusChange={(id, status) => void updateStatus(id, status)}
-                onLinkClient={(requestId, clientId) =>
-                  void linkRequestToClient(requestId, clientId)
-                }
-                onCreateSeparateClient={(requestId) =>
-                  void createSeparateClient(requestId)
-                }
-                onClientTagsChange={handleClientTagsChange}
-                onTagInteractionChange={handleTagInteractionChange}
-              />
-            ) : (
+            closedRequests.length > 0 || closedLoading ? (
+              <div className="space-y-3">
+                {closedRequests.length > 0 ? (
+                  <RequestTable
+                    requests={closedRequests}
+                    updatingId={updatingId}
+                    clientActionId={clientActionId}
+                    onStatusChange={(id, status) => void updateStatus(id, status)}
+                    onLinkClient={(requestId, clientId) =>
+                      void linkRequestToClient(requestId, clientId)
+                    }
+                    onCreateSeparateClient={(requestId) =>
+                      void createSeparateClient(requestId)
+                    }
+                    onClientTagsChange={handleClientTagsChange}
+                    onTagInteractionChange={handleTagInteractionChange}
+                  />
+                ) : (
+                  <div className="rounded border border-[#dadce0] bg-white px-4 py-8 text-center text-sm text-zinc-500">
+                    Загрузка…
+                  </div>
+                )}
+                <ListPaginationBar
+                  shownCount={closedRequests.length}
+                  total={closedTotal}
+                  page={closedPage}
+                  totalPages={closedTotalPages}
+                  pageSize={closedPageSize}
+                  pageSizes={BOOKING_REQUEST_LIST_PAGE_SIZES}
+                  loading={closedLoading}
+                  onPageSizeChange={(size) => {
+                    setClosedPageSize(size);
+                    setClosedPage(1);
+                  }}
+                  onPrevious={() =>
+                    setClosedPage((current) => Math.max(1, current - 1))
+                  }
+                  onNext={() =>
+                    setClosedPage((current) =>
+                      Math.min(closedTotalPages, current + 1),
+                    )
+                  }
+                />
+              </div>
+            ) : closedLoaded ? (
               <EmptyState message={closedEmptyMessage} />
-            )
+            ) : null
           ) : null}
         </section>
       ) : null}

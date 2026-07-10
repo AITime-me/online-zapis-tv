@@ -32,7 +32,6 @@ export const MANAGER_ADMIN_PATH_PREFIXES = [
   "/admin/services",
   "/admin/booking-requests",
   "/admin/clients",
-  "/admin/bot",
   "/admin/emergency-export",
 ] as const;
 
@@ -42,6 +41,7 @@ export const OWNER_ONLY_ADMIN_PATH_PREFIXES = [
   "/admin/game",
   "/admin/users",
   "/admin/settings",
+  "/admin/bot",
 ] as const;
 
 export function canAccessInternalZone(role: UserRole): boolean {
@@ -77,9 +77,19 @@ export function canManageClientsAdmin(role: UserRole): boolean {
   return canManageOperationalEntities(role);
 }
 
-/** Заявки в колонке менеджера — только OWNER и MANAGER. */
-export function canViewManagerBookingRequests(role: UserRole): boolean {
+/** Полные заявки в колонке менеджера — OWNER и MANAGER. */
+export function canViewFullManagerBookingRequests(role: UserRole): boolean {
   return canManageOperationalEntities(role);
+}
+
+/** Заявки в колонке менеджера — OWNER и MANAGER (полные данные). */
+export function canViewManagerBookingRequests(role: UserRole): boolean {
+  return canViewFullManagerBookingRequests(role);
+}
+
+/** Санитизированные заявки в расписании — все внутренние роли, включая MASTER. */
+export function canViewSanitizedManagerBookingRequests(role: UserRole): boolean {
+  return canAccessInternalZone(role);
 }
 
 /** Акции и маркетинговые правила — только владелец. */
@@ -119,9 +129,9 @@ export function canAccessEmergencyExport(role: UserRole): boolean {
   return canManageOperationalEntities(role);
 }
 
-/** Настройки будущего бота — просмотр владельцу и менеджеру. */
+/** Настройки будущего бота — только владелец. */
 export function canViewBotAdmin(role: UserRole): boolean {
-  return canManageOperationalEntities(role);
+  return isOwner(role);
 }
 
 /** Изменение настроек бота — только владелец. */

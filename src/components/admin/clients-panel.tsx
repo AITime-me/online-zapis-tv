@@ -1,6 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import {
+  CLIENT_LIST_PAGE_SIZES,
+  DEFAULT_CLIENT_LIST_PAGE_SIZE,
+} from "@/lib/clients/list-contract";
 import Link from "next/link";
 import type { ClientStatus } from "@prisma/client";
 import { readApiJsonResponse } from "@/lib/api/read-json-response";
@@ -8,7 +12,6 @@ import {
   CLIENT_STATUSES,
   getClientStatusLabel,
 } from "@/lib/clients/defaults";
-import { clientMatchesTagSearch } from "@/lib/clients/tags";
 import { ClientTagsEditor } from "@/components/admin/client-tags-editor";
 import { ClientTagBadge } from "@/components/admin/client-tag-badges";
 import { ClientTagsInlineEditor } from "@/components/admin/client-tags-inline-editor";
@@ -137,14 +140,59 @@ async function requestClientMutation(
   return payload.client;
 }
 
+type ClientListApiPayload = {
+  ok: boolean;
+  clients?: ClientAdminDto[];
+  total?: number;
+  page?: number;
+  pageSize?: number;
+  error?: string;
+};
+
+function buildClientsListUrl({
+  page,
+  pageSize,
+  search,
+  statusFilter,
+  archiveFilter,
+}: {
+  page: number;
+  pageSize: number;
+  search: string;
+  statusFilter: StatusFilter;
+  archiveFilter: ArchiveFilter;
+}): string {
+  const params = new URLSearchParams();
+  params.set("page", String(page));
+  params.set("pageSize", String(pageSize));
+  const query = search.trim();
+  if (query) {
+    params.set("q", query);
+  }
+  if (statusFilter !== "all") {
+    params.set("status", statusFilter);
+  }
+  params.set("archive", archiveFilter);
+  return `/api/admin/clients?${params.toString()}`;
+}
+
 export function ClientsPanel({
   initialClients,
+  initialTotal,
+  initialPage = 1,
+  initialPageSize = DEFAULT_CLIENT_LIST_PAGE_SIZE,
   initialSearch = "",
 }: {
   initialClients: ClientAdminDto[];
+  initialTotal: number;
+  initialPage?: number;
+  initialPageSize?: number;
   initialSearch?: string;
 }) {
   const [clients, setClients] = useState(initialClients);
+  const [total, setTotal] = useState(initialTotal);
+  const [page, setPage] = useState(initialPage);
+  const [pageSize, setPageSize] = useState(initialPageSize);
   const [search, setSearch] = useState(initialSearch);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>("active");
@@ -157,32 +205,59 @@ export function ClientsPanel({
   const [exportError, setExportError] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [listLoading, setListLoading] = useState(false);
 
   useEffect(() => {
     setClients(initialClients);
-  }, [initialClients]);
+    setTotal(initialTotal);
+    setPage(initialPage);
+    setPageSize(initialPageSize);
+  }, [initialClients, initialTotal, initialPage, initialPageSize]);
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  const loadClients = useCallback(
+    async (targetPage: number) => {
+      setListLoading(true);
+      setExportError(null);
+      try {
+        const response = await fetch(
+          buildClientsListUrl({
+            page: targetPage,
+            pageSize,
+            search,
+            statusFilter,
+            archiveFilter,
+          }),
+          { cache: "no-store" },
+        );
+        const payload = await readApiJsonResponse<ClientListApiPayload>(response);
+        if (!response.ok || !payload.ok || !payload.clients) {
+          throw new Error(payload.error ?? "Не удалось загрузить клиентов");
+        }
+        setClients(payload.clients);
+        setTotal(payload.total ?? payload.clients.length);
+        setPage(payload.page ?? targetPage);
+        setPageSize(payload.pageSize ?? pageSize);
+      } catch (error) {
+        setExportError(
+          error instanceof Error
+            ? error.message
+            : "Не удалось загрузить клиентов",
+        );
+      } finally {
+        setListLoading(false);
+      }
+    },
+    [archiveFilter, pageSize, search, statusFilter],
+  );
 
   useEffect(() => {
-    if (initialSearch) {
-      setSearch(initialSearch);
-    }
-  }, [initialSearch]);
-
-  const filteredClients = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return clients.filter((client) => {
-      if (archiveFilter === "active" && client.isArchived) return false;
-      if (archiveFilter === "archived" && !client.isArchived) return false;
-      if (statusFilter !== "all" && client.status !== statusFilter) return false;
-      if (!query) return true;
-      const haystack = [client.fullName, client.phone ?? "", client.email ?? ""]
-        .join(" ")
-        .toLowerCase();
-      return (
-        haystack.includes(query) || clientMatchesTagSearch(client.tags, query)
-      );
-    });
-  }, [clients, search, statusFilter, archiveFilter]);
+    const timeoutId = window.setTimeout(() => {
+      void loadClients(page);
+    }, search.trim() ? 250 : 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [page, pageSize, search, statusFilter, archiveFilter, loadClients]);
 
   const statusLabel =
     status === "saving"
@@ -197,6 +272,7 @@ export function ClientsPanel({
     setSearch("");
     setStatusFilter("all");
     setArchiveFilter("active");
+    setPage(1);
   };
 
   const openCreate = () => {
@@ -231,7 +307,8 @@ export function ClientsPanel({
       const payload = buildPayload(form);
       if (mode === "create") {
         const client = await requestClientMutation("POST", payload);
-        setClients((current) => [client, ...current]);
+        await loadClients(1);
+        setPage(1);
         if (client.hasActiveDuplicate) {
           setMessage(
             "В базе уже есть клиент с таким ФИО. Проверьте возможный дубль.",
@@ -296,22 +373,7 @@ export function ClientsPanel({
     setRefreshing(true);
     setExportError(null);
     try {
-      const response = await fetch("/api/admin/clients", { cache: "no-store" });
-      const payload = await readApiJsonResponse<{
-        ok: boolean;
-        clients?: ClientAdminDto[];
-        error?: string;
-      }>(response);
-      if (!response.ok || !payload.ok || !payload.clients) {
-        throw new Error(payload.error ?? "Не удалось обновить список клиентов");
-      }
-      setClients(payload.clients);
-    } catch (error) {
-      setExportError(
-        error instanceof Error
-          ? error.message
-          : "Не удалось обновить список клиентов",
-      );
+      await loadClients(page);
     } finally {
       setRefreshing(false);
     }
@@ -411,7 +473,10 @@ export function ClientsPanel({
               <span className={labelClass}>Поиск</span>
               <input
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setPage(1);
+                }}
                 placeholder="Имя, телефон, email, тег"
                 className={fieldClass}
               />
@@ -420,9 +485,10 @@ export function ClientsPanel({
               <span className={labelClass}>Статус</span>
               <select
                 value={statusFilter}
-                onChange={(event) =>
-                  setStatusFilter(event.target.value as StatusFilter)
-                }
+                onChange={(event) => {
+                  setStatusFilter(event.target.value as StatusFilter);
+                  setPage(1);
+                }}
                 className={fieldClass}
               >
                 <option value="all">Все статусы</option>
@@ -437,9 +503,10 @@ export function ClientsPanel({
               <span className={labelClass}>Архив</span>
               <select
                 value={archiveFilter}
-                onChange={(event) =>
-                  setArchiveFilter(event.target.value as ArchiveFilter)
-                }
+                onChange={(event) => {
+                  setArchiveFilter(event.target.value as ArchiveFilter);
+                  setPage(1);
+                }}
                 className={fieldClass}
               >
                 <option value="active">Активные</option>
@@ -491,14 +558,16 @@ export function ClientsPanel({
             </span>
           </div>
 
-          {filteredClients.length === 0 ? (
+          {clients.length === 0 ? (
             <div className="rounded border border-dashed border-zinc-300 bg-white px-4 py-10 text-center text-sm text-zinc-600">
-              {clients.length === 0
-                ? "Клиентов пока нет. Добавьте первого клиента, чтобы начать вести базу."
-                : "По выбранным фильтрам клиентов не найдено."}
+              {listLoading
+                ? "Загрузка клиентов…"
+                : total === 0
+                  ? "Клиентов пока нет. Добавьте первого клиента, чтобы начать вести базу."
+                  : "По выбранным фильтрам клиентов не найдено."}
             </div>
           ) : (
-            <div className="overflow-x-auto rounded border border-zinc-200 bg-white">
+            <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white shadow-sm">
               <table className="min-w-full text-sm">
                 <thead className="border-b border-zinc-200 bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-500">
                   <tr>
@@ -515,15 +584,15 @@ export function ClientsPanel({
                     <th className="px-4 py-3 font-medium">Действия</th>
                   </tr>
                 </thead>
-                <tbody>
-                  {filteredClients.map((client) => (
+                <tbody className="divide-y divide-zinc-200">
+                  {clients.map((client) => (
                     <tr
                       key={client.id}
-                      className={`border-b border-zinc-100 last:border-0 ${
+                      className={`transition-colors hover:bg-zinc-50/80 ${
                         client.isArchived ? "opacity-70" : ""
                       }`}
                     >
-                      <td className="px-4 py-3 font-medium text-zinc-900">
+                      <td className="px-4 py-4 font-medium text-zinc-900">
                         <div className="flex flex-wrap items-center gap-2">
                           <Link
                             href={`/admin/clients/${client.id}`}
@@ -565,10 +634,10 @@ export function ClientsPanel({
                           </span>
                         ) : null}
                       </td>
-                      <td className="px-4 py-3 text-zinc-700">{client.phone ?? "—"}</td>
-                      <td className="px-4 py-3 text-zinc-700">{client.email ?? "—"}</td>
-                      <td className="px-4 py-3">{getClientStatusLabel(client.status)}</td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-4 text-zinc-700">{client.phone ?? "—"}</td>
+                      <td className="px-4 py-4 text-zinc-700">{client.email ?? "—"}</td>
+                      <td className="px-4 py-4">{getClientStatusLabel(client.status)}</td>
+                      <td className="px-4 py-4">
                         {client.mergedIntoClientId ? (
                           <div className="flex flex-wrap gap-1">
                             {client.tags.map((tag) => (
@@ -586,12 +655,12 @@ export function ClientsPanel({
                           />
                         )}
                       </td>
-                      <td className="px-4 py-3 text-zinc-600">{client.source ?? "—"}</td>
-                      <td className="px-4 py-3 text-zinc-600">
+                      <td className="px-4 py-4 text-zinc-600">{client.source ?? "—"}</td>
+                      <td className="px-4 py-4 text-zinc-600">
                         {client.loyaltyLevel ?? "—"}
                       </td>
-                      <td className="px-4 py-3 text-zinc-600">{client.bonusBalance}</td>
-                      <td className="px-4 py-3 text-zinc-600">
+                      <td className="px-4 py-4 text-zinc-600">{client.bonusBalance}</td>
+                      <td className="px-4 py-4 text-zinc-600">
                         <div>{client.bookingRequestCount}</div>
                         {client.lastBookingRequestAt ? (
                           <div className="text-xs text-zinc-500">
@@ -599,10 +668,10 @@ export function ClientsPanel({
                           </div>
                         ) : null}
                       </td>
-                      <td className="px-4 py-3 text-zinc-600">
+                      <td className="px-4 py-4 text-zinc-600">
                         {formatDateTime(client.lastContactAt)}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-4">
                         <div className="flex flex-wrap gap-2">
                           <Link
                             href={`/admin/clients/${client.id}`}
@@ -632,6 +701,51 @@ export function ClientsPanel({
               </table>
             </div>
           )}
+
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-zinc-200 bg-white px-4 py-3">
+            <p className="text-sm text-zinc-600">
+              {listLoading
+                ? "Загрузка…"
+                : `Показано ${clients.length} из ${total} · страница ${page} из ${totalPages}`}
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-2 text-sm text-zinc-700">
+                <span>На странице</span>
+                <select
+                  value={pageSize}
+                  onChange={(event) => {
+                    setPageSize(Number(event.target.value));
+                    setPage(1);
+                  }}
+                  className="rounded border border-zinc-300 bg-white px-2 py-1 text-sm"
+                >
+                  {CLIENT_LIST_PAGE_SIZES.map((size) => (
+                    <option key={size} value={size}>
+                      {size}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                onClick={() => setPage((current) => Math.max(1, current - 1))}
+                disabled={page <= 1 || listLoading}
+                className="rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-800 hover:bg-zinc-50 disabled:opacity-50"
+              >
+                Назад
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setPage((current) => Math.min(totalPages, current + 1))
+                }
+                disabled={page >= totalPages || listLoading}
+                className="rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-800 hover:bg-zinc-50 disabled:opacity-50"
+              >
+                Далее
+              </button>
+            </div>
+          </div>
         </>
       ) : (
         <div className="flex flex-col gap-4">
@@ -843,8 +957,9 @@ export function ClientsPanel({
       {importOpen ? (
         <ClientsImportModal
           onClose={() => setImportOpen(false)}
-          onImported={(nextClients) => {
-            setClients(nextClients);
+          onImported={(_nextClients) => {
+            void loadClients(1);
+            setPage(1);
           }}
         />
       ) : null}

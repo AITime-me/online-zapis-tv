@@ -19,6 +19,7 @@ import type {
 } from "@/types/schedule-month";
 import { listActiveBookingRequestsForRange } from "@/services/BookingRequestService";
 import {
+  resolveBookingRequestVisibility,
   SCHEDULE_LOAD_INTERNAL,
   type ScheduleLoadOptions,
 } from "@/lib/schedule/schedule-load-options";
@@ -73,8 +74,9 @@ export async function getScheduleMonthData(
   const { days, monthStart, monthEnd } =
     getStudioMonthRangeFromMonthKey(normalizedMonthKey);
   const includeManagerColumn = options.includeManagerColumn ?? true;
+  const bookingRequestVisibility = resolveBookingRequestVisibility(options);
   const includeBookingRequests =
-    includeManagerColumn && (options.includeBookingRequests ?? true);
+    includeManagerColumn && bookingRequestVisibility !== "none";
 
   const [masters, managerNotes, appointments, scheduleBlocks, extraWorkWindows, bookingRequests] =
     await Promise.all([
@@ -110,7 +112,6 @@ export async function getScheduleMonthData(
       prisma.appointment.findMany({
         where: {
           startsAt: { gte: monthStart, lte: monthEnd },
-          status: { not: "CANCELLED" },
         },
         include: { service: true },
         orderBy: { startsAt: "asc" },
@@ -141,7 +142,11 @@ export async function getScheduleMonthData(
         orderBy: { startsAt: "asc" },
       }),
       includeBookingRequests
-        ? listActiveBookingRequestsForRange(monthStart, monthEnd)
+        ? listActiveBookingRequestsForRange(
+            monthStart,
+            monthEnd,
+            bookingRequestVisibility,
+          )
         : Promise.resolve([]),
     ]);
 

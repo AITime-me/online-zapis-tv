@@ -2,14 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ScheduleDayData } from "@/types/schedule";
+import type { QuickManagerEditorData } from "@/types/schedule-month";
 import { SCHEDULE_AUTO_REFRESH_INTERVAL_MS } from "@/hooks/use-schedule-month-auto-refresh";
 import { ManagerColumn } from "@/components/schedule/manager-column";
 import { MasterColumn } from "@/components/schedule/master-column";
+import { QuickManagerEditor } from "@/components/schedule/quick-manager-editor";
 import { ScheduleDateSwitcher } from "@/components/schedule/schedule-date-switcher";
 import { ScheduleViewSwitcher } from "@/components/schedule/schedule-view-switcher";
 import { SCHEDULE_TABLE_SCROLL } from "@/components/schedule/schedule-month-table-styles";
 import {
   ScheduleBookingRequestDetailModal,
+  ScheduleBookingRequestSafeDetailModal,
 } from "@/components/schedule/schedule-booking-request-card";
 import type { ScheduleDayBookingRequest } from "@/types/schedule";
 
@@ -46,15 +49,21 @@ async function fetchScheduleDay(dateKey: string): Promise<ScheduleDayData | null
 export function ScheduleDayView({
   data: initialData,
   studioToday,
-  canEditRequests = true,
+  canEditRequests = false,
+  canEditManagerNotes = false,
+  canViewFullBookingRequestDetails = true,
 }: {
   data: ScheduleDayData;
   studioToday: string;
   canEditRequests?: boolean;
+  canEditManagerNotes?: boolean;
+  canViewFullBookingRequestDetails?: boolean;
 }) {
   const [data, setData] = useState(initialData);
   const [selectedRequest, setSelectedRequest] =
     useState<ScheduleDayBookingRequest | null>(null);
+  const [managerEditorData, setManagerEditorData] =
+    useState<QuickManagerEditorData | null>(null);
   const dateKeyRef = useRef(initialData.date);
 
   useEffect(() => {
@@ -86,6 +95,10 @@ export function ScheduleDayView({
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [refreshDay]);
+
+  const bookingRequestDetailLevel = canViewFullBookingRequestDetails
+    ? "full"
+    : "sanitized";
 
   const month = data.date.slice(0, 7);
 
@@ -124,9 +137,24 @@ export function ScheduleDayView({
         <div className="w-max">
           <div className="flex w-max border-b border-[#dadce0] bg-[#f8f9fa]">
             <div
-              className={`${COLUMN_CLASS} ${STICKY_MANAGER_HEADER} px-2 py-1.5 text-xs font-semibold text-zinc-800`}
+              className={`${COLUMN_CLASS} ${STICKY_MANAGER_HEADER} flex items-center justify-between gap-1 px-2 py-1.5 text-xs font-semibold text-zinc-800`}
             >
-              Менеджер / задачи
+              <span>Менеджер / задачи</span>
+              {canEditManagerNotes ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setManagerEditorData({
+                      dateKey: data.date,
+                      notes: data.managerNotes,
+                      bookingRequests: data.bookingRequests,
+                    })
+                  }
+                  className="rounded border border-zinc-300 bg-white px-1.5 py-0.5 text-[10px] font-medium text-zinc-700 hover:bg-zinc-50"
+                >
+                  Задачи
+                </button>
+              ) : null}
             </div>
             {data.masters.map((master) => (
               <div key={master.id} className={`${COLUMN_CLASS} px-2 py-1.5`}>
@@ -145,6 +173,7 @@ export function ScheduleDayView({
               notes={data.managerNotes}
               bookingRequests={data.bookingRequests}
               onRequestOpen={setSelectedRequest}
+              bookingRequestDetailLevel={bookingRequestDetailLevel}
               className={`${COLUMN_CLASS} ${STICKY_MANAGER_BODY}`}
             />
             {data.masters.map((master) => (
@@ -158,13 +187,33 @@ export function ScheduleDayView({
         </div>
       </div>
 
-      {selectedRequest ? (
-        <ScheduleBookingRequestDetailModal
-          request={selectedRequest}
-          canEditStatus={canEditRequests}
-          onClose={() => setSelectedRequest(null)}
-          onStatusUpdated={handleStatusUpdated}
+      {managerEditorData ? (
+        <QuickManagerEditor
+          data={managerEditorData}
+          canEdit={canEditManagerNotes}
+          bookingRequestDetailLevel={bookingRequestDetailLevel}
+          onClose={() => setManagerEditorData(null)}
+          onRequestOpen={(request) => {
+            setManagerEditorData(null);
+            setSelectedRequest(request);
+          }}
         />
+      ) : null}
+
+      {selectedRequest ? (
+        canViewFullBookingRequestDetails ? (
+          <ScheduleBookingRequestDetailModal
+            request={selectedRequest}
+            canEditStatus={canEditRequests}
+            onClose={() => setSelectedRequest(null)}
+            onStatusUpdated={handleStatusUpdated}
+          />
+        ) : (
+          <ScheduleBookingRequestSafeDetailModal
+            request={selectedRequest}
+            onClose={() => setSelectedRequest(null)}
+          />
+        )
       ) : null}
     </div>
   );

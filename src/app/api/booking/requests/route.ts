@@ -4,22 +4,26 @@ import {
   BOOKING_REQUESTS_ADMIN_ROLES,
   requireApiRoles,
 } from "@/lib/auth/api-access";
+import { parseBookingRequestListQuery } from "@/lib/booking-requests/list-query";
 import {
-  listBookingRequests,
+  listBookingRequestsPaginated,
   updateBookingRequestStatus,
 } from "@/services/BookingRequestService";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export async function GET() {
+export async function GET(request: Request) {
   const authResult = await requireApiRoles(BOOKING_REQUESTS_ADMIN_ROLES);
   if ("response" in authResult) {
     return authResult.response;
   }
 
-  const requests = await listBookingRequests();
-  return NextResponse.json({ ok: true, requests });
+  const { searchParams } = new URL(request.url);
+  const query = parseBookingRequestListQuery(searchParams);
+  const result = await listBookingRequestsPaginated(query);
+
+  return NextResponse.json({ ok: true, ...result });
 }
 
 export async function PATCH(request: Request) {

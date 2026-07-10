@@ -1,5 +1,11 @@
 import { Prisma } from "@prisma/client";
+import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
+import {
+  findOrCreateServiceCategoryByName,
+  listAllActiveServiceCategories,
+  ServiceCategoryValidationError,
+} from "@/services/ServiceCategoryService";
 import { SEED_TEST_SERVICE_IDS } from "@/lib/services/seed-test-service-ids";
 import type {
   ServiceAdminRow,
@@ -11,6 +17,13 @@ import type {
 export class ServiceAdminValidationError extends Error {}
 
 export class ServiceAdminNotFoundError extends Error {}
+
+function revalidatePublicBookingCatalog() {
+  revalidatePath("/api/booking/catalog");
+  revalidatePath("/api/booking/services");
+  revalidatePath("/api/booking/masters");
+  revalidatePath("/booking");
+}
 
 function decimalToNumber(value: Prisma.Decimal | null | undefined): number | null {
   if (value == null) {
@@ -79,8 +92,9 @@ function validateWriteInput(input: ServiceWriteInput, partial = false) {
       throw new ServiceAdminValidationError("Укажите публичное название");
     }
   }
-  if (!partial || input.categoryId !== undefined) {
-    if (!input.categoryId?.trim()) {
+  if (!partial || input.categoryId !== undefined || input.newCategoryName !== undefined) {
+    const hasNewCategory = Boolean(input.newCategoryName?.trim());
+    if (!hasNewCategory && !input.categoryId?.trim()) {
       throw new ServiceAdminValidationError("Выберите категорию");
     }
   }
@@ -118,6 +132,37 @@ function applyArchiveRules(input: {
     };
   }
   return input;
+}
+
+async function resolveCategoryId(
+  input: Pick<ServiceWriteInput, "categoryId" | "newCategoryName">,
+): Promise<string> {
+  const newCategoryName = input.newCategoryName?.trim();
+  if (newCategoryName) {
+    try {
+      return await findOrCreateServiceCategoryByName(newCategoryName);
+    } catch (error) {
+      if (error instanceof ServiceCategoryValidationError) {
+        throw new ServiceAdminValidationError(error.message);
+      }
+      throw error;
+    }
+  }
+
+  const categoryId = input.categoryId?.trim();
+  if (!categoryId) {
+    throw new ServiceAdminValidationError("Выберите категорию");
+  }
+
+  const category = await prisma.serviceCategory.findUnique({
+    where: { id: categoryId },
+    select: { id: true },
+  });
+  if (!category) {
+    throw new ServiceAdminValidationError("Категория не найдена");
+  }
+
+  return category.id;
 }
 
 async function syncMasterServices(
@@ -261,11 +306,9 @@ export async function listServiceFilterMasters(
   });
 }
 
-/** Категории для формы — только те, что используются видимыми услугами. */
-export async function listServiceFormCategories(
-  services: ServiceAdminRow[],
-): Promise<ServiceCategoryOption[]> {
-  return listServiceFilterCategories(services);
+/** Категории для формы — все активные категории студии. */
+export async function listServiceFormCategories(): Promise<ServiceCategoryOption[]> {
+  return listAllActiveServiceCategories();
 }
 
 /** Мастера для формы — активные, без seed-тестовых. */
@@ -293,7 +336,7 @@ export async function getServiceAdminPageData() {
     await Promise.all([
       listServiceFilterCategories(services),
       listServiceFilterMasters(services),
-      listServiceFormCategories(services),
+      listServiceFormCategories(),
       listServiceFormMasters(),
     ]);
 
@@ -354,13 +397,7 @@ export async function createService(
 ): Promise<ServiceAdminRow> {
   validateWriteInput(input);
 
-  const category = await prisma.serviceCategory.findUnique({
-    where: { id: input.categoryId },
-    select: { id: true },
-  });
-  if (!category) {
-    throw new ServiceAdminValidationError("Категория не найдена");
-  }
+  const categoryId = await resolveCategoryId(input);
 
   const flags = applyArchiveRules({
     isActive: input.isActive ?? true,
@@ -370,7 +407,7 @@ export async function createService(
 
   const service = await prisma.service.create({
     data: {
-      categoryId: input.categoryId,
+      categoryId,
       internalName: input.internalName.trim(),
       publicName: input.publicName.trim(),
       clientDescription: input.clientDescription?.trim() || null,
@@ -395,6 +432,7 @@ export async function createService(
   if (!created) {
     throw new ServiceAdminNotFoundError("Услуга не найдена после создания");
   }
+  revalidatePublicBookingCatalog();
   return created;
 }
 
@@ -409,14 +447,12 @@ export async function updateService(
 
   validateWriteInput(input as ServiceWriteInput, true);
 
-  if (input.categoryId) {
-    const category = await prisma.serviceCategory.findUnique({
-      where: { id: input.categoryId },
-      select: { id: true },
+  let nextCategoryId: string | undefined;
+  if (input.categoryId !== undefined || input.newCategoryName !== undefined) {
+    nextCategoryId = await resolveCategoryId({
+      categoryId: input.categoryId,
+      newCategoryName: input.newCategoryName,
     });
-    if (!category) {
-      throw new ServiceAdminValidationError("Категория не найдена");
-    }
   }
 
   const nextFlags = applyArchiveRules({
@@ -438,9 +474,7 @@ export async function updateService(
       ...(input.clientDescription !== undefined
         ? { clientDescription: input.clientDescription?.trim() || null }
         : {}),
-      ...(input.categoryId !== undefined
-        ? { categoryId: input.categoryId }
-        : {}),
+      ...(nextCategoryId !== undefined ? { categoryId: nextCategoryId } : {}),
       ...(input.priceFrom !== undefined ? { priceFrom: input.priceFrom } : {}),
       ...(input.priceTo !== undefined ? { priceTo: input.priceTo } : {}),
       ...(input.durationMinutes !== undefined
@@ -478,5 +512,6 @@ export async function updateService(
   if (!updated) {
     throw new ServiceAdminNotFoundError("Услуга не найдена после обновления");
   }
+  revalidatePublicBookingCatalog();
   return updated;
 }

@@ -80,6 +80,7 @@ function mapPromotion(row: PromotionRow): PromotionDto {
     imageUrl: row.imageUrl,
     priority: row.priority,
     source: promotionSourceFromDb(row.source),
+    showOnHomepage: row.showOnHomepage,
     serviceIds: row.services.map((link) => link.serviceId),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -268,6 +269,9 @@ function buildWriteData(input: PromotionWriteInput): Prisma.PromotionUpdateInput
   if (input.source !== undefined) {
     data.source = promotionSourceToDb(input.source);
   }
+  if (input.showOnHomepage !== undefined) {
+    data.showOnHomepage = input.showOnHomepage;
+  }
 
   applyDiscountFields(data, input);
   validateDiscountCombination(input.discountValue, input.discountUnit);
@@ -374,6 +378,7 @@ export async function createPromotion(
       priority:
         input.priority !== undefined ? Math.round(input.priority) : 100,
       source: promotionSourceToDb(source),
+      showOnHomepage: input.showOnHomepage ?? false,
     },
     include: promotionInclude,
   });
@@ -509,6 +514,26 @@ export async function listActivePromotions(): Promise<PromotionDto[]> {
 
   const rows = await prisma.promotion.findMany({
     where: {
+      status: "ACTIVE",
+      isActive: true,
+      AND: [
+        { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
+        { OR: [{ endsAt: null }, { endsAt: { gte: now } }] },
+      ],
+    },
+    include: promotionInclude,
+    orderBy: [{ priority: "asc" }, { createdAt: "desc" }],
+  });
+
+  return rows.map(mapPromotion);
+}
+
+export async function listHomepagePromotions(): Promise<PromotionDto[]> {
+  const now = getStudioNow();
+
+  const rows = await prisma.promotion.findMany({
+    where: {
+      showOnHomepage: true,
       status: "ACTIVE",
       isActive: true,
       AND: [

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import type { ManagerNoteType } from "@prisma/client";
 import { useRouter } from "next/navigation";
 import { formatDateKeyLabel } from "@/lib/datetime/date-layer";
@@ -33,11 +33,13 @@ export function QuickNotesEditor({
   config,
   canEdit,
   onClose,
+  headerExtra,
 }: {
   data: QuickNotesEditorData;
   config: QuickNotesEditorConfig;
   canEdit: boolean;
   onClose: () => void;
+  headerExtra?: ReactNode;
 }) {
   const router = useRouter();
   const [data, setData] = useState(initialData);
@@ -120,6 +122,8 @@ export function QuickNotesEditor({
             ×
           </button>
         </div>
+
+        {headerExtra}
 
         <div className="p-3">
           {canEdit ? (

@@ -7,8 +7,14 @@ import type {
   ClientAdminCreateInput,
   ClientAdminDto,
   ClientAdminUpdateInput,
+  ClientListResult,
 } from "@/types/client-admin";
 import type { Client, ClientStatus, Prisma } from "@prisma/client";
+import {
+  buildClientListWhere,
+  DEFAULT_CLIENT_LIST_PAGE_SIZE,
+  type ClientListQuery,
+} from "@/lib/clients/list-query";
 
 export class ClientAdminValidationError extends Error {}
 
@@ -176,7 +182,8 @@ function buildUpdateData(input: ClientAdminUpdateInput): Prisma.ClientUpdateInpu
   if (input.phone !== undefined) {
     const phone = normalizeOptionalText(input.phone);
     data.phone = phone;
-    data.normalizedPhone = normalizePhone(phone);
+    const normalizedPhone = normalizePhone(phone);
+    data.normalizedPhone = normalizedPhone;
   }
   if (input.email !== undefined) {
     data.email = validateEmail(input.email);
@@ -222,17 +229,42 @@ function buildUpdateData(input: ClientAdminUpdateInput): Prisma.ClientUpdateInpu
 }
 
 export async function listClientsForAdmin(): Promise<ClientAdminDto[]> {
-  const [rows, activeDuplicateIds] = await Promise.all([
+  const result = await listClientsForAdminPaginated({
+    page: 1,
+    pageSize: 10_000,
+    archive: "all",
+    status: "all",
+  });
+  return result.clients;
+}
+
+export async function listClientsForAdminPaginated(
+  query: ClientListQuery,
+): Promise<ClientListResult> {
+  const page = Math.max(1, query.page ?? 1);
+  const pageSize = query.pageSize ?? DEFAULT_CLIENT_LIST_PAGE_SIZE;
+  const where = await buildClientListWhere(query);
+
+  const [rows, total, activeDuplicateIds] = await Promise.all([
     prisma.client.findMany({
+      where,
       select: clientListSelect,
       orderBy: [{ isArchived: "asc" }, { updatedAt: "desc" }],
+      skip: (page - 1) * pageSize,
+      take: pageSize,
     }),
+    prisma.client.count({ where }),
     getActiveDuplicateClientIdSet(),
   ]);
 
-  return rows.map((row) =>
-    mapClientListRow(row, activeDuplicateIds.has(row.id)),
-  );
+  return {
+    clients: rows.map((row) =>
+      mapClientListRow(row, activeDuplicateIds.has(row.id)),
+    ),
+    total,
+    page,
+    pageSize,
+  };
 }
 
 export async function getClientForAdmin(id: string): Promise<ClientAdminDto | null> {
@@ -290,6 +322,26 @@ export async function updateClientForAdmin(
   }
 
   const data = buildUpdateData(input);
+
+  if (input.phone !== undefined) {
+    const normalizedPhone = normalizePhone(normalizeOptionalText(input.phone));
+    if (normalizedPhone) {
+      const duplicate = await prisma.client.findFirst({
+        where: {
+          normalizedPhone,
+          id: { not: id },
+          mergedIntoClientId: null,
+        },
+        select: { id: true, fullName: true },
+      });
+      if (duplicate) {
+        throw new ClientAdminValidationError(
+          `Клиент с таким телефоном уже есть: ${duplicate.fullName}`,
+        );
+      }
+    }
+  }
+
   const [updated, activeDuplicateIds] = await Promise.all([
     prisma.client.update({
       where: { id },

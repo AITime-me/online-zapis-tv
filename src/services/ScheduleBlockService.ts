@@ -1,4 +1,5 @@
 import type { AppointmentStatus, ScheduleBlockType } from "@prisma/client";
+import { NON_BLOCKING_APPOINTMENT_STATUSES } from "@/lib/schedule/non-blocking-appointment-statuses";
 import { prisma } from "@/lib/db";
 import {
   formatDateKeyInStudio,
@@ -86,7 +87,7 @@ async function assertNoAppointmentOverlap(
   const appointments = await prisma.appointment.findMany({
     where: {
       masterId,
-      status: { not: "CANCELLED" },
+      status: { notIn: [...NON_BLOCKING_APPOINTMENT_STATUSES] },
       startsAt: { gte: dayStart, lte: dayEnd },
     },
     select: { id: true, startsAt: true, endsAt: true },
@@ -115,7 +116,7 @@ async function assertNoActiveAppointmentsOnDay(
   const activeCount = await prisma.appointment.count({
     where: {
       masterId,
-      status: { not: "CANCELLED" },
+      status: { notIn: [...NON_BLOCKING_APPOINTMENT_STATUSES] },
       startsAt: { gte: dayStart, lte: dayEnd },
     },
   });

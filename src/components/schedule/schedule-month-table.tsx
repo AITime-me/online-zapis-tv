@@ -8,6 +8,7 @@ import type {
 } from "@/types/schedule-month";
 import type { ScheduleDayBookingRequest } from "@/types/schedule";
 import { ScheduleMonthRow } from "@/components/schedule/schedule-month-row";
+import type { ScheduleBookingRequestDetailLevel } from "@/components/schedule/schedule-booking-request-card";
 import {
   BORDER_DATE,
   BORDER_INNER,
@@ -29,6 +30,8 @@ export function ScheduleMonthTable({
   onRequestOpen,
   readOnly = false,
   showManagerColumn = true,
+  canEditManagerNotes = true,
+  bookingRequestDetailLevel = "full",
 }: {
   data: ScheduleMonthData;
   onCellOpen?: (editorData: QuickDayEditorData) => void;
@@ -37,6 +40,8 @@ export function ScheduleMonthTable({
   onRequestOpen?: (request: ScheduleDayBookingRequest) => void;
   readOnly?: boolean;
   showManagerColumn?: boolean;
+  canEditManagerNotes?: boolean;
+  bookingRequestDetailLevel?: ScheduleBookingRequestDetailLevel;
 }) {
   return (
     <div
@@ -93,6 +98,8 @@ export function ScheduleMonthTable({
               onRequestOpen={onRequestOpen}
               readOnly={readOnly}
               showManagerColumn={showManagerColumn}
+              canEditManagerNotes={canEditManagerNotes}
+              bookingRequestDetailLevel={bookingRequestDetailLevel}
             />
           ))}
         </tbody>

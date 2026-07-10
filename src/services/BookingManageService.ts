@@ -49,7 +49,7 @@ function resolvePublicStatus(
   appointment: Appointment,
   now: Date = getStudioNow(),
 ): PublicManageAppointmentStatus {
-  if (appointment.status === "CANCELLED") {
+  if (appointment.status === "CANCELLED" || appointment.status === "RESCHEDULED") {
     return "cancelled";
   }
 
@@ -165,7 +165,7 @@ export async function cancelAppointmentByManageToken(
     throw new BookingManageError("Запись не найдена");
   }
 
-  if (appointment.status === "CANCELLED") {
+  if (appointment.status === "CANCELLED" || appointment.status === "RESCHEDULED") {
     return {
       view: mapPublicManageView(appointment),
       alreadyCancelled: true,
@@ -211,7 +211,7 @@ export async function requestRescheduleByManageToken(
     throw new BookingManageError("Запись не найдена");
   }
 
-  if (appointment.status === "CANCELLED") {
+  if (appointment.status === "CANCELLED" || appointment.status === "RESCHEDULED") {
     throw new BookingManageError("Запись отменена, перенос недоступен");
   }
 

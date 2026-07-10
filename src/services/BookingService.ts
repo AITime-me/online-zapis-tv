@@ -1,5 +1,17 @@
+import "server-only";
+
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import {
+  ONLINE_SERVICE_UNAVAILABLE_MESSAGE,
+  SERVICE_UNAVAILABLE_CODE,
+} from "@/lib/booking/public-booking-errors";
+import type {
+  BookingCatalogCategory,
+  BookingCatalogMaster,
+  BookingCatalogService,
+  BookingServiceMode,
+} from "@/lib/booking/catalog-types";
 import {
   addMinutesSafe,
   formatStudioTimeInput,
@@ -11,6 +23,7 @@ import { getStudioDayRangeFromDateKey, getStudioMonthRangeFromMonthKey } from "@
 import { resolveMasterWorkHours } from "@/lib/schedule/master-work-hours";
 import { SEED_TEST_SERVICE_IDS } from "@/lib/services/seed-test-service-ids";
 import {
+  AppointmentConflictError,
   AppointmentValidationError,
   createOnlineAppointment,
 } from "@/services/AppointmentService";
@@ -27,35 +40,12 @@ import {
 import { evaluateStoredAppliedPromotions } from "@/lib/promo/applied-promotions";
 import { resolveClientContextByPhone } from "@/services/ClientContextService";
 
-export type BookingServiceMode = "ONLINE" | "MANAGER_ONLY";
-
-export type BookingCatalogService = {
-  id: string;
-  publicName: string;
-  clientDescription: string | null;
-  durationMinutes: number;
-  breakAfterMinutes: number;
-  priceLabel: string | null;
-  basePrice: number | null;
-  categoryName?: string | null;
-  bookingMode: BookingServiceMode;
-  managerMasterId: string | null;
-  managerMasterName: string | null;
-};
-
-export type BookingCatalogCategory = {
-  id: string;
-  name: string;
-  services: BookingCatalogService[];
-};
-
-export type BookingCatalogMaster = {
-  id: string;
-  publicName: string;
-  clientDescription: string | null;
-  photoUrl: string | null;
-  isOnlineBookingEnabled: boolean;
-};
+export type {
+  BookingCatalogCategory,
+  BookingCatalogMaster,
+  BookingCatalogService,
+  BookingServiceMode,
+} from "@/lib/booking/catalog-types";
 
 export type OnlineBookingInput = {
   serviceId: string;
@@ -66,6 +56,13 @@ export type OnlineBookingInput = {
   phone: string;
   comment?: string;
 };
+
+export class OnlineServiceUnavailableError extends AppointmentValidationError {
+  constructor(message = ONLINE_SERVICE_UNAVAILABLE_MESSAGE) {
+    super(message);
+    this.name = SERVICE_UNAVAILABLE_CODE;
+  }
+}
 
 function decimalToNumber(value: Prisma.Decimal | null | undefined): number | null {
   if (value == null) {
@@ -103,6 +100,28 @@ function compareTimeStrings(left: string, right: string): number {
   return left.localeCompare(right);
 }
 
+function resolveSlotIterationBounds(
+  workStart: string,
+  workEnd: string,
+  extraWorkWindows: Array<{ startsAt: Date; endsAt: Date }>,
+): { rangeStart: string; rangeEnd: string } {
+  let rangeStart = workStart;
+  let rangeEnd = workEnd;
+
+  for (const window of extraWorkWindows) {
+    const windowStart = formatStudioTimeInput(window.startsAt);
+    const windowEnd = formatStudioTimeInput(window.endsAt);
+    if (compareTimeStrings(windowStart, rangeStart) < 0) {
+      rangeStart = windowStart;
+    }
+    if (compareTimeStrings(windowEnd, rangeEnd) > 0) {
+      rangeEnd = windowEnd;
+    }
+  }
+
+  return { rangeStart, rangeEnd };
+}
+
 async function loadServicePromoContext(serviceId: string) {
   return prisma.service.findUnique({
     where: { id: serviceId },
@@ -124,7 +143,12 @@ async function assertOnlineBookable(
   const [service, master, masterService, timing] = await Promise.all([
     prisma.service.findUnique({
       where: { id: serviceId },
-      select: { isActive: true, isOnlineBookingEnabled: true },
+      select: {
+        isActive: true,
+        isOnlineBookingEnabled: true,
+        isPublic: true,
+        category: { select: { isActive: true, isPublic: true } },
+      },
     }),
     prisma.master.findUnique({
       where: { id: masterId },
@@ -137,9 +161,21 @@ async function assertOnlineBookable(
     resolveServiceTimingForMaster(masterId, serviceId),
   ]);
 
+  if (!service) {
+    throw new OnlineServiceUnavailableError();
+  }
+
   if (
-    !service?.isActive ||
+    !service.isActive ||
     !service.isOnlineBookingEnabled ||
+    !service.isPublic ||
+    !service.category?.isActive ||
+    !service.category?.isPublic
+  ) {
+    throw new OnlineServiceUnavailableError();
+  }
+
+  if (
     !master?.isActive ||
     !master.isOnlineBookingEnabled ||
     masterService?.isEnabled !== true ||
@@ -555,20 +591,25 @@ export async function getAvailableTimeSlots(
   }
 
   const { workStart, workEnd } = context.workHours;
+  const { rangeStart, rangeEnd } = resolveSlotIterationBounds(
+    workStart,
+    workEnd,
+    context.extraWorkWindows,
+  );
   const slotStep = Math.max(5, context.master.slotMinutes);
   const slots: string[] = [];
   const minStartTime =
     dateKey === studioToday ? formatStudioTimeInput(getStudioNow()) : "00:00";
 
-  let current = workStart;
-  while (compareTimeStrings(current, workEnd) < 0) {
+  let current = rangeStart;
+  while (compareTimeStrings(current, rangeEnd) < 0) {
     const serviceEnd = addMinutesToTime(
       dateKey,
       current,
       timing.durationMinutes + timing.breakAfterMinutes,
     );
 
-    if (compareTimeStrings(serviceEnd, workEnd) <= 0) {
+    if (compareTimeStrings(serviceEnd, rangeEnd) <= 0) {
       if (
         compareTimeStrings(current, minStartTime) >= 0 &&
         isSlotAvailable(
@@ -586,7 +627,7 @@ export async function getAvailableTimeSlots(
     current = addMinutesToTime(dateKey, current, slotStep);
   }
 
-  return slots;
+  return [...new Set(slots)];
 }
 
 export async function getAvailableDaysInMonth(
@@ -628,6 +669,25 @@ export async function createOnlineBooking(input: OnlineBookingInput) {
   }
 
   const timing = await assertOnlineBookable(input.masterId, input.serviceId);
+
+  const studioToday = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Yekaterinburg",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(getStudioNow());
+  const availableSlots = await getAvailableTimeSlots(
+    input.masterId,
+    input.serviceId,
+    input.date,
+    studioToday,
+  );
+  if (!availableSlots.includes(input.startTime)) {
+    throw new AppointmentConflictError(
+      "Выбранное время больше недоступно. Пожалуйста, выберите другое время.",
+    );
+  }
+
   const [serviceContext, clientContext] = await Promise.all([
     loadServicePromoContext(input.serviceId),
     resolveClientContextByPhone(phone),

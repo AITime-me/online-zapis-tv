@@ -7,7 +7,7 @@ export type WorkspaceNavKey =
   | "booking-requests"
   | "clients"
   | "promotions"
-  | "game"
+  | "games"
   | "users"
   | "settings"
   | "bot"
@@ -60,10 +60,10 @@ export const WORKSPACE_NAV_ITEMS: WorkspaceNavItem[] = [
     label: "Акции",
   },
   {
-    key: "game",
+    key: "games",
     section: "game",
-    href: "/admin/game",
-    label: "Игра",
+    href: "/admin/games",
+    label: "Игры",
   },
   {
     key: "bot",

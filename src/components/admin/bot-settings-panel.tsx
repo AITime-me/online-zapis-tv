@@ -15,13 +15,11 @@ import {
   type BotResponseMode,
 } from "@/lib/bot-settings/defaults";
 import {
-  BOT_EVENT_LEVEL_LABELS,
-  BOT_EVENT_TYPE_LABELS,
-  BOT_EVENT_TYPES,
   BOT_LOG_CAN_STORE,
   BOT_LOG_MUST_NOT_STORE,
 } from "@/lib/bot-settings/event-log";
 import type { BotSettingsDto, BotSettingsWriteInput } from "@/types/bot-settings";
+import { BotEventLogsSection } from "@/components/admin/bot-event-logs-section";
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 
@@ -82,7 +80,6 @@ export function BotSettingsPanel({
   const [form, setForm] = useState(() => toFormState(initialSettings));
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
-  const [eventsExpanded, setEventsExpanded] = useState(false);
 
   useEffect(() => {
     setSettings(initialSettings);
@@ -532,64 +529,7 @@ export function BotSettingsPanel({
         </div>
       </section>
 
-      <section className={sectionClass}>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold text-zinc-900">События бота</h2>
-            <p className="mt-1 text-xs text-zinc-500">
-              Логи появятся после подключения реального бота
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setEventsExpanded((current) => !current)}
-            className="text-sm font-medium text-[#1a73e8] hover:underline"
-          >
-            {eventsExpanded ? "Свернуть" : "Развернуть"}
-          </button>
-        </div>
-
-        {eventsExpanded ? (
-          <div className="space-y-4">
-            <div className="rounded border border-dashed border-zinc-300 bg-zinc-50 px-4 py-8 text-center text-sm text-zinc-600">
-              Событий пока нет. После подключения бота здесь будут отображаться
-              последние события, ошибки и передачи менеджеру.
-            </div>
-            <p className="text-xs text-zinc-500">
-              Логи будут храниться отдельными событиями, а не одним большим
-              текстовым полем. Подробности события будут раскрываться по клику.
-            </p>
-            <p className="text-xs text-zinc-500">
-              В будущем события будут отображаться списком: дата, уровень, канал,
-              краткое событие. Подробности будут открываться внутри строки.
-            </p>
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div>
-                <p className="text-xs font-medium text-zinc-700">Уровни</p>
-                <ul className="mt-1 space-y-1 text-xs text-zinc-600">
-                  {Object.entries(BOT_EVENT_LEVEL_LABELS).map(([level, label]) => (
-                    <li key={level}>
-                      {level} — {label}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-zinc-700">
-                  Типы будущих событий
-                </p>
-                <ul className="mt-1 space-y-1 text-xs text-zinc-600">
-                  {BOT_EVENT_TYPES.map((type) => (
-                    <li key={type}>
-                      {type} — {BOT_EVENT_TYPE_LABELS[type]}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          </div>
-        ) : null}
-      </section>
+      <BotEventLogsSection />
 
       <section className={sectionClass}>
         <h2 className="text-sm font-semibold text-zinc-900">

@@ -53,6 +53,35 @@ export function getStudioTodayRange(
   return getStudioDayRangeFromDateKey(dateKey, timezone);
 }
 
+export type StudioThreeDayRange = {
+  periodFrom: Date;
+  periodTo: Date;
+  dateKeyFrom: string;
+  dateKeyTo: string;
+  dateKeys: [string, string, string];
+  noteDates: [Date, Date, Date];
+};
+
+/** Сегодня, завтра и послезавтра в часовом поясе студии. */
+export function getStudioThreeDayRange(
+  timezone: string = ENV_STUDIO_TIMEZONE,
+): StudioThreeDayRange {
+  const today = getStudioTodayRange(timezone);
+  const tomorrowKey = addDaysToDateKey(today.dateKey, 1);
+  const dayAfterKey = addDaysToDateKey(today.dateKey, 2);
+  const tomorrow = getStudioDayRangeFromDateKey(tomorrowKey, timezone);
+  const dayAfter = getStudioDayRangeFromDateKey(dayAfterKey, timezone);
+
+  return {
+    periodFrom: today.dayStart,
+    periodTo: dayAfter.dayEnd,
+    dateKeyFrom: today.dateKey,
+    dateKeyTo: dayAfterKey,
+    dateKeys: [today.dateKey, tomorrowKey, dayAfterKey],
+    noteDates: [today.noteDate, tomorrow.noteDate, dayAfter.noteDate],
+  };
+}
+
 export function formatStudioDate(
   value: Date,
   timezone: string = ENV_STUDIO_TIMEZONE,

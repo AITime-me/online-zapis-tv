@@ -43,7 +43,8 @@ export type ServiceWriteInput = {
   internalName: string;
   publicName: string;
   clientDescription?: string | null;
-  categoryId: string;
+  categoryId?: string;
+  newCategoryName?: string | null;
   priceFrom?: number | null;
   priceTo?: number | null;
   durationMinutes: number;

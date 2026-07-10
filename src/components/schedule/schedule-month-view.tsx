@@ -25,6 +25,7 @@ import { QuickManagerEditor } from "@/components/schedule/quick-manager-editor";
 import { QuickOwnerEditor } from "@/components/schedule/quick-owner-editor";
 import {
   ScheduleBookingRequestDetailModal,
+  ScheduleBookingRequestSafeDetailModal,
 } from "@/components/schedule/schedule-booking-request-card";
 import type { ScheduleDayBookingRequest } from "@/types/schedule";
 import { isScheduleDebugEnabled } from "@/lib/schedule/debug";
@@ -38,9 +39,11 @@ const scheduleDebugEnabled = isScheduleDebugEnabled();
 export function ScheduleMonthView({
   data: initialData,
   userRole,
+  canViewFullBookingRequestDetails = true,
 }: {
   data: ScheduleMonthData;
   userRole: UserRole;
+  canViewFullBookingRequestDetails?: boolean;
 }) {
   const {
     monthData,
@@ -69,6 +72,9 @@ export function ScheduleMonthView({
   const [debugLastAction, setDebugLastAction] =
     useState<ScheduleDebugLastAction>("idle");
   const canEdit = canManageFullSchedule(userRole);
+  const bookingRequestDetailLevel = canViewFullBookingRequestDetails
+    ? "full"
+    : "sanitized";
 
   const syncCellToMonth = useCallback(
     (payload: CellSyncPayload) => {
@@ -141,6 +147,8 @@ export function ScheduleMonthView({
       />
       <ScheduleMonthTable
         data={monthData}
+        canEditManagerNotes={canEdit}
+        bookingRequestDetailLevel={bookingRequestDetailLevel}
         onCellOpen={(cellData) => {
           closeAllEditors();
           setEditorData(cellData);
@@ -171,7 +179,12 @@ export function ScheduleMonthView({
         <QuickManagerEditor
           data={managerEditorData}
           canEdit={canEdit}
+          bookingRequestDetailLevel={bookingRequestDetailLevel}
           onClose={() => setManagerEditorData(null)}
+          onRequestOpen={(request) => {
+            setManagerEditorData(null);
+            setSelectedRequest(request);
+          }}
         />
       ) : null}
       {ownerEditorData ? (
@@ -182,12 +195,19 @@ export function ScheduleMonthView({
         />
       ) : null}
       {selectedRequest ? (
-        <ScheduleBookingRequestDetailModal
-          request={selectedRequest}
-          canEditStatus={canEdit}
-          onClose={() => setSelectedRequest(null)}
-          onStatusUpdated={handleRequestStatusUpdated}
-        />
+        canViewFullBookingRequestDetails ? (
+          <ScheduleBookingRequestDetailModal
+            request={selectedRequest}
+            canEditStatus={canEdit}
+            onClose={() => setSelectedRequest(null)}
+            onStatusUpdated={handleRequestStatusUpdated}
+          />
+        ) : (
+          <ScheduleBookingRequestSafeDetailModal
+            request={selectedRequest}
+            onClose={() => setSelectedRequest(null)}
+          />
+        )
       ) : null}
       <ScheduleDebugBanner
         state={{

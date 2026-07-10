@@ -5,6 +5,7 @@ import type {
   GameGiftDto,
   GameGiftWriteInput,
 } from "@/types/game-admin";
+import { syncCatchTimeCatalogFromLegacyConfig } from "@/services/GameCatalogService";
 
 export class GameAdminValidationError extends Error {}
 export class GameAdminNotFoundError extends Error {}
@@ -108,6 +109,8 @@ export async function updateGameConfig(
         : {}),
     },
   });
+
+  await syncCatchTimeCatalogFromLegacyConfig();
 
   return mapConfig(updated);
 }

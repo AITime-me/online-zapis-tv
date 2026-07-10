@@ -1,16 +1,43 @@
 import type { BookingRequestType } from "@prisma/client";
 
-export type ScheduleDayBookingRequest = {
+export type MasterScheduleBookingRequestDto = {
   id: string;
   createdAt: string;
   clientName: string;
-  clientPhone: string;
-  comment: string | null;
   status: "NEW" | "CONTACTED" | "CLOSED";
   type: BookingRequestType;
   isFromGame: boolean;
   masterName: string | null;
 };
+
+export type FullScheduleBookingRequestDto = MasterScheduleBookingRequestDto & {
+  clientPhone: string;
+  comment: string | null;
+};
+
+export type ScheduleDayBookingRequest =
+  | MasterScheduleBookingRequestDto
+  | FullScheduleBookingRequestDto;
+
+export function isFullScheduleBookingRequest(
+  request: ScheduleDayBookingRequest,
+): request is FullScheduleBookingRequestDto {
+  return "clientPhone" in request;
+}
+
+export function toMasterScheduleBookingRequest(
+  request: FullScheduleBookingRequestDto,
+): MasterScheduleBookingRequestDto {
+  return {
+    id: request.id,
+    createdAt: request.createdAt,
+    clientName: request.clientName,
+    status: request.status,
+    type: request.type,
+    isFromGame: request.isFromGame,
+    masterName: request.masterName,
+  };
+}
 
 export function getScheduleBookingRequestSourceLabel(
   request: Pick<ScheduleDayBookingRequest, "type" | "isFromGame">,

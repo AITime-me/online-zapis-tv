@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { NEW_SERVICE_CATEGORY_VALUE } from "@/lib/services/service-category";
 import type {
   ServiceAdminRow,
   ServiceCategoryOption,
@@ -13,6 +14,7 @@ type FormState = {
   publicName: string;
   clientDescription: string;
   categoryId: string;
+  newCategoryName: string;
   priceFrom: string;
   priceTo: string;
   durationMinutes: string;
@@ -40,6 +42,7 @@ function toFormState(
     publicName: service?.publicName ?? "",
     clientDescription: service?.clientDescription ?? "",
     categoryId: service?.categoryId ?? categories[0]?.id ?? "",
+    newCategoryName: "",
     priceFrom:
       service?.priceFrom != null ? String(service.priceFrom) : "",
     priceTo: service?.priceTo != null ? String(service.priceTo) : "",
@@ -55,12 +58,15 @@ function toFormState(
 
 function toPayload(form: FormState): ServiceWriteInput {
   const isActive = form.isActive;
+  const isNewCategory = form.categoryId === NEW_SERVICE_CATEGORY_VALUE;
 
   return {
     internalName: form.internalName,
     publicName: form.publicName,
     clientDescription: form.clientDescription || null,
-    categoryId: form.categoryId,
+    ...(isNewCategory
+      ? { newCategoryName: form.newCategoryName.trim() }
+      : { categoryId: form.categoryId }),
     priceFrom: form.priceFrom.trim() ? Number(form.priceFrom) : null,
     priceTo: form.priceTo.trim() ? Number(form.priceTo) : null,
     durationMinutes: Number(form.durationMinutes),
@@ -86,8 +92,9 @@ export function ServiceForm({
   onSaved,
   onCancel,
   onSaveStatus,
+  mode = "edit",
 }: {
-  service: ServiceAdminRow;
+  service?: ServiceAdminRow;
   categories: ServiceCategoryOption[];
   masters: ServiceMasterOption[];
   onSaved: (updated: ServiceAdminRow) => void;
@@ -96,7 +103,9 @@ export function ServiceForm({
     status: "idle" | "saving" | "saved" | "error",
     message?: string,
   ) => void;
+  mode?: "edit" | "create";
 }) {
+  const isCreate = mode === "create" || !service;
   const [form, setForm] = useState<FormState>(() =>
     toFormState(service, categories),
   );
@@ -136,17 +145,24 @@ export function ServiceForm({
     setError(null);
 
     try {
-      const response = await fetch(`/api/services/${service.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(toPayload(form)),
-      });
-      const payload = await response.json();
-      if (!response.ok || !payload.ok || !payload.service) {
-        throw new Error(payload.error ?? "Ошибка сохранения");
+      const payload = toPayload(form);
+      const response = isCreate
+        ? await fetch("/api/services", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          })
+        : await fetch(`/api/services/${service!.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+      const result = await response.json();
+      if (!response.ok || !result.ok || !result.service) {
+        throw new Error(result.error ?? "Ошибка сохранения");
       }
       onSaveStatus("saved");
-      onSaved(payload.service);
+      onSaved(result.service);
     } catch (submitError) {
       const message =
         submitError instanceof Error
@@ -162,9 +178,15 @@ export function ServiceForm({
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-zinc-900">
-            Редактирование услуги
+            {isCreate ? "Новая услуга" : "Редактирование услуги"}
           </h2>
-          <p className="mt-1 text-xs text-zinc-500">{service.publicName}</p>
+          {!isCreate ? (
+            <p className="mt-1 text-xs text-zinc-500">{service?.publicName}</p>
+          ) : (
+            <p className="mt-1 text-xs text-zinc-500">
+              Заполните поля и сохраните — услуга появится в списке.
+            </p>
+          )}
         </div>
         <button
           type="button"
@@ -227,6 +249,9 @@ export function ServiceForm({
               setForm((current) => ({
                 ...current,
                 categoryId: event.target.value,
+                ...(event.target.value === NEW_SERVICE_CATEGORY_VALUE
+                  ? {}
+                  : { newCategoryName: "" }),
               }))
             }
           >
@@ -235,8 +260,28 @@ export function ServiceForm({
                 {category.name}
               </option>
             ))}
+            <option value={NEW_SERVICE_CATEGORY_VALUE}>
+              Добавить новую категорию…
+            </option>
           </select>
         </label>
+
+        {form.categoryId === NEW_SERVICE_CATEGORY_VALUE ? (
+          <label className="flex flex-col gap-1 md:col-span-2">
+            <span className={labelClass}>Название новой категории</span>
+            <input
+              className={fieldClass}
+              value={form.newCategoryName}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  newCategoryName: event.target.value,
+                }))
+              }
+              placeholder="Например: Уход за кожей"
+            />
+          </label>
+        ) : null}
 
         <label className="flex flex-col gap-1">
           <span className={labelClass}>Порядок сортировки</span>

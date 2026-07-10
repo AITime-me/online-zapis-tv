@@ -1,3 +1,5 @@
+import "server-only";
+
 import {
   BookingRequestSource,
   BookingRequestStatus,
@@ -9,7 +11,24 @@ import {
 } from "@/lib/booking/client-validation";
 import { prisma } from "@/lib/db";
 import type { ScheduleDayBookingRequest } from "@/lib/schedule/booking-request-schedule";
+import {
+  toMasterScheduleBookingRequest,
+  type FullScheduleBookingRequestDto,
+} from "@/lib/schedule/booking-request-schedule";
+import type { ScheduleBookingRequestVisibility } from "@/lib/schedule/schedule-load-options";
 import type { ClientStatus } from "@prisma/client";
+import {
+  buildBookingRequestActiveCountWhere,
+  buildBookingRequestClosedCountWhere,
+  buildBookingRequestSectionWhere,
+  DEFAULT_BOOKING_REQUEST_LIST_PAGE_SIZE,
+  type BookingRequestListQuery,
+} from "@/lib/booking-requests/list-query";
+import type {
+  BookingRequestClientLinkStatus,
+  BookingRequestClientSummary,
+  BookingRequestDto,
+} from "@/lib/booking-requests/booking-request-contract";
 import {
   appendDuplicateNote,
   appendManagerDecisionNote,
@@ -41,53 +60,6 @@ export type CreateBookingRequestInput = {
   consent: boolean;
   gamePlayId?: string | null;
   serviceName?: string | null;
-};
-
-export type BookingRequestClientLinkStatus =
-  | "linked"
-  | "new"
-  | "none"
-  | "duplicate"
-  | "name_duplicate";
-
-export type BookingRequestClientSummary = {
-  id: string;
-  fullName: string;
-  phone: string | null;
-  email: string | null;
-  tags: string[];
-  status: ClientStatus;
-  isArchived: boolean;
-};
-
-export type BookingRequestDto = {
-  id: string;
-  clientName: string;
-  clientPhone: string;
-  comment: string | null;
-  masterId: string | null;
-  masterName: string | null;
-  status: BookingRequestStatus;
-  source: BookingRequestSource;
-  type: BookingRequestType;
-  createdAt: string;
-  clientId: string | null;
-  clientLinkStatus: BookingRequestClientLinkStatus;
-  client: BookingRequestClientSummary | null;
-  hasPossibleClientDuplicates: boolean;
-  possibleDuplicateClients: BookingRequestClientSummary[];
-  duplicateReason: string | null;
-};
-
-const REQUEST_TYPE_LABELS: Record<BookingRequestType, string> = {
-  MANAGER_REQUEST: "Заявка через менеджера",
-  CONSULTATION_REQUEST: "Консультация",
-};
-
-const REQUEST_STATUS_LABELS: Record<BookingRequestStatus, string> = {
-  NEW: "Новая",
-  CONTACTED: "Связались",
-  CLOSED: "Закрыта",
 };
 
 const bookingRequestInclude = {
@@ -241,30 +213,6 @@ function resolveLeadSource(input: CreateBookingRequestInput): ClientLeadSource {
     return "procedure_gift_game";
   }
   return "online_booking";
-}
-
-export function getBookingRequestTypeLabel(type: BookingRequestType): string {
-  return REQUEST_TYPE_LABELS[type];
-}
-
-export function getBookingRequestStatusLabel(
-  status: BookingRequestStatus,
-): string {
-  return REQUEST_STATUS_LABELS[status];
-}
-
-const CLIENT_LINK_LABELS: Record<BookingRequestClientLinkStatus, string> = {
-  linked: "Клиент найден",
-  new: "Новый клиент",
-  none: "Без клиента",
-  duplicate: "Возможный дубль",
-  name_duplicate: "Возможный дубль",
-};
-
-export function getBookingRequestClientLinkLabel(
-  status: BookingRequestClientLinkStatus,
-): string {
-  return CLIENT_LINK_LABELS[status];
 }
 
 export async function createBookingRequest(
@@ -454,19 +402,83 @@ export async function createSeparateClientForBookingRequest(
   return mapBookingRequest(updated);
 }
 
+export type BookingRequestListResult = {
+  requests: BookingRequestDto[];
+  total: number;
+  page: number;
+  pageSize: number;
+  activeTotal: number;
+  closedTotal: number;
+};
+
 export async function listBookingRequests(): Promise<BookingRequestDto[]> {
-  const requests = await prisma.bookingRequest.findMany({
-    orderBy: [{ status: "asc" }, { createdAt: "desc" }],
-    include: bookingRequestInclude,
+  const result = await listBookingRequestsPaginated({
+    section: "active",
+    page: 1,
+    pageSize: 10_000,
+    statusFilter: "ALL",
   });
 
-  return Promise.all(requests.map((request) => mapBookingRequest(request)));
+  const closedResult = await listBookingRequestsPaginated({
+    section: "closed",
+    page: 1,
+    pageSize: 10_000,
+    statusFilter: "ALL",
+  });
+
+  return [...result.requests, ...closedResult.requests];
+}
+
+export async function listBookingRequestsPaginated(
+  query: BookingRequestListQuery,
+): Promise<BookingRequestListResult> {
+  const page = Math.max(1, query.page ?? 1);
+  const pageSize = query.pageSize ?? DEFAULT_BOOKING_REQUEST_LIST_PAGE_SIZE;
+  const where = buildBookingRequestSectionWhere(query);
+  const countQuery = {
+    phone: query.phone,
+    name: query.name,
+    dateFrom: query.dateFrom,
+    dateTo: query.dateTo,
+    statusFilter: query.statusFilter,
+  };
+
+  const [rows, total, activeTotal, closedTotal] = await Promise.all([
+    prisma.bookingRequest.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      include: bookingRequestInclude,
+    }),
+    prisma.bookingRequest.count({ where }),
+    prisma.bookingRequest.count({
+      where: buildBookingRequestActiveCountWhere(countQuery),
+    }),
+    prisma.bookingRequest.count({
+      where: buildBookingRequestClosedCountWhere(countQuery),
+    }),
+  ]);
+
+  return {
+    requests: await Promise.all(rows.map((request) => mapBookingRequest(request))),
+    total,
+    page,
+    pageSize,
+    activeTotal,
+    closedTotal,
+  };
 }
 
 export async function listActiveBookingRequestsForRange(
   rangeStart: Date,
   rangeEnd: Date,
+  visibility: ScheduleBookingRequestVisibility = "full",
 ): Promise<ScheduleDayBookingRequest[]> {
+  if (visibility === "none") {
+    return [];
+  }
+
   const requests = await prisma.bookingRequest.findMany({
     where: {
       createdAt: { gte: rangeStart, lte: rangeEnd },
@@ -494,7 +506,7 @@ export async function listActiveBookingRequestsForRange(
       .filter((leadId): leadId is string => Boolean(leadId)),
   );
 
-  return requests.map((request) => ({
+  const fullRequests: FullScheduleBookingRequestDto[] = requests.map((request) => ({
     id: request.id,
     createdAt: request.createdAt.toISOString(),
     clientName: request.clientName,
@@ -505,6 +517,12 @@ export async function listActiveBookingRequestsForRange(
     isFromGame: gameLeadIds.has(request.id),
     masterName: request.master?.publicName ?? null,
   }));
+
+  if (visibility === "sanitized") {
+    return fullRequests.map(toMasterScheduleBookingRequest);
+  }
+
+  return fullRequests;
 }
 
 export async function updateBookingRequestStatus(
@@ -519,3 +537,15 @@ export async function updateBookingRequestStatus(
 
   return mapBookingRequest(request);
 }
+
+export type {
+  BookingRequestClientLinkStatus,
+  BookingRequestClientSummary,
+  BookingRequestDto,
+} from "@/lib/booking-requests/booking-request-contract";
+
+export {
+  getBookingRequestClientLinkLabel,
+  getBookingRequestStatusLabel,
+  getBookingRequestTypeLabel,
+} from "@/lib/booking-requests/booking-request-contract";

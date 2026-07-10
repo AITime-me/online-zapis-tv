@@ -438,11 +438,10 @@ export async function resolveClientForLead(
     };
   }
 
-  const created = await createClientFromLead(input);
   return {
-    clientId: created.id,
-    linkStatus: "created",
-    isNewClient: true,
+    clientId: null,
+    linkStatus: "none",
+    isNewClient: false,
     duplicateNote: null,
     ...emptyResult,
   };

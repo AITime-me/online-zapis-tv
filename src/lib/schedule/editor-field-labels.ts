@@ -31,6 +31,7 @@ export const EDITOR_APPOINTMENT_STATUS_LABELS: Record<
   SCHEDULED: "Запланирована",
   CONFIRMED: "Подтверждена",
   CANCELLED: "Отменена",
+  RESCHEDULED: "Перенесена",
   COMPLETED: "Завершена",
   NO_SHOW: "Не пришёл",
 };

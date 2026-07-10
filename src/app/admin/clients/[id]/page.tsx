@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireAdminSection } from "@/lib/auth/session";
+import { canManageClientsAdmin } from "@/lib/auth/permissions";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
-import { ClientDetailPanel } from "@/components/admin/client-detail-panel";
+import { ClientDetailView } from "@/components/admin/client-detail-view";
 import { getClientDetailsForAdmin } from "@/services/ClientDetailService";
 
 type ClientDetailPageProps = {
@@ -36,7 +37,10 @@ export default async function ClientDetailPage({ params }: ClientDetailPageProps
         </Link>
       </div>
 
-      <ClientDetailPanel details={details} />
+      <ClientDetailView
+        initialDetails={details}
+        canEdit={canManageClientsAdmin(user.role)}
+      />
     </main>
   );
 }

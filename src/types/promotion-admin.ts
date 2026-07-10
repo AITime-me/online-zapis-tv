@@ -47,6 +47,7 @@ export type PromotionDto = {
   imageUrl: string | null;
   priority: number;
   source: PromotionSourceDto;
+  showOnHomepage: boolean;
   serviceIds: string[];
   createdAt: string;
   updatedAt: string;
@@ -73,6 +74,7 @@ export type PromotionWriteInput = {
   imageUrl?: string | null;
   priority?: number;
   source?: PromotionSourceDto;
+  showOnHomepage?: boolean;
   serviceIds?: string[];
   restoreFromArchive?: boolean;
 };

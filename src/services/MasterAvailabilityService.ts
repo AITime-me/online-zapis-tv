@@ -1,4 +1,5 @@
 import type { AppointmentStatus } from "@prisma/client";
+import { isBlockingAppointmentStatus } from "@/lib/schedule/non-blocking-appointment-statuses";
 import {
   addMinutesSafe,
   getStudioNow,
@@ -89,7 +90,7 @@ export function checkMasterIntervalAvailability(
 
   const activeAppointments = input.appointments.filter(
     (appointment) =>
-      appointment.status !== "CANCELLED" &&
+      isBlockingAppointmentStatus(appointment.status) &&
       intervalsOverlap(toBusyInterval(appointment), candidateBusy),
   );
 

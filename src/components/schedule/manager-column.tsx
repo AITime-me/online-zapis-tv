@@ -16,15 +16,19 @@ function compareTimelineItems(a: ManagerTimelineItem, b: ManagerTimelineItem): n
   return a.createdAt.localeCompare(b.createdAt);
 }
 
+import type { ScheduleBookingRequestDetailLevel } from "@/components/schedule/schedule-booking-request-card";
+
 export function ManagerColumn({
   notes,
   bookingRequests = [],
   onRequestOpen,
+  bookingRequestDetailLevel = "full",
   className = "",
 }: {
   notes: ScheduleDayManagerNote[];
   bookingRequests?: ScheduleDayBookingRequest[];
   onRequestOpen?: (request: ScheduleDayBookingRequest) => void;
+  bookingRequestDetailLevel?: ScheduleBookingRequestDetailLevel;
   className?: string;
 }) {
   const timeline = useMemo(() => {
@@ -69,6 +73,7 @@ export function ManagerColumn({
               key={`request-${item.request.id}`}
               request={item.request}
               variant="day"
+              detailLevel={bookingRequestDetailLevel}
               onOpen={(request) => onRequestOpen?.(request)}
             />
           ),

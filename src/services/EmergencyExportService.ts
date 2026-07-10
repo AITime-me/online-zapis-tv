@@ -21,7 +21,7 @@ import {
   formatExportFileTimestamp,
   formatStudioDate,
   formatStudioTime,
-  getStudioTodayRange,
+  getStudioThreeDayRange,
 } from "@/lib/datetime/studio";
 
 export type ExportParams = {
@@ -62,6 +62,7 @@ const APPOINTMENT_STATUS_LABELS: Record<AppointmentStatus, string> = {
   SCHEDULED: "Запланирована",
   CONFIRMED: "Подтверждена",
   CANCELLED: "Отменена",
+  RESCHEDULED: "Перенесена",
   COMPLETED: "Завершена",
   NO_SHOW: "Не пришёл",
 };
@@ -88,15 +89,16 @@ const BLOCK_TYPE_LABELS: Record<ScheduleBlockType, string> = {
 
 export class EmergencyExportService {
   async exportToday(requestedByUserId?: string): Promise<ExportResult> {
-    const { dayStart, dayEnd, dateKey, noteDate } = getStudioTodayRange();
+    const range = getStudioThreeDayRange();
 
     return this.export({
       exportType: EmergencyExportType.TODAY,
-      periodFrom: dayStart,
-      periodTo: dayEnd,
+      periodFrom: range.periodFrom,
+      periodTo: range.periodTo,
       requestedByUserId,
-      dateKey,
-      noteDate,
+      dateKeyFrom: range.dateKeyFrom,
+      dateKeyTo: range.dateKeyTo,
+      noteDates: range.noteDates,
     });
   }
 
@@ -105,8 +107,9 @@ export class EmergencyExportService {
     periodFrom: Date;
     periodTo: Date;
     requestedByUserId?: string;
-    dateKey: string;
-    noteDate: Date;
+    dateKeyFrom: string;
+    dateKeyTo: string;
+    noteDates: Date[];
   }): Promise<ExportResult> {
     const storage: ExportStorage =
       env.EXPORT_STORAGE === "s3" ? ExportStorage.S3 : ExportStorage.LOCAL;
@@ -129,13 +132,13 @@ export class EmergencyExportService {
 
       await mkdir(env.EXPORT_LOCAL_DIR, { recursive: true });
 
-      const fileName = `emergency_today_${formatExportFileTimestamp()}.xlsx`;
+      const fileName = `emergency_${params.dateKeyFrom}_to_${params.dateKeyTo}_${formatExportFileTimestamp()}.xlsx`;
       const filePath = path.join(env.EXPORT_LOCAL_DIR, fileName);
 
       const rows = await this.collectRows(
         params.periodFrom,
         params.periodTo,
-        params.noteDate,
+        params.noteDates,
       );
 
       await this.writeWorkbook(filePath, rows);
@@ -159,7 +162,8 @@ export class EmergencyExportService {
             exportType: params.exportType,
             fileName,
             filePath,
-            dateKey: params.dateKey,
+            dateKeyFrom: params.dateKeyFrom,
+            dateKeyTo: params.dateKeyTo,
           },
         },
       });
@@ -193,22 +197,23 @@ export class EmergencyExportService {
   }
 
   private async collectRows(
-    dayStart: Date,
-    dayEnd: Date,
-    noteDate: Date,
+    periodStart: Date,
+    periodEnd: Date,
+    noteDates: Date[],
   ): Promise<ExportRow[]> {
     const appointmentWhere: Prisma.AppointmentWhereInput = {
-      startsAt: { gte: dayStart, lte: dayEnd },
+      startsAt: { gte: periodStart, lte: periodEnd },
     };
 
     const blockWhere: Prisma.ScheduleBlockWhereInput = {
       OR: [
-        { startsAt: { gte: dayStart, lte: dayEnd } },
-        { isFullDay: true, blockDate: noteDate },
+        { startsAt: { gte: periodStart, lte: periodEnd } },
+        { isFullDay: true, blockDate: { in: noteDates } },
       ],
     };
 
-    const [appointments, blocks, managerNotes] = await Promise.all([
+    const [appointments, blocks, managerNotes, extraWorkWindows] =
+      await Promise.all([
       prisma.appointment.findMany({
         where: appointmentWhere,
         include: {
@@ -223,8 +228,13 @@ export class EmergencyExportService {
         orderBy: { startsAt: "asc" },
       }),
       prisma.managerNote.findMany({
-        where: { noteDate },
-        orderBy: { createdAt: "asc" },
+        where: { noteDate: { in: noteDates } },
+        orderBy: [{ noteDate: "asc" }, { createdAt: "asc" }],
+      }),
+      prisma.extraWorkWindow.findMany({
+        where: { workDate: { in: noteDates } },
+        include: { master: true },
+        orderBy: [{ workDate: "asc" }, { startsAt: "asc" }],
       }),
     ]);
 
@@ -254,10 +264,11 @@ export class EmergencyExportService {
     for (const block of blocks) {
       rows.push({
         sortAt: block.isFullDay
-          ? addMinutesSafe(noteDate, 12 * 60) ?? noteDate
+          ? addMinutesSafe(block.blockDate ?? periodStart, 12 * 60) ??
+            (block.blockDate ?? periodStart)
           : block.startsAt!,
         values: [
-          formatStudioDate(block.isFullDay ? noteDate : block.startsAt!),
+          formatStudioDate(block.isFullDay ? block.blockDate! : block.startsAt!),
           block.master?.internalName ?? "Менеджер",
           block.isFullDay ? "Весь день" : formatStudioTime(block.startsAt!),
           block.isFullDay ? "Весь день" : formatStudioTime(block.endsAt!),
@@ -270,6 +281,27 @@ export class EmergencyExportService {
           "",
           "",
           BLOCK_TYPE_LABELS[block.blockType],
+        ],
+      });
+    }
+
+    for (const extra of extraWorkWindows) {
+      rows.push({
+        sortAt: extra.startsAt,
+        values: [
+          formatStudioDate(extra.workDate),
+          extra.master.internalName,
+          formatStudioTime(extra.startsAt),
+          formatStudioTime(extra.endsAt),
+          "Доп. окно",
+          "",
+          "",
+          "",
+          extra.isOnlineBookingEnabled ? "Онлайн-запись включена" : "",
+          "",
+          "",
+          "",
+          "",
         ],
       });
     }
@@ -301,13 +333,13 @@ export class EmergencyExportService {
 
     if (rows.length === 0) {
       rows.push({
-        sortAt: dayStart,
+        sortAt: periodStart,
         values: [
-          formatStudioDate(dayStart),
+          formatStudioDate(periodStart),
           "",
           "",
           "",
-          "Нет записей на выбранную дату",
+          "Нет данных за выбранный период",
           "",
           "",
           "",
@@ -328,7 +360,7 @@ export class EmergencyExportService {
     rows: ExportRow[],
   ): Promise<void> {
     const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet("Сегодня");
+    const sheet = workbook.addWorksheet("Расписание");
 
     sheet.addRow(HEADERS);
     sheet.getRow(1).font = { bold: true };

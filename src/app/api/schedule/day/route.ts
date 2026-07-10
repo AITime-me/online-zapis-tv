@@ -5,6 +5,7 @@ import {
   getStudioTodayRange,
   isValidDateKey,
 } from "@/lib/datetime/studio";
+import { scheduleLoadOptionsForRole } from "@/lib/schedule/schedule-load-options";
 import { getScheduleDayData } from "@/services/ScheduleDayService";
 
 export async function GET(request: Request) {
@@ -33,7 +34,10 @@ export async function GET(request: Request) {
     );
   }
 
-  const data = await getScheduleDayData(dateKey);
+  const data = await getScheduleDayData(
+    dateKey,
+    scheduleLoadOptionsForRole(authResult.user.role),
+  );
 
   return NextResponse.json({ ok: true, ...data });
 }

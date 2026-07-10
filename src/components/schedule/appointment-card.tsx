@@ -1,5 +1,6 @@
 import { AppointmentScheduleSummary } from "@/components/schedule/appointment-detail-summary";
 import { AppointmentPromoBadges } from "@/components/schedule/appointment-promo-badges";
+import { isScheduleAppointmentBold } from "@/lib/schedule/appointment-display";
 import type { ScheduleDayAppointment } from "@/types/schedule";
 
 export function AppointmentCard({
@@ -7,10 +8,12 @@ export function AppointmentCard({
 }: {
   appointment: ScheduleDayAppointment;
 }) {
+  const isBold = isScheduleAppointmentBold(appointment);
+
   return (
     <article
       className={`border-b border-[#e8eaed] px-2 py-1.5 text-xs leading-snug last:border-b-0 ${
-        appointment.isBold ? "font-bold" : ""
+        isBold ? "font-bold" : ""
       }`}
     >
       <AppointmentScheduleSummary appointment={appointment} />

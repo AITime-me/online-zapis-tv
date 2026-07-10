@@ -17,6 +17,7 @@ enum AppointmentStatus {
   SCHEDULED
   CONFIRMED
   CANCELLED
+  RESCHEDULED
   COMPLETED
   NO_SHOW
 }
@@ -122,31 +123,43 @@ enum PromotionSource {
   SEASONAL
 }
 
-model User {
-  id           String    @id @default(uuid()) @db.Uuid
-  email        String    @unique
-  passwordHash String    @map("password_hash")
-  role         UserRole
-  name         String
-  phone        String?
-  positionTitle String?  @map("position_title")
-  notes        String?
-  isActive     Boolean   @default(true) @map("is_active")
-  lastLoginAt  DateTime? @map("last_login_at") @db.Timestamptz
-  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+enum GameCatalogType {
+  CATCH_TIME
+  WHEEL_OF_FORTUNE
+}
 
-  master              Master?
-  createdAppointments   Appointment[]       @relation("AppointmentCreatedBy")
-  createdBlocks         ScheduleBlock[]     @relation("BlockCreatedBy")
-  createdExtraWorkWindows ExtraWorkWindow[] @relation("ExtraWorkCreatedBy")
-  managerNotes          ManagerNote[]
-  requestedExports      EmergencyExport[]   @relation("ExportRequestedBy")
-  auditLogs             AuditLog[]
-  clientDuplicateReviews ClientDuplicateReview[] @relation("DuplicateReviewedBy")
-  clientsMergedBy        Client[]                @relation("ClientMergedBy")
-  clientMergeLogs        ClientMergeLog[]        @relation("ClientMergePerformedBy")
-  botSettingsUpdated     BotSettings[]           @relation("BotSettingsUpdatedBy")
+enum GameCatalogStatus {
+  DRAFT
+  ACTIVE
+  DISABLED
+  ARCHIVED
+}
+
+model User {
+  id            String    @id @default(uuid()) @db.Uuid
+  email         String    @unique
+  passwordHash  String    @map("password_hash")
+  role          UserRole
+  name          String
+  phone         String?
+  positionTitle String?   @map("position_title")
+  notes         String?
+  isActive      Boolean   @default(true) @map("is_active")
+  lastLoginAt   DateTime? @map("last_login_at") @db.Timestamptz
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  master                  Master?
+  createdAppointments     Appointment[]           @relation("AppointmentCreatedBy")
+  createdBlocks           ScheduleBlock[]         @relation("BlockCreatedBy")
+  createdExtraWorkWindows ExtraWorkWindow[]       @relation("ExtraWorkCreatedBy")
+  managerNotes            ManagerNote[]
+  requestedExports        EmergencyExport[]       @relation("ExportRequestedBy")
+  auditLogs               AuditLog[]
+  clientDuplicateReviews  ClientDuplicateReview[] @relation("DuplicateReviewedBy")
+  clientsMergedBy         Client[]                @relation("ClientMergedBy")
+  clientMergeLogs         ClientMergeLog[]        @relation("ClientMergePerformedBy")
+  botSettingsUpdated      BotSettings[]           @relation("BotSettingsUpdatedBy")
 
   @@map("users")
 }
@@ -170,7 +183,7 @@ model Master {
   createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
-  user           User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user             User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
   masterServices   MasterService[]
   appointments     Appointment[]
   scheduleBlocks   ScheduleBlock[]
@@ -214,7 +227,7 @@ model Service {
   createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
-  category       ServiceCategory  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  category       ServiceCategory    @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   synonyms       ServiceSynonym[]
   masterServices MasterService[]
   appointments   Appointment[]
@@ -240,17 +253,17 @@ model ServiceSynonym {
 }
 
 model MasterService {
-  masterId                    String   @map("master_id") @db.Uuid
-  serviceId                   String   @map("service_id") @db.Uuid
-  isEnabled                   Boolean  @default(true) @map("is_enabled")
-  isPublic                    Boolean  @default(true) @map("is_public")
-  isOnlineBookingEnabled      Boolean  @default(true) @map("is_online_booking_enabled")
-  durationMinutesOverride     Int?     @map("duration_minutes_override")
-  breakAfterMinutesOverride   Int?     @map("break_after_minutes_override")
-  priceOverride               Decimal? @map("price_override") @db.Decimal(10, 2)
-  sortOrder                   Int      @default(0) @map("sort_order")
-  createdAt                   DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt                   DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  masterId                  String   @map("master_id") @db.Uuid
+  serviceId                 String   @map("service_id") @db.Uuid
+  isEnabled                 Boolean  @default(true) @map("is_enabled")
+  isPublic                  Boolean  @default(true) @map("is_public")
+  isOnlineBookingEnabled    Boolean  @default(true) @map("is_online_booking_enabled")
+  durationMinutesOverride   Int?     @map("duration_minutes_override")
+  breakAfterMinutesOverride Int?     @map("break_after_minutes_override")
+  priceOverride             Decimal? @map("price_override") @db.Decimal(10, 2)
+  sortOrder                 Int      @default(0) @map("sort_order")
+  createdAt                 DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                 DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   master  Master  @relation(fields: [masterId], references: [id], onDelete: Restrict)
   service Service @relation(fields: [serviceId], references: [id], onDelete: Restrict)
@@ -391,8 +404,8 @@ model BookingRequest {
   createdAt   DateTime             @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime             @updatedAt @map("updated_at") @db.Timestamptz
 
-  master Master? @relation(fields: [masterId], references: [id], onDelete: SetNull)
-  client Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  master       Master?       @relation(fields: [masterId], references: [id], onDelete: SetNull)
+  client       Client?       @relation(fields: [clientId], references: [id], onDelete: SetNull)
   botEventLogs BotEventLog[]
 
   @@index([status, createdAt(sort: Desc)])
@@ -438,24 +451,26 @@ model AuditLog {
 }
 
 model ChangeEvent {
-  id                  String   @id @default(uuid()) @db.Uuid
-  eventType           String   @map("event_type")
-  entityType          String   @map("entity_type")
-  entityId            String   @map("entity_id") @db.Uuid
-  payloadAnonymized   Json?    @map("payload_anonymized")
-  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz
+  id                String   @id @default(uuid()) @db.Uuid
+  eventType         String   @map("event_type")
+  entityType        String   @map("entity_type")
+  entityId          String   @map("entity_id") @db.Uuid
+  payloadAnonymized Json?    @map("payload_anonymized")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([createdAt])
   @@map("change_events")
 }
 
 model GameConfig {
-  /** Singleton-конфигурация игры. */
-  id          String   @id @default("default")
-  isActive    Boolean  @default(false) @map("is_active")
-  title       String   @default("Поймай своё время")
-  description String   @default("")
-  image       String?  @map("image")
+  /**
+   * Singleton-конфигурация игры.
+   */
+  id          String  @id @default("default")
+  isActive    Boolean @default(false) @map("is_active")
+  title       String  @default("Поймай своё время")
+  description String  @default("")
+  image       String? @map("image")
 
   resultHeaderText     String @default("Ваш результат готов ✨") @map("result_header_text")
   directionLabelText   String @default("Ваше направление ухода:") @map("direction_label_text")
@@ -471,18 +486,22 @@ model GameConfig {
 }
 
 model GameGift {
-  id               String   @id @default(uuid()) @db.Uuid
+  id               String  @id @default(uuid()) @db.Uuid
   name             String
-  shortDescription String   @map("short_description")
-  image            String?  @map("image")
-  isActive         Boolean  @default(true) @map("is_active")
-  probability      Int      @default(0)
+  shortDescription String  @map("short_description")
+  image            String? @map("image")
+  isActive         Boolean @default(true) @map("is_active")
+  probability      Int     @default(0)
 
-  /** Категоризация подарка для UI/аналитики. */
+  /**
+   * Категоризация подарка для UI/аналитики.
+   */
   priority  String @default("standard")
   cardStyle String @default("default") @map("card_style")
 
-  /** Правила доступности: пустой массив = доступно для всех. */
+  /**
+   * Правила доступности: пустой массив = доступно для всех.
+   */
   allowedGameDirections String[] @default([]) @map("allowed_game_directions")
   allowedResultTypes    String[] @default([]) @map("allowed_result_types")
   requiredPremiumLevel  Int      @default(0) @map("required_premium_level")
@@ -498,16 +517,18 @@ model GameGift {
 }
 
 model GamePlay {
-  id            String   @id @default(uuid()) @db.Uuid
-  gameDirection String   @map("game_direction")
-  skinNeed      String   @map("skin_need")
-  resultType    String   @map("result_type")
-  premiumLevel  Int      @default(0) @map("premium_level")
+  id            String @id @default(uuid()) @db.Uuid
+  gameDirection String @map("game_direction")
+  skinNeed      String @map("skin_need")
+  resultType    String @map("result_type")
+  premiumLevel  Int    @default(0) @map("premium_level")
 
-  selectedGiftId String?  @map("selected_gift_id") @db.Uuid
+  selectedGiftId String?   @map("selected_gift_id") @db.Uuid
   selectedGift   GameGift? @relation(fields: [selectedGiftId], references: [id], onDelete: SetNull)
 
-  /** Будущая связь с заявкой/лидом (например bookingRequest.id). */
+  /**
+   * Будущая связь с заявкой/лидом (например bookingRequest.id).
+   */
   leadId String? @map("lead_id") @db.Uuid
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
@@ -519,30 +540,52 @@ model GamePlay {
   @@map("game_plays")
 }
 
+/**
+ * Каталог игр студии. Механика CATCH_TIME по-прежнему хранится в GameConfig (legacy).
+ */
+model GameCatalog {
+  id             String            @id @default(uuid()) @db.Uuid
+  slug           String            @unique
+  title          String
+  type           GameCatalogType
+  status         GameCatalogStatus @default(DRAFT)
+  description    String?
+  settings       Json?
+  externalUrl    String?           @map("external_url")
+  legacyConfigId String?           @map("legacy_config_id")
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime          @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([status])
+  @@index([type])
+  @@map("game_catalog")
+}
+
 model Promotion {
-  id               String           @id @default(uuid()) @db.Uuid
-  title            String
-  slug             String           @unique
-  shortDescription String?          @map("short_description")
-  description      String?
-  type             PromotionType
-  status           PromotionStatus  @default(DRAFT)
-  isActive         Boolean          @default(false) @map("is_active")
-  startsAt         DateTime?        @map("starts_at") @db.Timestamptz
-  endsAt           DateTime?        @map("ends_at") @db.Timestamptz
-  giftTitle        String?          @map("gift_title")
-  giftDescription  String?          @map("gift_description")
-  discountValue    Decimal?         @map("discount_value") @db.Decimal(10, 2)
-  discountUnit     DiscountUnit?    @map("discount_unit")
-  discountDescription String?       @map("discount_description")
-  conditions       String?
-  ctaText          String?          @map("cta_text")
-  ctaLink          String?          @map("cta_link")
-  imageUrl         String?          @map("image_url")
-  priority         Int              @default(100)
-  source           PromotionSource  @default(MANUAL)
-  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt        DateTime         @updatedAt @map("updated_at") @db.Timestamptz
+  id                  String          @id @default(uuid()) @db.Uuid
+  title               String
+  slug                String          @unique
+  shortDescription    String?         @map("short_description")
+  description         String?
+  type                PromotionType
+  status              PromotionStatus @default(DRAFT)
+  isActive            Boolean         @default(false) @map("is_active")
+  startsAt            DateTime?       @map("starts_at") @db.Timestamptz
+  endsAt              DateTime?       @map("ends_at") @db.Timestamptz
+  giftTitle           String?         @map("gift_title")
+  giftDescription     String?         @map("gift_description")
+  discountValue       Decimal?        @map("discount_value") @db.Decimal(10, 2)
+  discountUnit        DiscountUnit?   @map("discount_unit")
+  discountDescription String?         @map("discount_description")
+  conditions          String?
+  ctaText             String?         @map("cta_text")
+  ctaLink             String?         @map("cta_link")
+  imageUrl            String?         @map("image_url")
+  priority            Int             @default(100)
+  source              PromotionSource @default(MANUAL)
+  showOnHomepage      Boolean         @default(false) @map("show_on_homepage")
+  createdAt           DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime        @updatedAt @map("updated_at") @db.Timestamptz
 
   services PromotionService[]
 
@@ -550,6 +593,7 @@ model Promotion {
   @@index([priority])
   @@index([startsAt])
   @@index([endsAt])
+  @@index([showOnHomepage, status, isActive])
   @@map("promotions")
 }
 
@@ -565,20 +609,22 @@ model PromotionService {
 }
 
 model StudioSettings {
-  /** Singleton-настройки студии. */
+  /**
+   * Singleton-настройки студии.
+   */
   id String @id @default("default")
 
-  studioName  String @default("Твоё время") @map("studio_name")
-  legalName   String @default("ИП Кузнецова Светлана Викторовна") @map("legal_name")
-  inn         String @default("450144605881")
-  ogrnip      String @default("324450000034680")
-  phone       String @default("8 912 979-30-90")
-  email       String @default("ipku82@bk.ru")
-  address     String @default("г. Курган, ул. Володарского, 30")
-  vkUrl       String @default("https://vk.me/tvoiovremya") @map("vk_url")
-  maxUrl      String @default("https://web.max.ru/267619155") @map("max_url")
-  telegramUrl String @default("") @map("telegram_url")
-  whatsappUrl String @default("") @map("whatsapp_url")
+  studioName       String @default("Твоё время") @map("studio_name")
+  legalName        String @default("ИП Кузнецова Светлана Викторовна") @map("legal_name")
+  inn              String @default("450144605881")
+  ogrnip           String @default("324450000034680")
+  phone            String @default("8 912 979-30-90")
+  email            String @default("ipku82@bk.ru")
+  address          String @default("г. Курган, ул. Володарского, 30")
+  vkUrl            String @default("https://vk.me/tvoiovremya") @map("vk_url")
+  maxUrl           String @default("https://web.max.ru/267619155") @map("max_url")
+  telegramUrl      String @default("") @map("telegram_url")
+  whatsappUrl      String @default("") @map("whatsapp_url")
   workingHoursText String @default("") @map("working_hours_text")
 
   bookingSuccessMessage String @default("Спасибо! Заявка отправлена. Менеджер студии свяжется с вами, чтобы уточнить детали и помочь с записью.") @map("booking_success_message")
@@ -620,37 +666,37 @@ model LegalDocument {
  * В будущем: заявки, записи, задачи, переписки, лояльность, аналитика.
  */
 model Client {
-  id               String       @id @default(uuid()) @db.Uuid
-  fullName         String       @map("full_name")
-  phone            String?
-  normalizedPhone  String?      @map("normalized_phone")
-  email            String?
-  birthDate     DateTime?    @map("birth_date") @db.Date
-  gender        String?
-  source        String?
-  status        ClientStatus @default(NEW)
-  notes         String?
-  tags          String[]     @default([])
-  isArchived    Boolean      @default(false) @map("is_archived")
-  loyaltyLevel  String?      @map("loyalty_level")
-  bonusBalance  Int          @default(0) @map("bonus_balance")
-  totalSpent    Int          @default(0) @map("total_spent")
-  lastVisitAt   DateTime?    @map("last_visit_at") @db.Timestamptz
-  lastContactAt    DateTime?    @map("last_contact_at") @db.Timestamptz
-  mergedIntoClientId String?    @map("merged_into_client_id") @db.Uuid
-  mergedAt         DateTime?  @map("merged_at") @db.Timestamptz
-  mergedByUserId   String?    @map("merged_by_user_id") @db.Uuid
-  mergeNote        String?    @map("merge_note")
-  createdAt        DateTime   @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt        DateTime   @updatedAt @map("updated_at") @db.Timestamptz
+  id                 String       @id @default(uuid()) @db.Uuid
+  fullName           String       @map("full_name")
+  phone              String?
+  normalizedPhone    String?      @map("normalized_phone")
+  email              String?
+  birthDate          DateTime?    @map("birth_date") @db.Date
+  gender             String?
+  source             String?
+  status             ClientStatus @default(NEW)
+  notes              String?
+  tags               String[]     @default([])
+  isArchived         Boolean      @default(false) @map("is_archived")
+  loyaltyLevel       String?      @map("loyalty_level")
+  bonusBalance       Int          @default(0) @map("bonus_balance")
+  totalSpent         Int          @default(0) @map("total_spent")
+  lastVisitAt        DateTime?    @map("last_visit_at") @db.Timestamptz
+  lastContactAt      DateTime?    @map("last_contact_at") @db.Timestamptz
+  mergedIntoClientId String?      @map("merged_into_client_id") @db.Uuid
+  mergedAt           DateTime?    @map("merged_at") @db.Timestamptz
+  mergedByUserId     String?      @map("merged_by_user_id") @db.Uuid
+  mergeNote          String?      @map("merge_note")
+  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime     @updatedAt @map("updated_at") @db.Timestamptz
 
-  appointments     Appointment[]
-  bookingRequests  BookingRequest[]
-  mergedIntoClient Client?        @relation("ClientMergeTarget", fields: [mergedIntoClientId], references: [id], onDelete: SetNull)
-  mergedSources    Client[]       @relation("ClientMergeTarget")
-  mergedByUser     User?          @relation("ClientMergedBy", fields: [mergedByUserId], references: [id], onDelete: SetNull)
+  appointments      Appointment[]
+  bookingRequests   BookingRequest[]
+  mergedIntoClient  Client?          @relation("ClientMergeTarget", fields: [mergedIntoClientId], references: [id], onDelete: SetNull)
+  mergedSources     Client[]         @relation("ClientMergeTarget")
+  mergedByUser      User?            @relation("ClientMergedBy", fields: [mergedByUserId], references: [id], onDelete: SetNull)
   mergeLogsAsTarget ClientMergeLog[] @relation("MergeLogTarget")
-  botEventLogs        BotEventLog[]
+  botEventLogs      BotEventLog[]
 
   @@index([status, isArchived])
   @@index([phone])
@@ -691,28 +737,30 @@ model ClientDuplicateReview {
   @@map("client_duplicate_reviews")
 }
 
-/** Singleton-настройки будущего AI-бота студии. Без API-ключей и внешних интеграций. */
+/**
+ * Singleton-настройки будущего AI-бота студии. Без API-ключей и внешних интеграций.
+ */
 model BotSettings {
   id String @id @default("default")
 
-  isEnabled            Boolean @default(false) @map("is_enabled")
-  mode                 String  @default("OFF")
-  provider             String  @default("YANDEX")
-  responseMode         String  @default("HINTS_ONLY") @map("response_mode")
-  channels             Json    @default("{\"siteWidget\":false,\"vk\":false,\"max\":false,\"telegram\":false}")
-  mainInstruction      String? @map("main_instruction") @db.Text
-  knowledgeBaseNote    String? @map("knowledge_base_note") @db.Text
-  handoffRules         String? @map("handoff_rules") @db.Text
-  taggingRules         String? @map("tagging_rules") @db.Text
-  safetyRules          String? @map("safety_rules") @db.Text
-  maxMessagesPerClient Int     @default(20) @map("max_messages_per_client")
-  maxDailyMessages     Int     @default(200) @map("max_daily_messages")
-  logRetentionDays       Int     @default(30) @map("log_retention_days")
-  errorLogRetentionDays  Int     @default(90) @map("error_log_retention_days")
-  maxStoredBotEvents     Int     @default(5000) @map("max_stored_bot_events")
-  updatedByUserId      String? @map("updated_by_user_id") @db.Uuid
-  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt            DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  isEnabled             Boolean  @default(false) @map("is_enabled")
+  mode                  String   @default("OFF")
+  provider              String   @default("YANDEX")
+  responseMode          String   @default("HINTS_ONLY") @map("response_mode")
+  channels              Json     @default("{\"siteWidget\":false,\"vk\":false,\"max\":false,\"telegram\":false}")
+  mainInstruction       String?  @map("main_instruction") @db.Text
+  knowledgeBaseNote     String?  @map("knowledge_base_note") @db.Text
+  handoffRules          String?  @map("handoff_rules") @db.Text
+  taggingRules          String?  @map("tagging_rules") @db.Text
+  safetyRules           String?  @map("safety_rules") @db.Text
+  maxMessagesPerClient  Int      @default(20) @map("max_messages_per_client")
+  maxDailyMessages      Int      @default(200) @map("max_daily_messages")
+  logRetentionDays      Int      @default(30) @map("log_retention_days")
+  errorLogRetentionDays Int      @default(90) @map("error_log_retention_days")
+  maxStoredBotEvents    Int      @default(5000) @map("max_stored_bot_events")
+  updatedByUserId       String?  @map("updated_by_user_id") @db.Uuid
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   updatedByUser User? @relation("BotSettingsUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
 

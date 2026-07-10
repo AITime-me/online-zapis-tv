@@ -14,7 +14,10 @@ import {
   AppointmentConflictError,
   AppointmentValidationError,
 } from "@/services/AppointmentService";
-import { createOnlineBooking } from "@/services/BookingService";
+import {
+  createOnlineBooking,
+  OnlineServiceUnavailableError,
+} from "@/services/BookingService";
 import { buildManageUrl } from "@/services/BookingManageService";
 
 export const dynamic = "force-dynamic";
@@ -152,6 +155,9 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof AppointmentConflictError) {
       return errorResponse(error.message, 409, { code: error.name });
+    }
+    if (error instanceof OnlineServiceUnavailableError) {
+      return errorResponse(error.message, 400, { code: error.name });
     }
     if (error instanceof AppointmentValidationError) {
       return errorResponse(error.message, 400, { code: error.name });

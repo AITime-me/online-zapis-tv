@@ -7,7 +7,7 @@ type SettingsPageHeaderProps = {
 
 export function SettingsPageHeader({ role }: SettingsPageHeaderProps) {
   return (
-    <header className="relative z-10 shrink-0 border-b border-[#dadce0] bg-white px-4 py-3 md:px-6">
+    <header className="shrink-0 border-b border-[#dadce0] bg-white px-4 py-3 md:px-6">
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] lg:items-start lg:gap-8">
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold text-zinc-900">Настройки</h1>

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { readApiJsonResponse } from "@/lib/api/read-json-response";
+import { getPromotionHomepageReadiness } from "@/lib/promotions/homepage-eligibility";
 import {
   DISCOUNT_UNIT_LABELS,
   PROMOTION_SOURCE_LABELS,
@@ -47,6 +48,7 @@ type FormState = {
   imageUrl: string;
   priority: string;
   source: PromotionSourceDto;
+  showOnHomepage: boolean;
   serviceIds: string[];
 };
 
@@ -177,6 +179,7 @@ function emptyForm(): FormState {
     imageUrl: "",
     priority: String(DEFAULT_PROMOTION_PRIORITY),
     source: "manual",
+    showOnHomepage: false,
     serviceIds: [],
   };
 }
@@ -204,6 +207,7 @@ function formFromPromotion(promotion: PromotionDto): FormState {
     imageUrl: promotion.imageUrl ?? "",
     priority: String(promotion.priority),
     source: promotion.source,
+    showOnHomepage: promotion.showOnHomepage,
     serviceIds: [...promotion.serviceIds],
   };
 }
@@ -239,6 +243,7 @@ function formToWriteInput(form: FormState): PromotionWriteInput {
     imageUrl: form.imageUrl || null,
     priority: parsePriorityForSave(form.priority),
     source: form.source,
+    showOnHomepage: form.showOnHomepage,
     serviceIds: form.serviceIds,
   };
 }
@@ -862,6 +867,53 @@ export function PromotionsPanel({
                   : null}
               </span>
             </label>
+
+            <label className="flex items-center gap-2 pt-5">
+              <input
+                type="checkbox"
+                checked={form.showOnHomepage}
+                disabled={form.status === "archived"}
+                onChange={(event) =>
+                  updateForm("showOnHomepage", event.target.checked)
+                }
+              />
+              <span className={labelClass}>Показывать на главной странице</span>
+            </label>
+
+            {form.showOnHomepage ? (
+              <div className="lg:col-span-2">
+                {(() => {
+                  const readiness = getPromotionHomepageReadiness({
+                    title: form.title,
+                    shortDescription: form.shortDescription || null,
+                    description: form.description || null,
+                    ctaText: form.ctaText || null,
+                    ctaLink: form.ctaLink || null,
+                    imageUrl: form.imageUrl || null,
+                    status: form.status,
+                    isActive: form.isActive,
+                    showOnHomepage: form.showOnHomepage,
+                    startsAt: fromDatetimeLocalValue(form.startsAt),
+                    endsAt: fromDatetimeLocalValue(form.endsAt),
+                  });
+
+                  if (readiness.eligible) {
+                    return (
+                      <p className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                        Акция готова к показу в карусели главной страницы.
+                      </p>
+                    );
+                  }
+
+                  return (
+                    <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                      Для показа на главной не хватает:{" "}
+                      {readiness.missing.join(", ")}.
+                    </p>
+                  );
+                })()}
+              </div>
+            ) : null}
 
             <label className="flex flex-col gap-1">
               <span className={labelClass}>Дата начала</span>

@@ -10,6 +10,7 @@ import {
   formatMonthRowDateParts,
   getWeekdayIndex,
 } from "@/lib/datetime/date-layer";
+import type { ScheduleBookingRequestDetailLevel } from "@/components/schedule/schedule-booking-request-card";
 import {
   BORDER_DATE,
   stickyDateBodyClass,
@@ -52,6 +53,8 @@ export function ScheduleMonthRow({
   onRequestOpen,
   readOnly = false,
   showManagerColumn = true,
+  canEditManagerNotes = true,
+  bookingRequestDetailLevel = "full",
 }: {
   day: ScheduleMonthData["days"][number];
   rowIndex: number;
@@ -63,6 +66,8 @@ export function ScheduleMonthRow({
   onRequestOpen?: (request: ScheduleDayBookingRequest) => void;
   readOnly?: boolean;
   showManagerColumn?: boolean;
+  canEditManagerNotes?: boolean;
+  bookingRequestDetailLevel?: ScheduleBookingRequestDetailLevel;
 }) {
   const isToday = day.dateKey === studioToday;
   const weekdayIndex = getWeekdayIndex(day.dateKey);
@@ -114,15 +119,17 @@ export function ScheduleMonthRow({
           notes={day.managerNotes}
           bookingRequests={day.bookingRequests}
           onOpen={
-            readOnly
+            readOnly || !canEditManagerNotes
               ? undefined
               : () =>
                   onManagerCellOpen?.({
                     dateKey: day.dateKey,
                     notes: day.managerNotes,
+                    bookingRequests: day.bookingRequests,
                   })
           }
           onRequestOpen={onRequestOpen}
+          bookingRequestDetailLevel={bookingRequestDetailLevel}
         />
       ) : null}
 

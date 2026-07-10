@@ -19,7 +19,7 @@ import { EMPTY_PROMOTION, getServiceCardPromotion } from "@/lib/booking/promotio
 import type {
   BookingCatalogCategory,
   BookingCatalogService,
-} from "@/services/BookingService";
+} from "@/lib/booking/catalog-types";
 
 type ServiceView = "categories" | "services";
 
