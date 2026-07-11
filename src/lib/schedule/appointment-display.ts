@@ -1,4 +1,5 @@
 import { formatStudioTime } from "@/lib/datetime/date-layer";
+import type { ScheduleAppointmentOperationalFields } from "@/lib/schedule/appointment-contract";
 import type { ScheduleDayAppointment } from "@/types/schedule";
 
 /** Заголовок записи в расписании — публичное название услуги. */
@@ -49,8 +50,9 @@ export function isScheduleAppointmentBold(
 export function buildScheduleAppointmentDisplay(
   appointment: Pick<
     ScheduleDayAppointment,
-    "startsAt" | "endsAt" | "serviceName" | "clientName" | "clientPhone" | "comment"
-  >,
+    "startsAt" | "endsAt" | "serviceName" | "clientName"
+  > &
+    Partial<Pick<ScheduleAppointmentOperationalFields, "clientPhone" | "comment">>,
 ): ScheduleAppointmentDisplay {
   return {
     timeLabel: formatStudioTime(appointment.startsAt),

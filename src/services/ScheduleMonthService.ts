@@ -19,6 +19,7 @@ import type {
 } from "@/types/schedule-month";
 import { listActiveBookingRequestsForRange } from "@/services/BookingRequestService";
 import {
+  resolveAppointmentVisibility,
   resolveBookingRequestVisibility,
   SCHEDULE_LOAD_INTERNAL,
   type ScheduleLoadOptions,
@@ -28,15 +29,17 @@ function mapAppointment(
   appointment: Awaited<
     ReturnType<typeof prisma.appointment.findMany>
   >[number] & { service: { publicName: string } | null },
+  appointmentVisibility: ReturnType<typeof resolveAppointmentVisibility>,
 ): ScheduleMonthCellItem {
   return {
     kind: "appointment",
-    ...mapScheduleDayAppointment(appointment),
+    ...mapScheduleDayAppointment(appointment, appointmentVisibility),
   };
 }
 
 function mapBlock(
   block: Awaited<ReturnType<typeof prisma.scheduleBlock.findMany>>[number],
+  stripInternalReason: boolean,
 ): ScheduleMonthCellItem {
   return {
     kind: "block",
@@ -45,7 +48,7 @@ function mapBlock(
     endsAt: block.isFullDay ? "" : (block.endsAt?.toISOString() ?? ""),
     blockType: block.blockType,
     blockTypeLabel: getBlockDisplayLabel(block.blockType, block.isFullDay),
-    internalReason: block.internalReason,
+    internalReason: stripInternalReason ? null : block.internalReason,
     isFullDay: block.isFullDay,
   };
 }
@@ -75,6 +78,8 @@ export async function getScheduleMonthData(
     getStudioMonthRangeFromMonthKey(normalizedMonthKey);
   const includeManagerColumn = options.includeManagerColumn ?? true;
   const bookingRequestVisibility = resolveBookingRequestVisibility(options);
+  const appointmentVisibility = resolveAppointmentVisibility(options);
+  const stripBlockInternalReason = options.stripBlockInternalReason ?? false;
   const includeBookingRequests =
     includeManagerColumn && bookingRequestVisibility !== "none";
 
@@ -194,7 +199,7 @@ export async function getScheduleMonthData(
     const masterMap =
       appointmentsByDateMaster.get(dateKey) ?? new Map<string, ScheduleMonthCellItem[]>();
     const items = masterMap.get(appointment.masterId) ?? [];
-    items.push(mapAppointment(appointment));
+    items.push(mapAppointment(appointment, appointmentVisibility));
     masterMap.set(appointment.masterId, items);
     appointmentsByDateMaster.set(dateKey, masterMap);
   }
@@ -210,7 +215,7 @@ export async function getScheduleMonthData(
     const masterMap =
       blocksByDateMaster.get(dateKey) ?? new Map<string, ScheduleMonthCellItem[]>();
     const items = masterMap.get(block.masterId) ?? [];
-    items.push(mapBlock(block));
+    items.push(mapBlock(block, stripBlockInternalReason));
     masterMap.set(block.masterId, items);
     blocksByDateMaster.set(dateKey, masterMap);
   }

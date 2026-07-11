@@ -1,4 +1,5 @@
 import { NON_BLOCKING_APPOINTMENT_STATUSES } from "@/lib/schedule/non-blocking-appointment-statuses";
+import { mapScheduleDayAppointmentOperational } from "@/lib/schedule/map-schedule-appointment";
 import { prisma } from "@/lib/db";
 import {
   formatDateKeyInStudio,
@@ -111,14 +112,12 @@ export async function getCellEditorData(
     }),
   ]);
 
-  const { mapAppointmentDto } = await import("@/services/AppointmentService");
-
   return {
     dateKey,
     masterId: master.id,
     masterInternalName: master.internalName,
     masterPublicName: master.publicName,
-    appointments: appointments.map(mapAppointmentDto),
+    appointments: appointments.map(mapScheduleDayAppointmentOperational),
     scheduleBlocks: scheduleBlocks.map((block) => ({
       id: block.id,
       startsAt: block.isFullDay ? "" : (block.startsAt?.toISOString() ?? ""),

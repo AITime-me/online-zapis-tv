@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ScheduleDayAppointment } from "@/types/schedule";
+import { isOperationalScheduleAppointment } from "@/lib/schedule/appointment-contract";
 import {
   addMinutesSafe,
   diffMinutes,
@@ -16,6 +17,11 @@ import type { EditorServiceOption } from "@/services/ScheduleEditorOptionsServic
 import { EditorCheckboxField, EditorField } from "@/components/schedule/editor-field";
 import { AppointmentRecordSummary } from "@/components/schedule/appointment-detail-summary";
 import { AppointmentPromoBadges } from "@/components/schedule/appointment-promo-badges";
+import {
+  AppointmentMasterNoteBlock,
+  AppointmentPromotionLabelBadges,
+} from "@/components/schedule/appointment-master-display";
+import { isMasterScheduleAppointment } from "@/lib/schedule/appointment-contract";
 
 export type { EditorOptions };
 
@@ -43,16 +49,17 @@ function formatEditorServicePrice(service: EditorServiceOption): string | null {
 }
 
 function toFormState(appointment: ScheduleDayAppointment): AppointmentFormState {
+  const operational = isOperationalScheduleAppointment(appointment);
   return {
     startTime: toScheduleTimeInput(appointment.startsAt, "09:00"),
     endTime: toScheduleTimeInput(appointment.endsAt, "10:00"),
     serviceId: appointment.serviceId ?? "",
     clientName: appointment.clientName,
-    clientPhone: appointment.clientPhone,
+    clientPhone: operational ? appointment.clientPhone : "",
     status: appointment.statusCode,
     source: appointment.sourceCode,
-    comment: appointment.comment ?? "",
-    importantNote: appointment.importantNote ?? "",
+    comment: operational ? appointment.comment ?? "" : "",
+    importantNote: operational ? appointment.importantNote ?? "" : "",
     isBold: appointment.isBold,
   };
 }
@@ -329,9 +336,31 @@ export function AppointmentEditorForm({
           {form.startTime}–{form.endTime}
         </div>
         <AppointmentPromoBadges
-          promotions={appointment.appliedPromotions}
+          promotions={
+            isOperationalScheduleAppointment(appointment)
+              ? appointment.appliedPromotions
+              : []
+          }
           className="mt-1"
         />
+        {isOperationalScheduleAppointment(appointment) && appointment.importantNote ? (
+          <div className="mt-1">
+            <AppointmentMasterNoteBlock note={appointment.importantNote} />
+          </div>
+        ) : null}
+        {isMasterScheduleAppointment(appointment) ? (
+          <>
+            <AppointmentPromotionLabelBadges
+              labels={appointment.promotionLabels}
+              className="mt-1"
+            />
+            {appointment.masterNote ? (
+              <div className="mt-1">
+                <AppointmentMasterNoteBlock note={appointment.masterNote} />
+              </div>
+            ) : null}
+          </>
+        ) : null}
       </article>
     );
   }
@@ -461,11 +490,27 @@ export function AppointmentEditorForm({
         </EditorField>
       </div>
 
+      {isOperationalScheduleAppointment(appointment) &&
+      appointment.appliedPromotions.length > 0 ? (
+        <div className="mt-2 rounded border border-emerald-100 bg-emerald-50/40 px-2 py-1.5">
+          <p className="text-[10px] font-medium text-emerald-900">
+            Системные акции и подарки
+          </p>
+          <AppointmentPromoBadges
+            promotions={appointment.appliedPromotions}
+            className="mt-1"
+          />
+        </div>
+      ) : null}
+
       <EditorField
         field="comment"
         htmlFor={fieldId("comment")}
         className="mt-2 flex flex-col gap-0.5"
       >
+        <p className="text-[10px] text-zinc-500">
+          Видят только менеджер и владелец. Не используйте для операционных указаний мастеру.
+        </p>
         <textarea
           id={fieldId("comment")}
           value={form.comment}
@@ -481,6 +526,10 @@ export function AppointmentEditorForm({
         htmlFor={fieldId("importantNote")}
         className="mt-2 flex flex-col gap-0.5"
       >
+        <p className="text-[10px] text-zinc-500">
+          Эту информацию увидит мастер. Не указывайте телефон, email и другие лишние
+          персональные данные.
+        </p>
         <input
           id={fieldId("importantNote")}
           value={form.importantNote}
@@ -743,6 +792,9 @@ export function NewAppointmentForm({
         htmlFor={fieldId("comment")}
         className="mt-2 flex flex-col gap-0.5"
       >
+        <p className="text-[10px] text-zinc-500">
+          Видят только менеджер и владелец. Не используйте для операционных указаний мастеру.
+        </p>
         <textarea
           id={fieldId("comment")}
           value={form.comment}
@@ -759,6 +811,10 @@ export function NewAppointmentForm({
         htmlFor={fieldId("importantNote")}
         className="mt-2 flex flex-col gap-0.5"
       >
+        <p className="text-[10px] text-zinc-500">
+          Эту информацию увидит мастер. Не указывайте телефон, email и другие лишние
+          персональные данные.
+        </p>
         <input
           id={fieldId("importantNote")}
           value={form.importantNote}

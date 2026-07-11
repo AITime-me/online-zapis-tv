@@ -15,9 +15,16 @@ export default auth((req) => {
     if (!isValidScheduleViewToken(token)) {
       return new NextResponse("Неверная или отсутствующая ссылка", {
         status: 401,
-        headers: { "Content-Type": "text/plain; charset=utf-8" },
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Referrer-Policy": "no-referrer",
+        },
       });
     }
+
+    const response = NextResponse.next();
+    response.headers.set("Referrer-Policy", "no-referrer");
+    return response;
   }
 
   if (pathname.startsWith("/schedule")) {

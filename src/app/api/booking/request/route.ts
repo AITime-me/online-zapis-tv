@@ -6,6 +6,7 @@ import {
   validateClientData,
   type ClientDataInput,
 } from "@/lib/booking/client-validation";
+import { toPublicBookingRequestCreateResponse } from "@/lib/booking-requests/public-booking-request-contract";
 import {
   BookingRequestValidationError,
   createBookingRequest,
@@ -76,7 +77,9 @@ export async function POST(request: Request) {
         typeof body.serviceName === "string" ? body.serviceName : body.serviceName ?? null,
     });
 
-    return NextResponse.json({ ok: true, request: bookingRequest });
+    return NextResponse.json(
+      toPublicBookingRequestCreateResponse({ id: bookingRequest.id }),
+    );
   } catch (error) {
     if (error instanceof BookingRequestValidationError) {
       return NextResponse.json(

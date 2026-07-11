@@ -1,6 +1,10 @@
 import type { ScheduleMonthCellItem } from "@/types/schedule-month";
 import { formatStudioTimeRange } from "@/lib/datetime/date-layer";
 import {
+  isMasterScheduleAppointment,
+  isOperationalScheduleAppointment,
+} from "@/lib/schedule/appointment-contract";
+import {
   buildScheduleAppointmentDisplay,
   getScheduleAppointmentTitle,
   isScheduleAppointmentBold,
@@ -14,11 +18,16 @@ export function formatMonthCellLine(item: ScheduleMonthCellItem): {
   isBlock: boolean;
   isFullDayBlock: boolean;
   isExtraWork: boolean;
-  hasImportantNote: boolean;
-  hasPromotions: boolean;
+  hasMasterNote: boolean;
+  hasPromotionLabels: boolean;
+  promotionLabels: string[];
+  masterNote: string | null;
 } {
   if (item.kind === "appointment") {
     const display = buildScheduleAppointmentDisplay(item);
+    const operational = isOperationalScheduleAppointment(item);
+    const master = isMasterScheduleAppointment(item);
+
     return {
       title: `${display.timeLabel} · ${getScheduleAppointmentTitle(item.serviceName)}`,
       subtitle: formatMonthAppointmentClientLine(item),
@@ -26,8 +35,22 @@ export function formatMonthCellLine(item: ScheduleMonthCellItem): {
       isBlock: false,
       isFullDayBlock: false,
       isExtraWork: false,
-      hasImportantNote: Boolean(item.importantNote),
-      hasPromotions: item.appliedPromotions.length > 0,
+      hasMasterNote: operational
+        ? Boolean(item.importantNote)
+        : master
+          ? Boolean(item.masterNote)
+          : false,
+      hasPromotionLabels: operational
+        ? item.appliedPromotions.length > 0
+        : master
+          ? item.promotionLabels.length > 0
+          : false,
+      promotionLabels: master ? item.promotionLabels : [],
+      masterNote: operational
+        ? item.importantNote
+        : master
+          ? item.masterNote
+          : null,
     };
   }
 
@@ -40,8 +63,10 @@ export function formatMonthCellLine(item: ScheduleMonthCellItem): {
         isBlock: true,
         isFullDayBlock: true,
         isExtraWork: false,
-        hasImportantNote: false,
-        hasPromotions: false,
+        hasMasterNote: false,
+        hasPromotionLabels: false,
+        promotionLabels: [],
+        masterNote: null,
       };
     }
 
@@ -54,8 +79,10 @@ export function formatMonthCellLine(item: ScheduleMonthCellItem): {
       isBlock: true,
       isFullDayBlock: false,
       isExtraWork: false,
-      hasImportantNote: false,
-      hasPromotions: false,
+      hasMasterNote: false,
+      hasPromotionLabels: false,
+      promotionLabels: [],
+      masterNote: null,
     };
   }
 
@@ -70,8 +97,10 @@ export function formatMonthCellLine(item: ScheduleMonthCellItem): {
     isBlock: false,
     isFullDayBlock: false,
     isExtraWork: true,
-    hasImportantNote: false,
-    hasPromotions: false,
+    hasMasterNote: false,
+    hasPromotionLabels: false,
+    promotionLabels: [],
+    masterNote: null,
   };
 }
 

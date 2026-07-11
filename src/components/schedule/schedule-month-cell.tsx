@@ -2,10 +2,18 @@
 
 import type { ScheduleMonthCellItem } from "@/types/schedule-month";
 import {
+  isMasterScheduleAppointment,
+  isOperationalScheduleAppointment,
+} from "@/lib/schedule/appointment-contract";
+import {
   cellHasFullDayBlock,
   formatMonthCellLine,
 } from "@/components/schedule/schedule-month-cell-content";
 import { AppointmentPromoBadges } from "@/components/schedule/appointment-promo-badges";
+import {
+  AppointmentMasterNoteBlock,
+  AppointmentPromotionLabelBadges,
+} from "@/components/schedule/appointment-master-display";
 import { MASTER_COL } from "@/components/schedule/schedule-month-table-styles";
 
 export function ScheduleMonthCell({
@@ -66,13 +74,20 @@ export function ScheduleMonthCell({
                     {line.subtitle}
                   </div>
                 ) : null}
-                {line.hasImportantNote && item.kind === "appointment" ? (
-                  <div className="text-[9px] leading-tight text-amber-800">
-                    ⚠ {item.importantNote}
-                  </div>
-                ) : null}
-                {item.kind === "appointment" && line.hasPromotions ? (
+                {item.kind === "appointment" &&
+                line.hasPromotionLabels &&
+                isOperationalScheduleAppointment(item) ? (
                   <AppointmentPromoBadges promotions={item.appliedPromotions} />
+                ) : null}
+                {item.kind === "appointment" &&
+                line.hasPromotionLabels &&
+                isMasterScheduleAppointment(item) ? (
+                  <AppointmentPromotionLabelBadges labels={item.promotionLabels} />
+                ) : null}
+                {line.hasMasterNote && line.masterNote ? (
+                  <div className="mt-px">
+                    <AppointmentMasterNoteBlock note={line.masterNote} />
+                  </div>
                 ) : null}
               </div>
             );

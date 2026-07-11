@@ -3,6 +3,7 @@ import {
   formatScheduleClientName,
   isScheduleAppointmentBold,
 } from "@/lib/schedule/appointment-display";
+import { isOperationalScheduleAppointment } from "@/lib/schedule/appointment-contract";
 import { formatDateKeyLabel } from "@/lib/datetime/date-layer";
 import type { ScheduleDayAppointment } from "@/types/schedule";
 
@@ -59,9 +60,13 @@ export function AppointmentRecordSummary({
       <div className="text-zinc-900">{display.serviceTitle}</div>
       {masterName ? <div className="text-zinc-700">Мастер: {masterName}</div> : null}
       <div className="text-zinc-700">Клиент: {display.clientLabel}</div>
-      <div className="tabular-nums text-zinc-600">Телефон: {display.phoneLabel}</div>
-      {display.comment ? (
-        <div className="text-zinc-600">Комментарий: {display.comment}</div>
+      {isOperationalScheduleAppointment(appointment) ? (
+        <>
+          <div className="tabular-nums text-zinc-600">Телефон: {display.phoneLabel}</div>
+          {display.comment ? (
+            <div className="text-zinc-600">Комментарий: {display.comment}</div>
+          ) : null}
+        </>
       ) : null}
     </div>
   );

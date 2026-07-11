@@ -26,6 +26,10 @@ import { checkMasterIntervalAvailability } from "@/services/MasterAvailabilitySe
 import { resolveMasterWorkHours } from "@/lib/schedule/master-work-hours";
 import { blocksForDayWhere } from "@/services/ScheduleBlockService";
 import {
+  normalizeMasterNote,
+  validateMasterNote,
+} from "@/lib/schedule/master-note-validation";
+import {
   calculateAppointmentEndsAt,
   resolveServiceTimingForMaster,
 } from "@/services/ServiceTimingService";
@@ -47,6 +51,15 @@ export class AppointmentValidationError extends Error {
     super(message);
     this.name = "AppointmentValidationError";
   }
+}
+
+function assertValidMasterNote(value: string | null | undefined): string | null {
+  const validationError = validateMasterNote(value);
+  if (validationError) {
+    throw new AppointmentValidationError(validationError);
+  }
+
+  return normalizeMasterNote(value);
 }
 
 export type AppointmentWriteInput = {
@@ -376,7 +389,7 @@ async function createAppointmentRecord(
       clientName: input.clientName.trim(),
       clientPhone: input.clientPhone.trim(),
       comment: input.comment?.trim() || null,
-      importantNote: input.importantNote?.trim() || null,
+      importantNote: assertValidMasterNote(input.importantNote),
       isBold: input.isBold ?? false,
       status: input.status,
       source: input.source,
@@ -453,7 +466,7 @@ export async function updateAppointment(
     comment: input.comment !== undefined ? input.comment : existing.comment,
     importantNote:
       input.importantNote !== undefined
-        ? input.importantNote
+        ? assertValidMasterNote(input.importantNote)
         : existing.importantNote,
     isBold: input.isBold ?? existing.isBold,
     isManualTimeOverride:
@@ -483,7 +496,7 @@ export async function updateAppointment(
     clientName: merged.clientName.trim(),
     clientPhone: merged.clientPhone.trim(),
     comment: merged.comment?.trim() || null,
-    importantNote: merged.importantNote?.trim() || null,
+    importantNote: assertValidMasterNote(merged.importantNote),
     isBold: merged.isBold ?? false,
     status: merged.status,
     source: merged.source,

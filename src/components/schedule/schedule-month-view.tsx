@@ -147,6 +147,7 @@ export function ScheduleMonthView({
       />
       <ScheduleMonthTable
         data={monthData}
+        readOnly={!canEdit}
         canEditManagerNotes={canEdit}
         bookingRequestDetailLevel={bookingRequestDetailLevel}
         onCellOpen={(cellData) => {

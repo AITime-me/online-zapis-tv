@@ -1,6 +1,14 @@
 import { AppointmentScheduleSummary } from "@/components/schedule/appointment-detail-summary";
 import { AppointmentPromoBadges } from "@/components/schedule/appointment-promo-badges";
+import {
+  AppointmentMasterNoteBlock,
+  AppointmentPromotionLabelBadges,
+} from "@/components/schedule/appointment-master-display";
 import { isScheduleAppointmentBold } from "@/lib/schedule/appointment-display";
+import {
+  isMasterScheduleAppointment,
+  isOperationalScheduleAppointment,
+} from "@/lib/schedule/appointment-contract";
 import type { ScheduleDayAppointment } from "@/types/schedule";
 
 export function AppointmentCard({
@@ -9,6 +17,8 @@ export function AppointmentCard({
   appointment: ScheduleDayAppointment;
 }) {
   const isBold = isScheduleAppointmentBold(appointment);
+  const operational = isOperationalScheduleAppointment(appointment);
+  const master = isMasterScheduleAppointment(appointment);
 
   return (
     <article
@@ -18,14 +28,29 @@ export function AppointmentCard({
     >
       <AppointmentScheduleSummary appointment={appointment} />
 
-      <AppointmentPromoBadges
-        promotions={appointment.appliedPromotions}
-        className="mt-0.5"
-      />
+      {operational ? (
+        <AppointmentPromoBadges
+          promotions={appointment.appliedPromotions}
+          className="mt-0.5"
+        />
+      ) : null}
 
-      {appointment.importantNote ? (
-        <div className="mt-0.5 bg-amber-50 px-1 py-px text-[10px] leading-tight text-amber-900">
-          ⚠ {appointment.importantNote}
+      {master ? (
+        <AppointmentPromotionLabelBadges
+          labels={appointment.promotionLabels}
+          className="mt-0.5"
+        />
+      ) : null}
+
+      {operational && appointment.importantNote ? (
+        <div className="mt-0.5">
+          <AppointmentMasterNoteBlock note={appointment.importantNote} />
+        </div>
+      ) : null}
+
+      {master && appointment.masterNote ? (
+        <div className="mt-0.5">
+          <AppointmentMasterNoteBlock note={appointment.masterNote} />
         </div>
       ) : null}
 

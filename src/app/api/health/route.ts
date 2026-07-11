@@ -1,28 +1,23 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { toIsoString } from "@/lib/datetime/date-layer";
-import { STUDIO_TIMEZONE } from "@/lib/env";
+import {
+  buildHealthErrorResponse,
+  buildHealthSuccessResponse,
+} from "@/lib/health/health-response";
 
 export async function GET() {
+  const timestamp = toIsoString();
+  const isProduction = process.env.NODE_ENV === "production";
+
   try {
     await prisma.$queryRaw`SELECT 1`;
-
-    return NextResponse.json({
-      ok: true,
-      database: "connected",
-      timezone: STUDIO_TIMEZONE,
-      timestamp: toIsoString(),
-    });
+    return NextResponse.json(buildHealthSuccessResponse(timestamp));
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Database connection failed";
+    console.error("[health] database check failed");
 
     return NextResponse.json(
-      {
-        ok: false,
-        database: "disconnected",
-        error: message,
-        timestamp: toIsoString(),
-      },
+      buildHealthErrorResponse(isProduction, timestamp, error),
       { status: 503 },
     );
   }

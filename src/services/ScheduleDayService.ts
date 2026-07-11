@@ -6,6 +6,7 @@ import { mapScheduleDayAppointment } from "@/lib/schedule/map-schedule-appointme
 import type { ScheduleDayData } from "@/types/schedule";
 import { listActiveBookingRequestsForRange } from "@/services/BookingRequestService";
 import {
+  resolveAppointmentVisibility,
   resolveBookingRequestVisibility,
   SCHEDULE_LOAD_INTERNAL,
   type ScheduleLoadOptions,
@@ -18,6 +19,8 @@ export async function getScheduleDayData(
   const { dayStart, dayEnd, noteDate } = getStudioDayRangeFromDateKey(dateKey);
   const includeManagerColumn = options.includeManagerColumn ?? true;
   const bookingRequestVisibility = resolveBookingRequestVisibility(options);
+  const appointmentVisibility = resolveAppointmentVisibility(options);
+  const stripBlockInternalReason = options.stripBlockInternalReason ?? false;
   const includeBookingRequests =
     includeManagerColumn && bookingRequestVisibility !== "none";
 
@@ -88,14 +91,16 @@ export async function getScheduleDayData(
       id: master.id,
       internalName: master.internalName,
       publicName: master.publicName,
-      appointments: master.appointments.map(mapScheduleDayAppointment),
+      appointments: master.appointments.map((appointment) =>
+        mapScheduleDayAppointment(appointment, appointmentVisibility),
+      ),
       scheduleBlocks: master.scheduleBlocks.map((block) => ({
         id: block.id,
         startsAt: block.isFullDay ? "" : (block.startsAt?.toISOString() ?? ""),
         endsAt: block.isFullDay ? "" : (block.endsAt?.toISOString() ?? ""),
         blockType: block.blockType,
         blockTypeLabel: getBlockDisplayLabel(block.blockType, block.isFullDay),
-        internalReason: block.internalReason,
+        internalReason: stripBlockInternalReason ? null : block.internalReason,
         isFullDay: block.isFullDay,
       })),
       extraWorkWindows: (extraWorkByMaster.get(master.id) ?? []).map((window) => ({

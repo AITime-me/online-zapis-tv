@@ -1,8 +1,19 @@
+import "server-only";
+
 import {
   APPOINTMENT_SOURCE_LABELS,
   APPOINTMENT_STATUS_LABELS,
 } from "@/lib/schedule/labels";
+import { normalizeMasterNote } from "@/lib/schedule/master-note-validation";
+import { buildPromotionLabels } from "@/lib/schedule/promotion-labels";
 import { parseAppliedPromotions } from "@/lib/promo/applied-promotions";
+import type {
+  ScheduleAppointmentMasterFields,
+  ScheduleAppointmentOperationalFields,
+  ScheduleAppointmentSharedFields,
+  ScheduleAppointmentViewOnlyFields,
+  ScheduleAppointmentVisibility,
+} from "@/lib/schedule/appointment-contract";
 import type { ScheduleDayAppointment } from "@/types/schedule";
 import type { Appointment, AppointmentSource, AppointmentStatus } from "@prisma/client";
 
@@ -10,25 +21,73 @@ type AppointmentWithService = Appointment & {
   service: { publicName: string } | null;
 };
 
-export function mapScheduleDayAppointment(
+function mapSharedFields(
   appointment: AppointmentWithService,
-): ScheduleDayAppointment {
+): ScheduleAppointmentSharedFields {
   return {
     id: appointment.id,
     serviceId: appointment.serviceId,
     startsAt: appointment.startsAt.toISOString(),
     endsAt: appointment.endsAt.toISOString(),
     clientName: appointment.clientName,
-    clientPhone: appointment.clientPhone,
     serviceName: appointment.service?.publicName ?? null,
-    comment: appointment.comment,
-    importantNote: appointment.importantNote,
     isBold: appointment.isBold,
     isManualTimeOverride: appointment.isManualTimeOverride,
     status: APPOINTMENT_STATUS_LABELS[appointment.status],
     source: APPOINTMENT_SOURCE_LABELS[appointment.source],
     statusCode: appointment.status,
     sourceCode: appointment.source,
+  };
+}
+
+export function mapScheduleDayAppointmentViewOnly(
+  appointment: AppointmentWithService,
+): ScheduleAppointmentViewOnlyFields {
+  return mapSharedFields(appointment);
+}
+
+export function mapScheduleDayAppointmentMaster(
+  appointment: AppointmentWithService,
+): ScheduleAppointmentMasterFields {
+  const appliedPromotions = parseAppliedPromotions(appointment.appliedPromotions);
+
+  return {
+    ...mapSharedFields(appointment),
+    promotionLabels: buildPromotionLabels(appliedPromotions),
+    masterNote: normalizeMasterNote(appointment.importantNote),
+  };
+}
+
+/** @deprecated Используйте mapScheduleDayAppointmentViewOnly или mapScheduleDayAppointmentMaster. */
+export function mapScheduleDayAppointmentRestricted(
+  appointment: AppointmentWithService,
+): ScheduleAppointmentViewOnlyFields {
+  return mapScheduleDayAppointmentViewOnly(appointment);
+}
+
+export function mapScheduleDayAppointmentOperational(
+  appointment: AppointmentWithService,
+): ScheduleAppointmentOperationalFields {
+  return {
+    ...mapSharedFields(appointment),
+    clientPhone: appointment.clientPhone,
+    comment: appointment.comment,
+    importantNote: appointment.importantNote,
     appliedPromotions: parseAppliedPromotions(appointment.appliedPromotions),
   };
+}
+
+export function mapScheduleDayAppointment(
+  appointment: AppointmentWithService,
+  visibility: ScheduleAppointmentVisibility = "operational",
+): ScheduleDayAppointment {
+  if (visibility === "operational") {
+    return mapScheduleDayAppointmentOperational(appointment);
+  }
+
+  if (visibility === "master") {
+    return mapScheduleDayAppointmentMaster(appointment);
+  }
+
+  return mapScheduleDayAppointmentViewOnly(appointment);
 }

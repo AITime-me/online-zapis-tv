@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { requireInternalApiAuth } from "@/lib/auth/api-access";
+import {
+  requireApiRoles,
+  WRITE_SCHEDULE_ROLES,
+} from "@/lib/auth/api-access";
 import { isValidDateKey } from "@/lib/datetime/date-layer";
 import { getCellEditorData } from "@/services/ExtraWorkWindowService";
 
@@ -7,7 +10,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export async function GET(request: Request) {
-  const authResult = await requireInternalApiAuth();
+  const authResult = await requireApiRoles(WRITE_SCHEDULE_ROLES);
   if ("response" in authResult) {
     return authResult.response;
   }

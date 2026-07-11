@@ -21,5 +21,12 @@ export async function GET(request: Request) {
   const monthKey = normalizeMonthKey(searchParams.get("month"));
   const data = await getScheduleMonthData(monthKey, SCHEDULE_LOAD_VIEW_ONLY);
 
-  return NextResponse.json({ ok: true, ...data });
+  return NextResponse.json(
+    { ok: true, ...data },
+    {
+      headers: {
+        "Referrer-Policy": "no-referrer",
+      },
+    },
+  );
 }

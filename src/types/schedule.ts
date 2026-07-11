@@ -1,26 +1,27 @@
+import type {
+  ScheduleAppointmentMasterFields,
+  ScheduleAppointmentOperationalFields,
+  ScheduleAppointmentViewOnlyFields,
+} from "@/lib/schedule/appointment-contract";
 import type { AppliedPromotionRecord } from "@/types/applied-promotion";
 import type { ScheduleDayBookingRequest } from "@/lib/schedule/booking-request-schedule";
 
 export type { ScheduleDayBookingRequest };
 
-export type ScheduleDayAppointment = {
-  id: string;
-  serviceId: string | null;
-  startsAt: string;
-  endsAt: string;
-  clientName: string;
-  clientPhone: string;
-  serviceName: string | null;
-  comment: string | null;
-  importantNote: string | null;
-  isBold: boolean;
-  isManualTimeOverride: boolean;
-  status: string;
-  source: string;
-  statusCode: string;
-  sourceCode: string;
-  appliedPromotions: AppliedPromotionRecord[];
-};
+export type ScheduleDayAppointment =
+  | ScheduleAppointmentOperationalFields
+  | ScheduleAppointmentMasterFields
+  | ScheduleAppointmentViewOnlyFields;
+
+export type ScheduleDayAppointmentOperational = ScheduleAppointmentOperationalFields;
+
+export type ScheduleDayAppointmentMaster = ScheduleAppointmentMasterFields;
+
+export type ScheduleDayAppointmentViewOnly = ScheduleAppointmentViewOnlyFields;
+
+export type ScheduleDayAppointmentRestricted = ScheduleAppointmentViewOnlyFields;
+
+export type { AppliedPromotionRecord };
 
 export type ScheduleDayBlock = {
   id: string;
