@@ -24,6 +24,7 @@
     "test:e2e:security-batch1": "playwright test tests/security-batch1.spec.ts",
     "test:security:batch1": "tsx scripts/security-batch1-check.ts",
     "test:security:batch2a": "tsx scripts/security-batch2a-check.ts",
+    "test:security:batch2b-c0": "tsx scripts/security-batch2b-c0-check.ts",
     "test:security:csrf-coverage": "tsx scripts/security-csrf-coverage-check.ts",
     "test:e2e": "playwright test"
   },

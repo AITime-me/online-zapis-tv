@@ -3,6 +3,10 @@ import {
   validateGamePlayBody,
   type GamePlayRequestBody,
 } from "@/lib/game/play-contract";
+import {
+  GamePlayGiftPoolEmptyError,
+  GamePlayUnavailableError,
+} from "@/lib/game/game-play-errors";
 import { createGamePlayAndSelectGift } from "@/services/GamePlayService";
 import { safeLogError } from "@/lib/logging/redact";
 import { enforceRequestRateLimit } from "@/lib/security/rate-limit/enforce-policy";
@@ -34,6 +38,16 @@ export async function POST(request: Request) {
     if (error instanceof SyntaxError) {
       return NextResponse.json(
         { ok: false, error: "Некорректный JSON в теле запроса" },
+        { status: 400 },
+      );
+    }
+
+    if (
+      error instanceof GamePlayUnavailableError ||
+      error instanceof GamePlayGiftPoolEmptyError
+    ) {
+      return NextResponse.json(
+        { ok: false, error: error.message },
         { status: 400 },
       );
     }

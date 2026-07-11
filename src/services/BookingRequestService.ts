@@ -43,6 +43,15 @@ import {
   resolveClientForLead,
   type ClientLeadSource,
 } from "@/services/ClientLinkService";
+import {
+  buildGamePlayConsumeWhere,
+  GAME_PLAY_BOOKING_MAX_AGE_MS,
+  GAME_PLAY_BOOKING_REJECTED_MESSAGE,
+  shouldRejectGamePlayLink,
+  validateGamePlayBookingRecord,
+} from "@/lib/game/game-play-booking";
+import { buildServerGameManagerComment } from "@/lib/game/game-lead-messages";
+import { extractGameBookingUserMessage } from "@/lib/game/game-booking-comment";
 
 export class BookingRequestValidationError extends Error {
   constructor(message: string) {
@@ -221,6 +230,7 @@ export async function createBookingRequest(
   const clientName = input.clientName.trim();
   const clientPhone = input.clientPhone.trim();
   const comment = input.comment?.trim() || null;
+  const trimmedGamePlayId = input.gamePlayId?.trim() || null;
 
   const fieldErrors = validateClientData({
     clientName,
@@ -257,6 +267,73 @@ export async function createBookingRequest(
     }
   }
 
+  if (trimmedGamePlayId) {
+    const play = await prisma.gamePlay.findUnique({
+      where: { id: trimmedGamePlayId },
+      select: {
+        id: true,
+        leadId: true,
+        createdAt: true,
+        gameDirection: true,
+        selectedGiftId: true,
+        selectedGift: { select: { name: true } },
+      },
+    });
+
+    const playValidation = validateGamePlayBookingRecord(play);
+    if (!playValidation.ok) {
+      throw new BookingRequestValidationError(playValidation.error);
+    }
+
+    const minCreatedAt = new Date(Date.now() - GAME_PLAY_BOOKING_MAX_AGE_MS);
+    const userMessage = extractGameBookingUserMessage(comment);
+    const managerComment = buildServerGameManagerComment({
+      gameDirection: playValidation.gameDirection,
+      giftName: playValidation.giftName,
+      userMessage,
+    });
+
+    const clientLink = await resolveClientForLead({
+      fullName: clientName,
+      phone: clientPhone,
+      source: "procedure_gift_game",
+      serviceName: playValidation.giftName,
+    });
+
+    const requestComment = clientLink.duplicateNote
+      ? appendDuplicateNote(managerComment, clientLink.duplicateNote)
+      : managerComment;
+
+    const request = await prisma.$transaction(async (tx) => {
+      const created = await tx.bookingRequest.create({
+        data: {
+          clientName,
+          clientPhone,
+          comment: requestComment,
+          masterId: input.masterId ?? null,
+          type: input.type,
+          source: "ONLINE",
+          status: "NEW",
+          clientId: clientLink.clientId,
+        },
+        include: bookingRequestInclude,
+      });
+
+      const linked = await tx.gamePlay.updateMany({
+        where: buildGamePlayConsumeWhere(trimmedGamePlayId, minCreatedAt),
+        data: { leadId: created.id },
+      });
+
+      if (shouldRejectGamePlayLink(linked.count)) {
+        throw new BookingRequestValidationError(GAME_PLAY_BOOKING_REJECTED_MESSAGE);
+      }
+
+      return created;
+    });
+
+    return mapBookingRequest(request);
+  }
+
   const clientLink = await resolveClientForLead({
     fullName: clientName,
     phone: clientPhone,
@@ -281,17 +358,6 @@ export async function createBookingRequest(
     },
     include: bookingRequestInclude,
   });
-
-  if (input.gamePlayId?.trim()) {
-    try {
-      await prisma.gamePlay.update({
-        where: { id: input.gamePlayId.trim() },
-        data: { leadId: request.id },
-      });
-    } catch {
-      // Связка optional: заявку не блокируем.
-    }
-  }
 
   return mapBookingRequest(request);
 }

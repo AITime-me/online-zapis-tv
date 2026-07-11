@@ -73,3 +73,31 @@ export function buildManagerGameComment(
     userText,
   ].join("\n");
 }
+
+export function buildServerGameManagerComment(input: {
+  gameDirection: string;
+  giftName: string;
+  userMessage?: string | null;
+}): string {
+  const direction =
+    (GAME_DIRECTION_LABELS[input.gameDirection] ?? input.gameDirection.trim()) ||
+    "—";
+  const gift = input.giftName.trim() || "—";
+
+  const lines = [
+    "Клиент прошёл игру «Поймай своё время».",
+    "",
+    "Результат игры:",
+    direction,
+    "",
+    "Подарок (назначен сервером):",
+    gift,
+  ];
+
+  const userText = input.userMessage?.trim();
+  if (userText) {
+    lines.push("", "Сообщение клиента:", userText);
+  }
+
+  return lines.join("\n");
+}

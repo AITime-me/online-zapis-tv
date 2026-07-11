@@ -13,6 +13,8 @@ export type GamePlayRequestBody = {
   skinNeed?: unknown;
   resultType?: unknown;
   premiumLevel?: unknown;
+  catalogSlug?: unknown;
+  giftId?: unknown;
 };
 
 export type ValidatedGamePlayInput = {
@@ -20,6 +22,7 @@ export type ValidatedGamePlayInput = {
   skinNeed: string;
   resultType: string;
   premiumLevel: number;
+  catalogSlug: string | null;
 };
 
 const GAME_DIRECTION_SET = new Set<string>(GAME_DIRECTIONS);
@@ -42,9 +45,21 @@ function readPremiumLevel(value: unknown): number | null {
   return Math.max(0, Math.trunc(value));
 }
 
+function readOptionalCatalogSlug(value: unknown): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const slug = readNonEmptyString(value);
+  return slug ?? null;
+}
+
 export function validateGamePlayBody(
   body: GamePlayRequestBody,
 ): { ok: true; data: ValidatedGamePlayInput } | { ok: false; error: string } {
+  if (body.giftId !== undefined && body.giftId !== null) {
+    return { ok: false, error: "giftId не поддерживается" };
+  }
+
   const gameDirectionRaw = readNonEmptyString(body.gameDirection);
   if (!gameDirectionRaw) {
     return { ok: false, error: "gameDirection обязателен" };
@@ -71,6 +86,11 @@ export function validateGamePlayBody(
     return { ok: false, error: "premiumLevel должен быть числом" };
   }
 
+  const catalogSlug = readOptionalCatalogSlug(body.catalogSlug);
+  if (body.catalogSlug !== undefined && body.catalogSlug !== null && !catalogSlug) {
+    return { ok: false, error: "catalogSlug должен быть непустой строкой" };
+  }
+
   return {
     ok: true,
     data: {
@@ -78,6 +98,7 @@ export function validateGamePlayBody(
       skinNeed,
       resultType,
       premiumLevel,
+      catalogSlug,
     },
   };
 }

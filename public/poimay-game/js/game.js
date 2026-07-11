@@ -48,6 +48,7 @@
   };
 
   var canvas, ctx, timerEl, scoreEl, popupEl;
+  var canvasAbortController = null;
   var animationId = null;
   var lastSpawn = 0;
   var lastFrame = 0;
@@ -62,15 +63,37 @@
   var onComplete = null;
 
   function init() {
+    if (canvasAbortController) {
+      canvasAbortController.abort();
+    }
+    canvasAbortController = new AbortController();
+    var signal = canvasAbortController.signal;
+
     canvas = document.getElementById('game-canvas');
+    if (!canvas) {
+      throw new Error('game-canvas not found');
+    }
+
     ctx = canvas.getContext('2d');
     timerEl = document.getElementById('game-timer');
     scoreEl = document.getElementById('game-score');
     popupEl = document.getElementById('score-popup');
 
-    canvas.addEventListener('touchstart', onTouch, { passive: false });
-    canvas.addEventListener('touchmove', onTouch, { passive: false });
-    canvas.addEventListener('mousemove', onMouseMove);
+    if (!ctx || !timerEl || !scoreEl || !popupEl) {
+      throw new Error('game HUD elements not found');
+    }
+
+    canvas.addEventListener('touchstart', onTouch, { passive: false, signal: signal });
+    canvas.addEventListener('touchmove', onTouch, { passive: false, signal: signal });
+    canvas.addEventListener('mousemove', onMouseMove, { signal: signal });
+  }
+
+  function destroy() {
+    stop();
+    if (canvasAbortController) {
+      canvasAbortController.abort();
+      canvasAbortController = null;
+    }
   }
 
   function resize() {
@@ -414,6 +437,7 @@
     init: init,
     start: start,
     stop: stop,
-    resize: resize
+    resize: resize,
+    destroy: destroy
   };
 })();

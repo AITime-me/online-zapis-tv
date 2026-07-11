@@ -15,7 +15,6 @@ import { studioBrand } from "@/lib/brand/studio-brand";
 import { BOOKING_REQUEST_SUCCESS_MESSAGE } from "@/lib/booking/request-success-copy";
 import {
   buildClientGameMessage,
-  buildManagerGameComment,
   type GameLeadSession,
 } from "@/lib/game/game-lead-messages";
 
@@ -110,6 +109,8 @@ export function ProcedureGiftGameVanilla({
   const [messengerCopied, setMessengerCopied] = useState(false);
 
   const [leadError, setLeadError] = useState<string | null>(null);
+  const [gameRuntimeReady, setGameRuntimeReady] = useState(false);
+  const [gameRuntimeError, setGameRuntimeError] = useState<string | null>(null);
 
   const fullPhone = useMemo(
     () => buildFullPhoneNumber(countryCode, phoneLocal),
@@ -119,6 +120,65 @@ export function ProcedureGiftGameVanilla({
   useEffect(() => {
     setIsMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (!config?.isActive) {
+      setGameRuntimeReady(false);
+      setGameRuntimeError(null);
+      return;
+    }
+
+    let cancelled = false;
+    let attempts = 0;
+
+    const mountVanillaGame = () => {
+      if (cancelled) return;
+
+      const poimayApp = (window as Window & {
+        PoimayGameApp?: { mount?: () => void; destroy?: () => void };
+      }).PoimayGameApp;
+
+      if (poimayApp?.mount) {
+        try {
+          poimayApp.mount();
+          if (!cancelled) {
+            setGameRuntimeReady(true);
+            setGameRuntimeError(null);
+          }
+        } catch (error) {
+          if (!cancelled) {
+            setGameRuntimeReady(false);
+            setGameRuntimeError(
+              error instanceof Error
+                ? error.message
+                : "Не удалось инициализировать игру",
+            );
+          }
+        }
+        return;
+      }
+
+      attempts += 1;
+      if (attempts < 50) {
+        window.setTimeout(mountVanillaGame, 100);
+        return;
+      }
+
+      setGameRuntimeReady(false);
+      setGameRuntimeError("Не удалось загрузить игровой модуль");
+    };
+
+    mountVanillaGame();
+
+    return () => {
+      cancelled = true;
+      const poimayApp = (window as Window & {
+        PoimayGameApp?: { destroy?: () => void };
+      }).PoimayGameApp;
+      poimayApp?.destroy?.();
+      setGameRuntimeReady(false);
+    };
+  }, [config?.isActive]);
 
   useEffect(() => {
     if (!config?.isActive) return;
@@ -159,8 +219,24 @@ export function ProcedureGiftGameVanilla({
     return () => window.clearInterval(id);
   }, [config?.isActive]);
 
+  useEffect(() => {
+    if (!config?.isActive) return;
+
+    const startButton = document.querySelector(
+      '[data-action="go-rules"]',
+    ) as HTMLButtonElement | null;
+    if (!startButton) return;
+
+    startButton.disabled = !gameRuntimeReady;
+    if (gameRuntimeReady) {
+      startButton.removeAttribute("aria-disabled");
+    } else {
+      startButton.setAttribute("aria-disabled", "true");
+    }
+  }, [config?.isActive, gameRuntimeReady]);
+
   const openPhoneForm = () => {
-    setComment(buildClientGameMessage(playSession, readDomDirectionLabel()));
+    setComment("");
     setLeadError(null);
     setLeadOpen(true);
   };
@@ -202,20 +278,7 @@ export function ProcedureGiftGameVanilla({
 
     setLeadSubmitting(true);
     try {
-      const session = playSession ?? {
-        playId: null,
-        giftId: null,
-        giftName: null,
-        gameDirection: null,
-        skinNeed: null,
-        resultType: null,
-        premiumLevel: null,
-      };
-      const finalComment = buildManagerGameComment(
-        session,
-        comment,
-        readDomDirectionLabel(),
-      );
+      const userComment = comment.trim() || null;
 
       const response = await fetch("/api/booking/request", {
         method: "POST",
@@ -223,12 +286,11 @@ export function ProcedureGiftGameVanilla({
         body: JSON.stringify({
           clientName: name.trim(),
           clientPhone: fullPhone,
-          comment: finalComment,
+          comment: userComment,
           masterId: null,
           type: "CONSULTATION_REQUEST",
           consent,
           gamePlayId: playId,
-          serviceName: session.giftName,
         }),
       });
 
@@ -338,43 +400,61 @@ export function ProcedureGiftGameVanilla({
       <Script
         id="poimay-script-gift-config"
         src={`${POIMAY_GAME_BASE}/js/gift-config.js`}
-        strategy="beforeInteractive"
+        strategy="afterInteractive"
       />
       <Script
         id="poimay-script-result-adapter"
         src={`${POIMAY_GAME_BASE}/js/result-adapter.js`}
-        strategy="beforeInteractive"
+        strategy="afterInteractive"
       />
       <Script
         id="poimay-script-gift-api"
         src={`${POIMAY_GAME_BASE}/js/gift-api.js`}
-        strategy="beforeInteractive"
+        strategy="afterInteractive"
       />
       <Script
         id="poimay-script-play-session"
         src={`${POIMAY_GAME_BASE}/js/play-session.js`}
-        strategy="beforeInteractive"
+        strategy="afterInteractive"
       />
       <Script
         id="poimay-script-booking-api"
         src={`${POIMAY_GAME_BASE}/js/booking-api.js`}
-        strategy="beforeInteractive"
+        strategy="afterInteractive"
       />
       <Script
         id="poimay-script-confetti"
         src={`${POIMAY_GAME_BASE}/js/confetti.js`}
-        strategy="beforeInteractive"
+        strategy="afterInteractive"
       />
       <Script
         id="poimay-script-game"
         src={`${POIMAY_GAME_BASE}/js/game.js`}
-        strategy="beforeInteractive"
+        strategy="afterInteractive"
       />
       <Script
         id="poimay-script-app"
         src={`${POIMAY_GAME_BASE}/js/app.js`}
-        strategy="beforeInteractive"
+        strategy="afterInteractive"
       />
+
+      {gameRuntimeError ? (
+        <div
+          className="mx-4 mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+          role="alert"
+        >
+          {gameRuntimeError}
+        </div>
+      ) : null}
+
+      {!gameRuntimeReady && !gameRuntimeError ? (
+        <div
+          className="mx-4 mt-4 rounded-xl border px-4 py-3 text-sm"
+          style={{ borderColor: studioBrand.goldLineSoft, color: studioBrand.inkMuted }}
+        >
+          Загружаем игру…
+        </div>
+      ) : null}
 
       <div className="app">
         <header className="header">

@@ -4,10 +4,24 @@
   var SCREENS = ['screen-start', 'screen-rules', 'screen-game', 'screen-result'];
   var currentPhrase = '';
   var toastTimer = null;
+  var mountAbortController = null;
+  var resizeHandler = null;
+  var mounted = false;
+
+  function requireElement(selector) {
+    var el = document.querySelector(selector);
+    if (!el) {
+      throw new Error('Missing game element: ' + selector);
+    }
+    return el;
+  }
 
   function showScreen(id) {
     SCREENS.forEach(function (screenId) {
       var el = document.getElementById(screenId);
+      if (!el) {
+        return;
+      }
       el.classList.toggle('screen--active', screenId === id);
     });
 
@@ -214,62 +228,92 @@
     }
   }
 
-  function bindEvents() {
-    document.querySelector('[data-action="go-rules"]').addEventListener('click', function () {
+  function bindEvents(signal) {
+    requireElement('[data-action="go-rules"]').addEventListener('click', function () {
       showScreen('screen-rules');
-    });
+    }, { signal: signal });
 
-    document.querySelector('[data-action="start-game"]').addEventListener('click', function () {
+    requireElement('[data-action="start-game"]').addEventListener('click', function () {
       showScreen('screen-game');
-    });
+    }, { signal: signal });
 
-    var backToStartBtn = document.querySelector('[data-action="back-to-start"]');
-    if (backToStartBtn) {
-      backToStartBtn.addEventListener('click', function () {
-        showScreen('screen-start');
-      });
-    }
+    requireElement('[data-action="back-to-start"]').addEventListener('click', function () {
+      showScreen('screen-start');
+    }, { signal: signal });
 
-    var backToRulesBtn = document.querySelector('[data-action="back-to-rules"]');
-    if (backToRulesBtn) {
-      backToRulesBtn.addEventListener('click', function () {
-        try {
-          if (window.Game && typeof Game.stop === 'function') {
-            Game.stop();
-          }
-        } catch (e) {
-          // ignore
+    requireElement('[data-action="back-to-rules"]').addEventListener('click', function () {
+      try {
+        if (window.Game && typeof Game.stop === 'function') {
+          Game.stop();
         }
-        showScreen('screen-rules');
-      });
+      } catch (e) {
+        // ignore
+      }
+      showScreen('screen-rules');
+    }, { signal: signal });
+
+    requireElement('[data-action="back-from-result"]').addEventListener('click', function () {
+      showScreen('screen-rules');
+    }, { signal: signal });
+
+    requireElement('#btn-copy').addEventListener('click', copyPhrase, { signal: signal });
+  }
+
+  function destroyApp() {
+    if (toastTimer) {
+      clearTimeout(toastTimer);
+      toastTimer = null;
     }
 
-    var backFromResultBtn = document.querySelector('[data-action="back-from-result"]');
-    if (backFromResultBtn) {
-      backFromResultBtn.addEventListener('click', function () {
-        showScreen('screen-rules');
-      });
+    if (mountAbortController) {
+      mountAbortController.abort();
+      mountAbortController = null;
     }
 
-    document.getElementById('btn-copy').addEventListener('click', copyPhrase);
+    if (resizeHandler) {
+      window.removeEventListener('resize', resizeHandler);
+      resizeHandler = null;
+    }
 
-    window.addEventListener('resize', function () {
-      if (document.getElementById('screen-game').classList.contains('screen--active')) {
+    if (window.Game && typeof Game.destroy === 'function') {
+      Game.destroy();
+    } else if (window.Game && typeof Game.stop === 'function') {
+      Game.stop();
+    }
+
+    mounted = false;
+  }
+
+  function mountApp() {
+    destroyApp();
+
+    if (!document.querySelector('.poimay-game .app')) {
+      throw new Error('Game root not found');
+    }
+
+    mountAbortController = new AbortController();
+    var signal = mountAbortController.signal;
+
+    Game.init();
+    bindEvents(signal);
+    showScreen('screen-start');
+
+    resizeHandler = function () {
+      var gameScreen = document.getElementById('screen-game');
+      if (gameScreen && gameScreen.classList.contains('screen--active')) {
         Game.resize();
       }
-    });
+    };
+    window.addEventListener('resize', resizeHandler);
+
+    mounted = true;
   }
 
-  function initApp() {
-    Game.init();
-    bindEvents();
-  }
-
-  // SPA-переходы в Next.js не гарантируют повторный DOMContentLoaded.
-  // Поэтому инициализируемся сразу, если DOM уже готов.
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initApp);
-  } else {
-    initApp();
-  }
+  window.PoimayGameApp = {
+    mount: mountApp,
+    destroy: destroyApp,
+    isMounted: function () {
+      return mounted;
+    }
+  };
 })();

@@ -30,7 +30,7 @@ export const RATE_LIMIT_POLICIES: Record<RateLimitPolicyId, RateLimitPolicy> = {
   gamePlay: {
     id: "gamePlay",
     windowMs: 10 * 60 * 1000,
-    maxRequests: 20,
+    maxRequests: 5,
   },
   availabilityCatalog: {
     id: "availabilityCatalog",
