@@ -2,6 +2,7 @@ import "server-only";
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { safeLogError } from "@/lib/logging/redact";
 import {
   ONLINE_SERVICE_UNAVAILABLE_MESSAGE,
   SERVICE_UNAVAILABLE_CODE,
@@ -710,12 +711,13 @@ export async function createOnlineBooking(input: OnlineBookingInput) {
     priceMax: priceBounds?.max ?? null,
   });
 
-  console.error("[booking/createOnlineBooking] client promo context:", {
-    phoneSuffix: phone.replace(/\D/g, "").slice(-10),
-    isFirstVisit: clientContext.isFirstVisit,
-    qualifyingBookings: clientContext.visitHistory.totalBookings,
-    appliedPromotionsCount: appliedPromotions.length,
-  });
+  if (process.env.NODE_ENV !== "production") {
+    safeLogError("[booking/createOnlineBooking] client promo context", null, {
+      isFirstVisit: clientContext.isFirstVisit,
+      qualifyingBookings: clientContext.visitHistory.totalBookings,
+      appliedPromotionsCount: appliedPromotions.length,
+    });
+  }
 
   const endTime = addMinutesToTime(
     input.date,

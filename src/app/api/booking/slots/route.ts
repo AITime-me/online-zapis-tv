@@ -1,12 +1,17 @@
 import { NextResponse } from "next/server";
-import { isValidDateKey } from "@/lib/datetime/date-layer";
-import { formatStudioDateKey, getStudioNow } from "@/lib/datetime/date-layer";
+import { enforceRequestRateLimit } from "@/lib/security/rate-limit/enforce-policy";
+import { formatStudioDateKey, getStudioNow, isValidDateKey } from "@/lib/datetime/date-layer";
 import { getAvailableTimeSlots } from "@/services/BookingService";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export async function GET(request: Request) {
+  const rateLimitResponse = enforceRequestRateLimit(request);
+  if (rateLimitResponse) {
+    return rateLimitResponse;
+  }
+
   const { searchParams } = new URL(request.url);
   const masterId = searchParams.get("masterId");
   const serviceId = searchParams.get("serviceId");

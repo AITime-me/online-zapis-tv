@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { clientDebugLog } from "@/lib/debug/client-debug";
 import { countMonthAppointments } from "@/lib/schedule/month-data-patch";
 import { normalizeMonthKey, toIsoString } from "@/lib/datetime/date-layer";
 import type { ScheduleMonthData } from "@/types/schedule-month";
@@ -70,7 +71,7 @@ export function useScheduleMonthAutoRefresh({
       }
 
       if (debugLog) {
-        console.log("[schedule] refresh:start", { source, month });
+        clientDebugLog("schedule.refresh.start", { source, month });
       }
 
       try {
@@ -79,7 +80,7 @@ export function useScheduleMonthAutoRefresh({
           const errorMessage = "Failed to load schedule month data";
           setLastError(errorMessage);
           if (debugLog) {
-            console.log("[schedule] refresh:error", { source, errorMessage });
+            clientDebugLog("schedule.refresh.error", { source });
           }
           return { ok: false, error: errorMessage };
         }
@@ -93,11 +94,10 @@ export function useScheduleMonthAutoRefresh({
         setLastError(null);
 
         if (debugLog) {
-          console.log("[schedule] refresh:success", {
+          clientDebugLog("schedule.refresh.success", {
             source,
             month: data.month,
             count: countMonthAppointments(data),
-            updatedAt,
           });
         }
 
@@ -107,7 +107,7 @@ export function useScheduleMonthAutoRefresh({
           error instanceof Error ? error.message : "Unknown refresh error";
         setLastError(errorMessage);
         if (debugLog) {
-          console.log("[schedule] refresh:exception", { source, errorMessage });
+          clientDebugLog("schedule.refresh.exception", { source });
         }
         return { ok: false, error: errorMessage };
       }

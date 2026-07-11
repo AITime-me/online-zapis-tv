@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { BOT_SETTINGS_EDIT_ROLES, requireApiRoles } from "@/lib/auth/api-access";
+import { BOT_SETTINGS_EDIT_ROLES, requireApiRoles, requireProtectedMutatingApi, requireProtectedInternalMutatingApi } from "@/lib/auth/api-access";
 import {
   BotSettingsValidationError,
   resetBotSettings,
@@ -8,8 +8,8 @@ import {
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export async function POST() {
-  const authResult = await requireApiRoles(BOT_SETTINGS_EDIT_ROLES);
+export async function POST(request: Request) {
+  const authResult = await requireProtectedMutatingApi(BOT_SETTINGS_EDIT_ROLES, request);
   if ("response" in authResult) {
     return authResult.response;
   }

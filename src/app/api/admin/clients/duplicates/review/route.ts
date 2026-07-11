@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { CLIENTS_ADMIN_ROLES, requireApiRoles } from "@/lib/auth/api-access";
+import { CLIENTS_ADMIN_ROLES, requireApiRoles, requireProtectedMutatingApi, requireProtectedInternalMutatingApi } from "@/lib/auth/api-access";
 import {
   ClientDuplicateValidationError,
   updateClientDuplicateReview,
@@ -40,7 +40,7 @@ function parseReviewStatus(
 }
 
 export async function PATCH(request: Request) {
-  const authResult = await requireApiRoles(CLIENTS_ADMIN_ROLES);
+  const authResult = await requireProtectedMutatingApi(CLIENTS_ADMIN_ROLES, request);
   if ("response" in authResult) {
     return authResult.response;
   }

@@ -1,12 +1,9 @@
 import { NextResponse } from "next/server";
-import {
-  EXPORT_ALLOWED_ROLES,
-  requireApiRoles,
-} from "@/lib/auth/api-access";
+import { EXPORT_ALLOWED_ROLES, requireApiRoles, requireProtectedMutatingApi, requireProtectedInternalMutatingApi } from "@/lib/auth/api-access";
 import { emergencyExportService } from "@/services/EmergencyExportService";
 
-export async function POST() {
-  const authResult = await requireApiRoles(EXPORT_ALLOWED_ROLES);
+export async function POST(request: Request) {
+  const authResult = await requireProtectedMutatingApi(EXPORT_ALLOWED_ROLES, request);
   if ("response" in authResult) {
     return authResult.response;
   }

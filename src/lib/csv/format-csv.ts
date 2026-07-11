@@ -1,3 +1,5 @@
+import { neutralizeSpreadsheetFormulaValue } from "./neutralize-spreadsheet-value";
+
 const CSV_DELIMITER = ";";
 
 export function escapeCsvCell(value: string | number | null | undefined): string {
@@ -5,7 +7,7 @@ export function escapeCsvCell(value: string | number | null | undefined): string
     return "";
   }
 
-  const stringValue = String(value);
+  const stringValue = neutralizeSpreadsheetFormulaValue(value);
   if (/[;"\r\n]/.test(stringValue)) {
     return `"${stringValue.replace(/"/g, '""')}"`;
   }

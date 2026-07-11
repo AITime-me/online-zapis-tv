@@ -13,6 +13,7 @@ import {
   type EditorOptions,
 } from "@/lib/schedule/editor-options";
 import type { ScheduleEditorFieldKey } from "@/lib/schedule/editor-field-labels";
+import { clientDebugLog } from "@/lib/debug/client-debug";
 import type { EditorServiceOption } from "@/services/ScheduleEditorOptionsService";
 import { EditorCheckboxField, EditorField } from "@/components/schedule/editor-field";
 import { AppointmentRecordSummary } from "@/components/schedule/appointment-detail-summary";
@@ -216,12 +217,7 @@ export function AppointmentEditorForm({
       }
 
       onSaveStatus("saved");
-      if (process.env.NODE_ENV === "development") {
-        console.log("[schedule] appointment saved", {
-          id: appointment.id,
-          action: "patch",
-        });
-      }
+      clientDebugLog("schedule.appointment.saved", { action: "patch" });
       await onSaved();
     } catch (saveError) {
       const message =
@@ -625,12 +621,7 @@ export function NewAppointmentForm({
       if (!response.ok) {
         throw new Error(payload.error ?? "Ошибка создания");
       }
-      if (process.env.NODE_ENV === "development") {
-        console.log("[schedule] appointment saved", {
-          id: payload.appointment?.id,
-          action: "post",
-        });
-      }
+      clientDebugLog("schedule.appointment.saved", { action: "post" });
       onSaveStatus("saved");
       await onCreated();
     } catch (createError) {

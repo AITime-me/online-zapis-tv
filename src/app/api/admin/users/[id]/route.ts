@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { USERS_ADMIN_ROLES, requireApiRoles } from "@/lib/auth/api-access";
+import { USERS_ADMIN_ROLES, requireApiRoles, requireProtectedMutatingApi, requireProtectedInternalMutatingApi } from "@/lib/auth/api-access";
 import {
   readUserAdminWriteBody,
   userAdminErrorResponse,
@@ -40,7 +40,7 @@ export async function GET(_request: Request, context: RouteContext) {
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
-  const authResult = await requireApiRoles(USERS_ADMIN_ROLES);
+  const authResult = await requireProtectedMutatingApi(USERS_ADMIN_ROLES, request);
   if ("response" in authResult) {
     return authResult.response;
   }
@@ -61,8 +61,8 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
 }
 
-export async function DELETE(_request: Request, context: RouteContext) {
-  const authResult = await requireApiRoles(USERS_ADMIN_ROLES);
+export async function DELETE(request: Request, context: RouteContext) {
+  const authResult = await requireProtectedMutatingApi(USERS_ADMIN_ROLES, request);
   if ("response" in authResult) {
     return authResult.response;
   }

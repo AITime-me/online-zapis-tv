@@ -1,8 +1,5 @@
 import { NextResponse } from "next/server";
-import {
-  requireApiRoles,
-  MANAGE_SERVICES_ROLES,
-} from "@/lib/auth/api-access";
+import { requireApiRoles, MANAGE_SERVICES_ROLES, requireProtectedMutatingApi, requireProtectedInternalMutatingApi } from "@/lib/auth/api-access";
 import {
   createService,
   getServiceAdminPageData,
@@ -35,7 +32,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const authResult = await requireApiRoles(MANAGE_SERVICES_ROLES);
+  const authResult = await requireProtectedMutatingApi(MANAGE_SERVICES_ROLES, request);
   if ("response" in authResult) {
     return authResult.response;
   }

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { SYSTEM_SETTINGS_ADMIN_ROLES } from "@/lib/auth/api-access";
+import { SYSTEM_SETTINGS_ADMIN_ROLES, requireProtectedMutatingApi, requireProtectedInternalMutatingApi } from "@/lib/auth/api-access";
 import { requireApiRoles } from "@/lib/auth/api-access";
 import {
   StudioSettingsValidationError,
@@ -22,7 +22,7 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
-  const authResult = await requireApiRoles(SYSTEM_SETTINGS_ADMIN_ROLES);
+  const authResult = await requireProtectedMutatingApi(SYSTEM_SETTINGS_ADMIN_ROLES, request);
   if ("response" in authResult) {
     return authResult.response;
   }

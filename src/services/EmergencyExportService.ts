@@ -12,6 +12,7 @@ import {
   type Prisma,
 } from "@prisma/client";
 import { env, STUDIO_TIMEZONE } from "@/lib/env";
+import { neutralizeSpreadsheetFormulaValue } from "@/lib/csv/neutralize-spreadsheet-value";
 import { prisma } from "@/lib/db";
 import {
   addMinutesSafe,
@@ -366,7 +367,12 @@ export class EmergencyExportService {
     sheet.getRow(1).font = { bold: true };
 
     for (const row of rows) {
-      sheet.addRow(row.values);
+      const excelRow = sheet.addRow(
+        row.values.map((value) => neutralizeSpreadsheetFormulaValue(value)),
+      );
+      excelRow.eachCell((cell) => {
+        cell.numFmt = "@";
+      });
     }
 
     sheet.columns.forEach((column) => {

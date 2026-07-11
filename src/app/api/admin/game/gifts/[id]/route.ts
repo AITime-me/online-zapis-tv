@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireApiRoles, GAME_ADMIN_ROLES } from "@/lib/auth/api-access";
+import { requireApiRoles, GAME_ADMIN_ROLES, requireProtectedMutatingApi, requireProtectedInternalMutatingApi } from "@/lib/auth/api-access";
 import {
   deleteGameGift,
   GameAdminNotFoundError,
@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export async function PATCH(request: Request, context: RouteContext) {
-  const authResult = await requireApiRoles(GAME_ADMIN_ROLES);
+  const authResult = await requireProtectedMutatingApi(GAME_ADMIN_ROLES, request);
   if ("response" in authResult) {
     return authResult.response;
   }
@@ -38,8 +38,8 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
 }
 
-export async function DELETE(_: Request, context: RouteContext) {
-  const authResult = await requireApiRoles(GAME_ADMIN_ROLES);
+export async function DELETE(request: Request, context: RouteContext) {
+  const authResult = await requireProtectedMutatingApi(GAME_ADMIN_ROLES, request);
   if ("response" in authResult) {
     return authResult.response;
   }

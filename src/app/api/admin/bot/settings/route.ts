@@ -1,9 +1,5 @@
 import { NextResponse } from "next/server";
-import {
-  BOT_SETTINGS_EDIT_ROLES,
-  BOT_SETTINGS_VIEW_ROLES,
-  requireApiRoles,
-} from "@/lib/auth/api-access";
+import { BOT_SETTINGS_EDIT_ROLES, BOT_SETTINGS_VIEW_ROLES, requireApiRoles, requireProtectedMutatingApi, requireProtectedInternalMutatingApi } from "@/lib/auth/api-access";
 import {
   BotSettingsValidationError,
   getBotSettings,
@@ -40,7 +36,7 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
-  const authResult = await requireApiRoles(BOT_SETTINGS_EDIT_ROLES);
+  const authResult = await requireProtectedMutatingApi(BOT_SETTINGS_EDIT_ROLES, request);
   if ("response" in authResult) {
     return authResult.response;
   }

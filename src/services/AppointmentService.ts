@@ -6,6 +6,7 @@ import {
 } from "@prisma/client";
 import { isBlockingAppointmentStatus } from "@/lib/schedule/non-blocking-appointment-statuses";
 import { prisma } from "@/lib/db";
+import { safeLogError } from "@/lib/logging/redact";
 import { logServiceError } from "@/lib/errors/format-service-error";
 import { parseAppliedPromotions } from "@/lib/promo/applied-promotions";
 import {
@@ -408,18 +409,19 @@ async function createAppointmentRecord(
       ...timingFields,
     };
 
-    console.error("[appointment.create] payload:", {
-      masterId: input.masterId,
-      serviceId: input.serviceId,
-      startsAt: startsAt.toISOString(),
-      endsAt: endsAt.toISOString(),
-      status: input.status,
-      source: input.source,
-      manageToken: manageToken ? "[generated]" : null,
-      appliedPromotionsCount: input.appliedPromotions?.length ?? 0,
-      serviceDurationMinutes: timingFields.serviceDurationMinutes,
-      breakAfterMinutes: timingFields.breakAfterMinutes,
-    });
+    if (process.env.NODE_ENV !== "production") {
+      safeLogError("[appointment.create] payload", null, {
+        masterId: input.masterId,
+        serviceId: input.serviceId,
+        startsAt: startsAt.toISOString(),
+        endsAt: endsAt.toISOString(),
+        status: input.status,
+        source: input.source,
+        appliedPromotionsCount: input.appliedPromotions?.length ?? 0,
+        serviceDurationMinutes: timingFields.serviceDurationMinutes,
+        breakAfterMinutes: timingFields.breakAfterMinutes,
+      });
+    }
 
     const appointment = await prisma.appointment.create({
       data: createPayload,

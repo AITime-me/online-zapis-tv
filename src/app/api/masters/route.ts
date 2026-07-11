@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireApiRoles, MANAGE_MASTERS_ROLES } from "@/lib/auth/api-access";
+import { requireApiRoles, MANAGE_MASTERS_ROLES, requireProtectedMutatingApi, requireProtectedInternalMutatingApi } from "@/lib/auth/api-access";
 import {
   createMaster,
   listMasters,
@@ -22,7 +22,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const authResult = await requireApiRoles(MANAGE_MASTERS_ROLES);
+  const authResult = await requireProtectedMutatingApi(MANAGE_MASTERS_ROLES, request);
   if ("response" in authResult) {
     return authResult.response;
   }

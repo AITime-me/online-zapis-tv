@@ -7,6 +7,8 @@ import {
   type ClientDataInput,
 } from "@/lib/booking/client-validation";
 import { toPublicBookingRequestCreateResponse } from "@/lib/booking-requests/public-booking-request-contract";
+import { enforceRequestRateLimit } from "@/lib/security/rate-limit/enforce-policy";
+import { enforceValidatedPhoneRateLimit } from "@/lib/security/rate-limit/booking-phone";
 import {
   BookingRequestValidationError,
   createBookingRequest,
@@ -27,6 +29,11 @@ type CreateBookingRequestBody = {
 };
 
 export async function POST(request: Request) {
+  const rateLimitResponse = enforceRequestRateLimit(request);
+  if (rateLimitResponse) {
+    return rateLimitResponse;
+  }
+
   try {
     const body = (await request.json()) as CreateBookingRequestBody;
     const clientName =
@@ -62,6 +69,15 @@ export async function POST(request: Request) {
         },
         { status: 400 },
       );
+    }
+
+    const phoneRateLimitResponse = enforceValidatedPhoneRateLimit(
+      request,
+      "bookingRequest",
+      clientPhone,
+    );
+    if (phoneRateLimitResponse) {
+      return phoneRateLimitResponse;
     }
 
     const bookingRequest = await createBookingRequest({

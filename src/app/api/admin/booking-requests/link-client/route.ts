@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { BOOKING_REQUESTS_ADMIN_ROLES, requireApiRoles } from "@/lib/auth/api-access";
+import { BOOKING_REQUESTS_ADMIN_ROLES, requireApiRoles, requireProtectedMutatingApi, requireProtectedInternalMutatingApi } from "@/lib/auth/api-access";
 import {
   BookingRequestValidationError,
   linkBookingRequestToClient,
@@ -25,7 +25,7 @@ type LinkClientBody = {
 };
 
 export async function POST(request: Request) {
-  const authResult = await requireApiRoles(BOOKING_REQUESTS_ADMIN_ROLES);
+  const authResult = await requireProtectedMutatingApi(BOOKING_REQUESTS_ADMIN_ROLES, request);
   if ("response" in authResult) {
     return authResult.response;
   }

@@ -52,6 +52,7 @@ import {
   DEFAULT_BOOKING_ERROR,
   readJsonResponse,
 } from "@/lib/booking/api-response";
+import { clientDebugLog, clientDebugWarn } from "@/lib/debug/client-debug";
 import {
   BOOKING_PROMOTIONS_GENERAL_NOTICE,
   evaluateBookingRules,
@@ -591,15 +592,12 @@ export function BookingWizard() {
   }, [fullPhone, selection.consent, selection.name]);
 
   const submitBooking = async () => {
-    console.log("[booking] submit fired", {
+    clientDebugLog("booking.submit", {
       step,
-      serviceId: selection.service?.id ?? null,
-      masterId: selection.master?.id ?? null,
-      dateKey: selection.dateKey,
-      startTime: selection.startTime,
-      name: selection.name.trim(),
-      phone: fullPhone,
-      consent: selection.consent,
+      hasService: Boolean(selection.service),
+      hasMaster: Boolean(selection.master),
+      hasDate: Boolean(selection.dateKey),
+      hasTime: Boolean(selection.startTime),
       canSubmitContact,
     });
 
@@ -609,11 +607,12 @@ export function BookingWizard() {
       !selection.dateKey ||
       !selection.startTime
     ) {
-      console.warn("[booking] submit blocked: incomplete selection", {
+      clientDebugWarn("booking.submit.blocked", {
+        reason: "incomplete-selection",
         hasService: Boolean(selection.service),
         hasMaster: Boolean(selection.master),
-        dateKey: selection.dateKey,
-        startTime: selection.startTime,
+        hasDate: Boolean(selection.dateKey),
+        hasTime: Boolean(selection.startTime),
       });
       return;
     }
@@ -626,7 +625,7 @@ export function BookingWizard() {
     setClientFieldErrors(validationErrors);
 
     if (validationErrors.name || validationErrors.phone || validationErrors.consent) {
-      console.warn("[booking] submit blocked: client validation", validationErrors);
+      clientDebugWarn("booking.submit.blocked", { reason: "client-validation" });
       return;
     }
 
@@ -644,7 +643,7 @@ export function BookingWizard() {
       consent: selection.consent,
     };
 
-    console.log("[booking] POST /api/booking/create", createPayload);
+    clientDebugLog("booking.submit.request", { route: "/api/booking/create" });
 
     try {
       const response = await fetch("/api/booking/create", {
@@ -674,10 +673,8 @@ export function BookingWizard() {
       );
 
       if (parseError) {
-        console.error("[booking/create] empty or invalid JSON body", {
+        clientDebugWarn("booking.create.parse-error", {
           status: response.status,
-          statusText: response.statusText,
-          rawText: rawText?.slice(0, 500),
         });
         throw new Error(parseError);
       }
@@ -687,17 +684,17 @@ export function BookingWizard() {
       }
 
       if (!response.ok || data.ok !== true) {
-        const failurePayload = {
+        clientDebugWarn("booking.create.failed", {
           status: response.status,
-          ok: data.ok,
-          error: data.error,
-          code: data.code,
-          stack: data.stack,
-          detail: data.detail,
-          fieldErrors: data.fieldErrors,
-          rawText: rawText?.slice(0, 500),
-        };
-        console.error("[booking/create] failed:", failurePayload);
+          code: data.code ?? "unknown",
+        });
+        if (data.code === "RATE_LIMITED") {
+          throw new Error(
+            typeof data.error === "string" && data.error.trim()
+              ? data.error
+              : "Слишком много запросов. Пожалуйста, подождите немного и попробуйте снова",
+          );
+        }
         if (data.fieldErrors) {
           setClientFieldErrors(data.fieldErrors);
         }

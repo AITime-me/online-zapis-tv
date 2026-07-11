@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/db";
+import { validatePasswordPolicy } from "@/lib/auth/password-policy";
 import { isAssignableUserRole } from "@/lib/auth/role-catalog";
 import type {
   UserAdminCreateInput,
@@ -56,8 +57,9 @@ function validateEmail(email: string): string {
 
 function validatePassword(password: string): string {
   const trimmed = password.trim();
-  if (trimmed.length < 8) {
-    throw new UserAdminValidationError("Пароль должен содержать минимум 8 символов");
+  const policyError = validatePasswordPolicy(trimmed);
+  if (policyError) {
+    throw new UserAdminValidationError(policyError);
   }
   return trimmed;
 }

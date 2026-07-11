@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { SYSTEM_SETTINGS_ADMIN_ROLES, requireApiRoles } from "@/lib/auth/api-access";
+import { SYSTEM_SETTINGS_ADMIN_ROLES, requireApiRoles, requireProtectedMutatingApi, requireProtectedInternalMutatingApi } from "@/lib/auth/api-access";
 import {
   LegalDocumentValidationError,
   getLegalDocumentForAdmin,
@@ -30,7 +30,7 @@ export async function GET(_request: Request, context: RouteContext) {
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
-  const authResult = await requireApiRoles(SYSTEM_SETTINGS_ADMIN_ROLES);
+  const authResult = await requireProtectedMutatingApi(SYSTEM_SETTINGS_ADMIN_ROLES, request);
   if ("response" in authResult) {
     return authResult.response;
   }

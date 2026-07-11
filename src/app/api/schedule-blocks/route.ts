@@ -1,8 +1,5 @@
 import { NextResponse } from "next/server";
-import {
-  requireApiRoles,
-  WRITE_SCHEDULE_ROLES,
-} from "@/lib/auth/api-access";
+import { requireApiRoles, WRITE_SCHEDULE_ROLES, requireProtectedMutatingApi, requireProtectedInternalMutatingApi } from "@/lib/auth/api-access";
 import {
   createScheduleBlock,
   ScheduleBlockConflictError,
@@ -11,7 +8,7 @@ import {
 } from "@/services/ScheduleBlockService";
 
 export async function POST(request: Request) {
-  const authResult = await requireApiRoles(WRITE_SCHEDULE_ROLES);
+  const authResult = await requireProtectedMutatingApi(WRITE_SCHEDULE_ROLES, request);
   if ("response" in authResult) {
     return authResult.response;
   }

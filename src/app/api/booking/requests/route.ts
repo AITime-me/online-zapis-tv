@@ -1,9 +1,6 @@
 import { NextResponse } from "next/server";
 import type { BookingRequestStatus } from "@prisma/client";
-import {
-  BOOKING_REQUESTS_ADMIN_ROLES,
-  requireApiRoles,
-} from "@/lib/auth/api-access";
+import { BOOKING_REQUESTS_ADMIN_ROLES, requireApiRoles, requireProtectedMutatingApi, requireProtectedInternalMutatingApi } from "@/lib/auth/api-access";
 import { parseBookingRequestListQuery } from "@/lib/booking-requests/list-query";
 import {
   listBookingRequestsPaginated,
@@ -27,7 +24,7 @@ export async function GET(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const authResult = await requireApiRoles(BOOKING_REQUESTS_ADMIN_ROLES);
+  const authResult = await requireProtectedMutatingApi(BOOKING_REQUESTS_ADMIN_ROLES, request);
   if ("response" in authResult) {
     return authResult.response;
   }

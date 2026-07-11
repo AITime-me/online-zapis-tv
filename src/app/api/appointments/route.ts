@@ -1,9 +1,6 @@
 import { NextResponse } from "next/server";
 import type { AppointmentSource, AppointmentStatus } from "@prisma/client";
-import {
-  requireApiRoles,
-  WRITE_SCHEDULE_ROLES,
-} from "@/lib/auth/api-access";
+import { requireApiRoles, WRITE_SCHEDULE_ROLES, requireProtectedMutatingApi, requireProtectedInternalMutatingApi } from "@/lib/auth/api-access";
 import {
   AppointmentConflictError,
   AppointmentValidationError,
@@ -12,7 +9,7 @@ import {
 } from "@/services/AppointmentService";
 
 export async function POST(request: Request) {
-  const authResult = await requireApiRoles(WRITE_SCHEDULE_ROLES);
+  const authResult = await requireProtectedMutatingApi(WRITE_SCHEDULE_ROLES, request);
   if ("response" in authResult) {
     return authResult.response;
   }

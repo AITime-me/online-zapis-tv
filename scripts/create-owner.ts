@@ -9,10 +9,10 @@
 
 import { PrismaClient, UserRole } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { validatePasswordPolicy } from "../src/lib/auth/password-policy";
 import { promptHidden, promptLine, promptYesNo } from "./lib/prompt";
 
 const FORBIDDEN_EMAIL_SUFFIX = "@example.local";
-const MIN_PASSWORD_LENGTH = 12;
 
 type ParsedArgs = {
   dryRun: boolean;
@@ -66,26 +66,6 @@ function validateName(name: string): string | null {
 
   if (name.trim().length < 2) {
     return "Имя должно содержать не менее 2 символов.";
-  }
-
-  return null;
-}
-
-function validatePasswordPolicy(password: string): string | null {
-  if (password.length < MIN_PASSWORD_LENGTH) {
-    return `Пароль должен содержать не менее ${MIN_PASSWORD_LENGTH} символов.`;
-  }
-
-  if (!/[a-z]/.test(password) || !/[A-Z]/.test(password)) {
-    return "Пароль должен содержать буквы верхнего и нижнего регистра.";
-  }
-
-  if (!/\d/.test(password)) {
-    return "Пароль должен содержать хотя бы одну цифру.";
-  }
-
-  if (password === "password123") {
-    return "Тестовый пароль password123 запрещён.";
   }
 
   return null;

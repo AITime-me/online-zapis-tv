@@ -1,12 +1,47 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import type { NextRequest } from "next/server";
+import { auth } from "@/middleware-auth";
 import { canAccessAdminPath, canAccessInternalZone } from "@/lib/auth/permissions";
 import { isValidScheduleViewToken } from "@/lib/auth/view-schedule-token";
+import {
+  createCsrfForbiddenResponse,
+  hasSessionAuthCookie,
+  validateSameOriginRequest,
+} from "@/lib/security/csrf";
+import {
+  requiresAdminCsrfProtection,
+} from "@/lib/security/csrf-route-rules";
 
 const OPERATIONAL_ADMIN_ROLES = new Set(["OWNER", "MANAGER"]);
 
+function handleApiCsrf(req: NextRequest): NextResponse | null {
+  const { pathname } = req.nextUrl;
+  const method = req.method;
+
+  if (
+    requiresAdminCsrfProtection(pathname, method) &&
+    hasSessionAuthCookie(req.cookies)
+  ) {
+    if (!validateSameOriginRequest(req)) {
+      return createCsrfForbiddenResponse();
+    }
+  }
+
+  return null;
+}
+
 export default auth((req) => {
   const { pathname } = req.nextUrl;
+
+  if (pathname.startsWith("/api/")) {
+    const csrfResponse = handleApiCsrf(req);
+    if (csrfResponse) {
+      return csrfResponse;
+    }
+
+    return NextResponse.next();
+  }
+
   const isLoggedIn = !!req.auth?.user;
   const role = req.auth?.user?.role;
 
@@ -59,5 +94,5 @@ export default auth((req) => {
 });
 
 export const config = {
-  matcher: ["/schedule/:path*", "/admin/:path*", "/login", "/view/schedule"],
+  matcher: ["/api/:path*", "/schedule/:path*", "/admin/:path*", "/login", "/view/schedule"],
 };

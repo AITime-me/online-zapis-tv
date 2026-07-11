@@ -1,16 +1,13 @@
 import { NextResponse } from "next/server";
-import {
-  requireApiRoles,
-  WRITE_SCHEDULE_ROLES,
-} from "@/lib/auth/api-access";
+import { requireApiRoles, WRITE_SCHEDULE_ROLES, requireProtectedMutatingApi, requireProtectedInternalMutatingApi } from "@/lib/auth/api-access";
 import { deleteExtraWorkWindow } from "@/services/ExtraWorkWindowService";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
 };
 
-export async function DELETE(_request: Request, context: RouteContext) {
-  const authResult = await requireApiRoles(WRITE_SCHEDULE_ROLES);
+export async function DELETE(request: Request, context: RouteContext) {
+  const authResult = await requireProtectedMutatingApi(WRITE_SCHEDULE_ROLES, request);
   if ("response" in authResult) {
     return authResult.response;
   }

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireApiRoles, GAME_ADMIN_ROLES } from "@/lib/auth/api-access";
+import { requireApiRoles, GAME_ADMIN_ROLES, requireProtectedMutatingApi, requireProtectedInternalMutatingApi } from "@/lib/auth/api-access";
 import {
   createGameGift,
   GameAdminValidationError,
@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export async function POST(request: Request) {
-  const authResult = await requireApiRoles(GAME_ADMIN_ROLES);
+  const authResult = await requireProtectedMutatingApi(GAME_ADMIN_ROLES, request);
   if ("response" in authResult) {
     return authResult.response;
   }

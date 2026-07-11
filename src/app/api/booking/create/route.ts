@@ -10,6 +10,8 @@ import {
   logBookingCreateErrorRaw,
   toApiErrorBody,
 } from "@/lib/errors/format-service-error";
+import { enforceRequestRateLimit } from "@/lib/security/rate-limit/enforce-policy";
+import { enforceValidatedPhoneRateLimit } from "@/lib/security/rate-limit/booking-phone";
 import {
   AppointmentConflictError,
   AppointmentValidationError,
@@ -66,6 +68,11 @@ function errorResponse(
 }
 
 export async function POST(request: Request) {
+  const rateLimitResponse = enforceRequestRateLimit(request);
+  if (rateLimitResponse) {
+    return rateLimitResponse;
+  }
+
   let body: CreateBookingBody | null = null;
 
   try {
@@ -77,16 +84,6 @@ export async function POST(request: Request) {
         code: "INVALID_JSON",
       });
     }
-
-    console.error("[booking/create] request:", {
-      serviceId: body.serviceId,
-      masterId: body.masterId,
-      date: body.date,
-      startTime: body.startTime,
-      hasName: Boolean(body.name?.trim()),
-      hasPhone: Boolean(body.phone?.trim()),
-      consent: body.consent === true,
-    });
 
     const clientName = typeof body.name === "string" ? body.name.trim() : "";
     const clientPhone = typeof body.phone === "string" ? body.phone.trim() : "";
@@ -118,6 +115,15 @@ export async function POST(request: Request) {
         code: "CLIENT_VALIDATION",
         fieldErrors,
       });
+    }
+
+    const phoneRateLimitResponse = enforceValidatedPhoneRateLimit(
+      request,
+      "bookingCreate",
+      clientPhone,
+    );
+    if (phoneRateLimitResponse) {
+      return phoneRateLimitResponse;
     }
 
     if (!isValidDateKey(body.date)) {

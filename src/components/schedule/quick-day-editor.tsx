@@ -11,6 +11,7 @@ import {
 } from "@/lib/schedule/editor-options";
 import type { CellSyncPayload } from "@/lib/schedule/month-data-patch";
 import type { QuickDayEditorData } from "@/types/schedule-month";
+import { clientDebugLog } from "@/lib/debug/client-debug";
 import {
   AppointmentEditorForm,
   NewAppointmentForm,
@@ -98,13 +99,9 @@ export function QuickDayEditor({
       };
       setData(cellData);
 
-      if (process.env.NODE_ENV === "development") {
-        console.log("[schedule] refreshCell:onCellSynced", {
-          dateKey: cellData.dateKey,
-          masterId: cellData.masterId,
-          appointments: cellData.appointments.length,
-        });
-      }
+      clientDebugLog("schedule.refreshCell.synced", {
+        appointments: cellData.appointments.length,
+      });
 
       onCellSynced?.({
         dateKey: cellData.dateKey,
@@ -115,19 +112,13 @@ export function QuickDayEditor({
       });
     }
 
-    if (process.env.NODE_ENV === "development") {
-      console.log("[schedule] refreshCell:before onScheduleChange", {
-        dateKey: data.dateKey,
-        masterId: data.masterId,
-        appointments: payload.appointments?.length,
-      });
-    }
+    clientDebugLog("schedule.refreshCell.before-change", {
+      appointments: payload.appointments?.length ?? 0,
+    });
 
     await onScheduleChange?.();
 
-    if (process.env.NODE_ENV === "development") {
-      console.log("[schedule] refreshCell:after onScheduleChange");
-    }
+    clientDebugLog("schedule.refreshCell.after-change");
   }, [data.dateKey, data.masterId, onCellSynced, onScheduleChange]);
 
   useEffect(() => {

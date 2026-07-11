@@ -1,10 +1,6 @@
 import { ManagerNoteType } from "@prisma/client";
 import { NextResponse } from "next/server";
-import {
-  requireApiRoles,
-  requireInternalApiAuth,
-  WRITE_SCHEDULE_ROLES,
-} from "@/lib/auth/api-access";
+import { requireApiRoles, requireInternalApiAuth, WRITE_SCHEDULE_ROLES, requireProtectedMutatingApi, requireProtectedInternalMutatingApi } from "@/lib/auth/api-access";
 import { isValidDateKey } from "@/lib/datetime/date-layer";
 import {
   createManagerNote,
@@ -50,7 +46,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const authResult = await requireApiRoles(WRITE_SCHEDULE_ROLES);
+  const authResult = await requireProtectedMutatingApi(WRITE_SCHEDULE_ROLES, request);
   if ("response" in authResult) {
     return authResult.response;
   }

@@ -1,16 +1,13 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
+import { headers } from "next/headers";
 import type { UserRole } from "@prisma/client";
+import { authConfig, SESSION_MAX_AGE_SECONDS } from "@/auth.config";
 import { prisma } from "@/lib/db";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  trustHost: true,
-  secret: process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET,
-  session: { strategy: "jwt" },
-  pages: {
-    signIn: "/login",
-  },
+  ...authConfig,
   providers: [
     Credentials({
       credentials: {
@@ -27,17 +24,32 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           return null;
         }
 
+        const requestHeaders = await headers();
+        const {
+          isLoginRateLimited,
+          recordLoginRateLimitFailure,
+          resetLoginRateLimitState,
+        } = await import("@/lib/security/rate-limit/login");
+
+        if (isLoginRateLimited(email, requestHeaders)) {
+          return null;
+        }
+
         const user = await prisma.user.findUnique({ where: { email } });
 
         if (!user?.isActive) {
+          recordLoginRateLimitFailure(email, requestHeaders);
           return null;
         }
 
         const isValid = await bcrypt.compare(password, user.passwordHash);
 
         if (!isValid) {
+          recordLoginRateLimitFailure(email, requestHeaders);
           return null;
         }
+
+        resetLoginRateLimitState(email, requestHeaders);
 
         return {
           id: user.id,
@@ -48,20 +60,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       },
     }),
   ],
-  callbacks: {
-    jwt({ token, user }) {
-      if (user) {
-        token.id = user.id!;
-        token.role = user.role as UserRole;
-      }
-      return token;
-    },
-    session({ session, token }) {
-      if (session.user) {
-        session.user.id = token.id;
-        session.user.role = token.role;
-      }
-      return session;
-    },
-  },
 });
+
+export const AUTH_SESSION_MAX_AGE_SECONDS = SESSION_MAX_AGE_SECONDS;

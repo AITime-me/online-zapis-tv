@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { PROMOTIONS_ADMIN_ROLES, requireApiRoles } from "@/lib/auth/api-access";
+import { PROMOTIONS_ADMIN_ROLES, requireApiRoles, requireProtectedMutatingApi, requireProtectedInternalMutatingApi } from "@/lib/auth/api-access";
 import {
   createPromotion,
   listPromotionServiceOptions,
@@ -32,7 +32,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const authResult = await requireApiRoles(PROMOTIONS_ADMIN_ROLES);
+  const authResult = await requireProtectedMutatingApi(PROMOTIONS_ADMIN_ROLES, request);
   if ("response" in authResult) {
     return authResult.response;
   }

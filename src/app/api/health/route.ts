@@ -5,8 +5,14 @@ import {
   buildHealthErrorResponse,
   buildHealthSuccessResponse,
 } from "@/lib/health/health-response";
+import { enforceRequestRateLimit } from "@/lib/security/rate-limit/enforce-policy";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const rateLimitResponse = enforceRequestRateLimit(request);
+  if (rateLimitResponse) {
+    return rateLimitResponse;
+  }
+
   const timestamp = toIsoString();
   const isProduction = process.env.NODE_ENV === "production";
 

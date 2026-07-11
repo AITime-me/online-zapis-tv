@@ -1,8 +1,5 @@
 import { NextResponse } from "next/server";
-import {
-  GAME_ADMIN_ROLES,
-  requireApiRoles,
-} from "@/lib/auth/api-access";
+import { GAME_ADMIN_ROLES, requireApiRoles, requireProtectedMutatingApi, requireProtectedInternalMutatingApi } from "@/lib/auth/api-access";
 import {
   GameCatalogNotFoundError,
   GameCatalogValidationError,
@@ -41,7 +38,7 @@ export async function GET(request: Request, context: RouteContext) {
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
-  const authResult = await requireApiRoles(GAME_ADMIN_ROLES);
+  const authResult = await requireProtectedMutatingApi(GAME_ADMIN_ROLES, request);
   if ("response" in authResult) {
     return authResult.response;
   }

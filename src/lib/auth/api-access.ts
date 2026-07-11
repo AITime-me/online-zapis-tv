@@ -6,6 +6,7 @@ import {
   OPERATIONAL_ADMIN_ROLES,
   OWNER_ROLES,
 } from "@/lib/auth/permissions";
+import { enforceSameOriginForMutatingRequest } from "@/lib/security/csrf";
 
 export type ApiAuthSuccess = {
   user: {
@@ -42,6 +43,24 @@ export async function requireApiRoles(
   }
 
   return { user: session.user };
+}
+
+export async function requireProtectedMutatingApi(
+  allowedRoles: UserRole[],
+  request: Request,
+): Promise<ApiAuthResult> {
+  const csrfResponse = enforceSameOriginForMutatingRequest(request);
+  if (csrfResponse) {
+    return { response: csrfResponse };
+  }
+
+  return requireApiRoles(allowedRoles);
+}
+
+export async function requireProtectedInternalMutatingApi(
+  request: Request,
+): Promise<ApiAuthResult> {
+  return requireProtectedMutatingApi(INTERNAL_ROLES, request);
 }
 
 export const WRITE_SCHEDULE_ROLES: UserRole[] = OPERATIONAL_ADMIN_ROLES;
