@@ -117,6 +117,17 @@ Token-ссылка бота (тест): `test-bot-token-demo` → страниц
 - `GET /api/booking-links/:token` — данные token-ссылки от бота (Шаг позже)
 - Публичная страница: `/book/t/:token`
 
+## Staging и Production
+
+Подробный безопасный порядок развёртывания: [docs/STAGING_PRODUCTION.md](docs/STAGING_PRODUCTION.md)
+
+Кратко:
+
+- Dev seed (`npm run db:seed`) — **только локально**, защищён от production
+- Production seed: `npm run db:seed:production`
+- Первый OWNER: `npm run owner:create`
+- Staging compose: `docker compose -f docker-compose.staging.yml --env-file .env.staging up -d`
+
 ## Деплой на Timeweb (позже)
 
 Достаточно заменить `DATABASE_URL` на строку подключения Timeweb PostgreSQL 17 и выполнить:

@@ -1,9 +1,5 @@
 import { prisma } from "@/lib/db";
-import {
-  HOME_PROMOTIONS,
-  HOME_PROMO_ROUTES,
-  type HomePromotion,
-} from "@/components/home/home-data";
+import { HOME_PROMO_ROUTES, type HomePromotion } from "@/components/home/home-data";
 import { isPromotionEligibleForHomepageCarousel } from "@/lib/promotions/homepage-eligibility";
 import { getStudioNow } from "@/lib/datetime/date-layer";
 import { listHomepagePromotions } from "@/services/PromotionCrudService";
@@ -42,10 +38,6 @@ function mapPromotionToHomeCard(promotion: Awaited<
 }
 
 export async function getHomePromotions(): Promise<HomePromotion[]> {
-  const staticPromotions = HOME_PROMOTIONS.filter(
-    (promotion) => promotion.isActive !== false,
-  );
-
   const [dbPromotions, config, catchTimeGame] = await Promise.all([
     listHomepagePromotions(),
     prisma.gameConfig.findUnique({ where: { id: DEFAULT_CONFIG_ID } }),
@@ -56,7 +48,7 @@ export async function getHomePromotions(): Promise<HomePromotion[]> {
     .map(mapPromotionToHomeCard)
     .filter((card): card is HomePromotion => card !== null);
 
-  const dynamicPromotions: HomePromotion[] = [...staticPromotions, ...promotionCards];
+  const dynamicPromotions: HomePromotion[] = [...promotionCards];
 
   if (
     config?.isActive &&

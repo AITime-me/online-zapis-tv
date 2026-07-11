@@ -1,0 +1,68 @@
+# Staging/production compose — не заменяет локальный docker-compose.yml (только Postgres).
+#
+# Подготовка:
+#   1. Создайте .env.staging вне Git (см. .env.production.example)
+#   2. docker compose -f docker-compose.staging.yml --env-file .env.staging up -d
+#
+# На этом этапе без reverse proxy и Let's Encrypt.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: tvoe-vremya-staging-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_staging_data:/var/lib/postgresql/data
+    networks:
+      - staging_internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tvoe-vremya-staging-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      NODE_ENV: production
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Yekaterinburg}
+      AUTH_SECRET: ${AUTH_SECRET}
+      AUTH_URL: ${AUTH_URL}
+      SCHEDULE_VIEW_TOKEN: ${SCHEDULE_VIEW_TOKEN}
+      EXPORT_STORAGE: ${EXPORT_STORAGE:-local}
+      EXPORT_LOCAL_DIR: /app/exports/emergency
+      NEXT_PUBLIC_STUDIO_PHONE: ${NEXT_PUBLIC_STUDIO_PHONE:-}
+      NEXT_PUBLIC_STUDIO_PHONE_DISPLAY: ${NEXT_PUBLIC_STUDIO_PHONE_DISPLAY:-}
+    ports:
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
+    volumes:
+      - emergency_exports:/app/exports/emergency
+    networks:
+      - staging_internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+networks:
+  staging_internal:
+    driver: bridge
+
+volumes:
+  postgres_staging_data:
+  emergency_exports:

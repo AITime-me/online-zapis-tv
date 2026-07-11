@@ -1,0 +1,61 @@
+# Dependencies
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Next.js
+.next
+out
+build
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Git
+.git
+.gitignore
+
+# Local data and exports
+exports/emergency/*
+!exports/emergency/.gitkeep
+test-results
+playwright-report
+coverage
+
+# IDE and OS
+.DS_Store
+*.pem
+.vscode
+.idea
+
+# Database dumps and backups
+*.sql
+*.dump
+*.backup
+prisma/dumps
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+!docker-compose.staging.yml
+
+# Documentation (not needed in runtime image)
+README.md
+docs
+
+# Tests
+tests
+*.spec.ts
+*.test.ts
+
+# TypeScript build info
+*.tsbuildinfo
+next-env.d.ts
+
+# Vercel
+.vercel

@@ -47,6 +47,8 @@ function useRevealOnScroll() {
 export function HomePage({ promotions }: { promotions: readonly HomePromotion[] }) {
   useRevealOnScroll();
 
+  const activePromotions = promotions.filter((item) => item.isActive !== false);
+
   return (
     <HomeBrandShell>
       <HomeHeader />
@@ -171,24 +173,26 @@ export function HomePage({ promotions }: { promotions: readonly HomePromotion[] 
           </div>
         </HomeSection>
 
-        <section
-          id="promo"
-          className="home-fade-up home-promo-section relative px-4 py-16 sm:py-20 md:px-6 md:py-24"
-        >
-          <div className="home-ornament-promo pointer-events-none absolute inset-0 opacity-25" aria-hidden />
-          <div
-            className="home-deco-ring pointer-events-none absolute -left-16 bottom-8 h-40 w-40 opacity-15"
-            aria-hidden
-          />
-          <div className="relative mx-auto max-w-5xl">
-            <header className="mx-auto mb-10 max-w-3xl text-center sm:mb-12">
-              <h2 className="font-display text-2xl font-semibold leading-tight text-[#faf7f2] sm:text-3xl md:text-4xl">
-                Особенные предложения для Вас
-              </h2>
-            </header>
-            <HomePromoCarousel promotions={promotions} />
-          </div>
-        </section>
+        {activePromotions.length > 0 ? (
+          <section
+            id="promo"
+            className="home-fade-up home-promo-section relative px-4 py-16 sm:py-20 md:px-6 md:py-24"
+          >
+            <div className="home-ornament-promo pointer-events-none absolute inset-0 opacity-25" aria-hidden />
+            <div
+              className="home-deco-ring pointer-events-none absolute -left-16 bottom-8 h-40 w-40 opacity-15"
+              aria-hidden
+            />
+            <div className="relative mx-auto max-w-5xl">
+              <header className="mx-auto mb-10 max-w-3xl text-center sm:mb-12">
+                <h2 className="font-display text-2xl font-semibold leading-tight text-[#faf7f2] sm:text-3xl md:text-4xl">
+                  Особенные предложения для Вас
+                </h2>
+              </header>
+              <HomePromoCarousel promotions={activePromotions} />
+            </div>
+          </section>
+        ) : null}
 
         <section className="home-fade-up px-4 py-16 sm:py-20 md:px-6 md:py-24">
           <div className="mx-auto max-w-4xl">

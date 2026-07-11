@@ -12,6 +12,8 @@
 
 # testing
 /coverage
+/test-results
+/playwright-report
 
 # next.js
 /.next/
@@ -33,10 +35,21 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 !.env.example
+!.env.production.example
+
+# production/staging secrets (never commit)
+.env.staging
+.env.production
 
 # local emergency exports
 /exports/emergency/*
 !/exports/emergency/.gitkeep
+
+# database dumps and backups
+*.sql
+*.dump
+*.backup
+/prisma/dumps
 
 # vercel
 .vercel

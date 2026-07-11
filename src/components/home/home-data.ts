@@ -32,21 +32,6 @@ export const HOME_PROMOTION_KIND_LABELS: Record<HomePromotionKind, string> = {
   game: "Подарок к процедуре",
 };
 
-export const HOME_PROMOTIONS: readonly HomePromotion[] = [
-  {
-    id: "cold-plasma-first-visit",
-    kind: "standard",
-    title: "Первый визит на холодную плазму — со скидкой 30%",
-    description:
-      "В прайсе указана полная стоимость. Если это Ваш первый визит на холодную плазму, мы применим скидку и подтвердим итоговую цену.",
-    ctaLabel: "Записаться онлайн",
-    ctaHref: "/booking",
-    badgeLabel: "Акция",
-    sortOrder: 1,
-    isActive: true,
-  },
-];
-
 export const HOME_FEATURES = [
   {
     title: "Выберите процедуру",

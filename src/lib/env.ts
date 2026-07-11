@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const envSchema = z.object({
+const baseEnvSchema = z.object({
   DATABASE_URL: z.string().min(1),
   APP_TIMEZONE: z.string().default("Asia/Yekaterinburg"),
   EXPORT_STORAGE: z.enum(["local", "s3"]).default("local"),
@@ -8,10 +8,73 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 });
 
-export type Env = z.infer<typeof envSchema>;
+const productionEnvSchema = baseEnvSchema.extend({
+  AUTH_SECRET: z
+    .string()
+    .min(32, "AUTH_SECRET должен содержать не менее 32 символов в production"),
+  AUTH_URL: z
+    .string()
+    .url("AUTH_URL должен быть валидным URL")
+    .refine(
+      (value) => value.startsWith("https://"),
+      "AUTH_URL должен использовать HTTPS в production",
+    ),
+  SCHEDULE_VIEW_TOKEN: z
+    .string()
+    .min(32, "SCHEDULE_VIEW_TOKEN должен содержать не менее 32 символов в production"),
+});
+
+export type Env = z.infer<typeof baseEnvSchema> & {
+  AUTH_SECRET?: string;
+  AUTH_URL?: string;
+  SCHEDULE_VIEW_TOKEN?: string;
+};
+
+function assertProductionDebugDisabled(): void {
+  if (process.env.NEXT_PUBLIC_SCHEDULE_DEBUG === "true") {
+    throw new Error(
+      "NEXT_PUBLIC_SCHEDULE_DEBUG=true запрещён в production. Удалите переменную или установите false.",
+    );
+  }
+}
+
+function resolveAuthSecret(): string | undefined {
+  return process.env.AUTH_SECRET?.trim() || process.env.NEXTAUTH_SECRET?.trim() || undefined;
+}
+
+function isProductionRuntime(): boolean {
+  if (process.env.NODE_ENV !== "production") {
+    return false;
+  }
+
+  // Next.js импортирует server-модули при `next build` с NODE_ENV=production
+  if (process.env.NEXT_PHASE === "phase-production-build") {
+    return false;
+  }
+
+  return true;
+}
 
 function loadEnv(): Env {
-  const parsed = envSchema.safeParse(process.env);
+  if (isProductionRuntime()) {
+    assertProductionDebugDisabled();
+
+    const parsed = productionEnvSchema.safeParse({
+      ...process.env,
+      AUTH_SECRET: resolveAuthSecret(),
+    });
+
+    if (!parsed.success) {
+      const details = parsed.error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("; ");
+      throw new Error(`Invalid production environment variables: ${details}`);
+    }
+
+    return parsed.data;
+  }
+
+  const parsed = baseEnvSchema.safeParse(process.env);
 
   if (!parsed.success) {
     const details = parsed.error.issues
@@ -20,7 +83,12 @@ function loadEnv(): Env {
     throw new Error(`Invalid environment variables: ${details}`);
   }
 
-  return parsed.data;
+  return {
+    ...parsed.data,
+    AUTH_SECRET: resolveAuthSecret(),
+    AUTH_URL: process.env.AUTH_URL?.trim(),
+    SCHEDULE_VIEW_TOKEN: process.env.SCHEDULE_VIEW_TOKEN?.trim(),
+  };
 }
 
 export const env = loadEnv();

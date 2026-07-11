@@ -1,9 +1,14 @@
+/**
+ * DEV-ONLY seed — тестовые пользователи, клиенты, услуги и демо-данные.
+ * Не запускать в production. Для production: npm run db:seed:production
+ */
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { CLIENT_SEED_IDS } from "@/lib/clients/defaults";
 import { normalizePhone } from "@/lib/phone/normalize-phone";
 import { LEGAL_DOCUMENT_SEEDS } from "@/lib/legal-document/defaults";
 import { backfillClientNormalizedPhones } from "@/services/ClientLinkService";
+import { assertDevSeedAllowed } from "./lib/assert-dev-seed-allowed";
 
 const prisma = new PrismaClient();
 
@@ -53,6 +58,8 @@ async function upsertSynonym(
 }
 
 async function main() {
+  assertDevSeedAllowed();
+
   const passwordHash = await bcrypt.hash("password123", 10);
 
   const owner = await prisma.user.upsert({

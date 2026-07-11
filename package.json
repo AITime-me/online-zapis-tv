@@ -10,6 +10,8 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:seed": "prisma db seed",
+    "db:seed:production": "tsx prisma/seed.production.ts",
+    "owner:create": "tsx scripts/create-owner.ts",
     "db:studio": "prisma studio",
     "import:services": "tsx scripts/import-services.ts",
     "import:services:apply": "tsx scripts/import-services.ts --apply",
