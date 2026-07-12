@@ -30,6 +30,7 @@
     "test:security:game-booking-consume": "tsx scripts/security-game-booking-consume-check.ts",
     "test:security:game-tier-foundation": "tsx scripts/security-game-tier-foundation-check.ts",
     "test:security:csrf-coverage": "tsx scripts/security-csrf-coverage-check.ts",
+    "test:security:env-auth-url": "tsx scripts/security-env-auth-url-check.ts",
     "test:e2e": "playwright test"
   },
   "prisma": {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { validateAuthUrlForRuntime } from "@/lib/auth-url-policy";
 
 const baseEnvSchema = z.object({
   DATABASE_URL: z.string().min(1),
@@ -6,23 +7,29 @@ const baseEnvSchema = z.object({
   EXPORT_STORAGE: z.enum(["local", "s3"]).default("local"),
   EXPORT_LOCAL_DIR: z.string().default("./exports/emergency"),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  APP_ENV: z.enum(["development", "staging", "production"]).optional(),
 });
 
-const productionEnvSchema = baseEnvSchema.extend({
-  AUTH_SECRET: z
-    .string()
-    .min(32, "AUTH_SECRET должен содержать не менее 32 символов в production"),
-  AUTH_URL: z
-    .string()
-    .url("AUTH_URL должен быть валидным URL")
-    .refine(
-      (value) => value.startsWith("https://"),
-      "AUTH_URL должен использовать HTTPS в production",
-    ),
-  SCHEDULE_VIEW_TOKEN: z
-    .string()
-    .min(32, "SCHEDULE_VIEW_TOKEN должен содержать не менее 32 символов в production"),
-});
+const productionEnvSchema = baseEnvSchema
+  .extend({
+    AUTH_SECRET: z
+      .string()
+      .min(32, "AUTH_SECRET должен содержать не менее 32 символов в production"),
+    AUTH_URL: z.string().url("AUTH_URL должен быть валидным URL"),
+    SCHEDULE_VIEW_TOKEN: z
+      .string()
+      .min(32, "SCHEDULE_VIEW_TOKEN должен содержать не менее 32 символов в production"),
+  })
+  .superRefine((value, ctx) => {
+    const result = validateAuthUrlForRuntime(value.AUTH_URL, value.APP_ENV);
+    if (!result.ok) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["AUTH_URL"],
+        message: result.message,
+      });
+    }
+  });
 
 export type Env = z.infer<typeof baseEnvSchema> & {
   AUTH_SECRET?: string;
