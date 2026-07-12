@@ -6,6 +6,16 @@ export type GameCatalogStatusDto =
   | "disabled"
   | "archived";
 
+export type GameCatalogSettingsStatusDto = "valid" | "safe-default" | "invalid";
+
+export type GameCatalogServerPolicyDto = "tier-0-only";
+
+export type GameCatalogServerReadinessDto = {
+  settingsStatus: GameCatalogSettingsStatusDto;
+  serverPolicy: GameCatalogServerPolicyDto;
+  premiumDisabledNotice: string;
+};
+
 export type GameCatalogDto = {
   id: string;
   slug: string;
@@ -18,6 +28,13 @@ export type GameCatalogDto = {
   legacyConfigId: string | null;
   publicPath: string;
   publicUrl: string;
+  campaignKey: string | null;
+  rulesVersion: string;
+  isPrimaryPublic: boolean;
+  publicPriority: number;
+  activeFrom: string | null;
+  activeTo: string | null;
+  serverReadiness: GameCatalogServerReadinessDto;
   createdAt: string;
   updatedAt: string;
 };

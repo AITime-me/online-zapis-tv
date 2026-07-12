@@ -32,21 +32,22 @@ export async function GET(request: Request) {
     const result = await getGameSessionResult(validation.catalogSlug, auth);
 
     if (!result.hasResult) {
-      return NextResponse.json({
-        ok: true,
-        status: result.status,
-        hasResult: false,
-      });
-    }
-
     return NextResponse.json({
       ok: true,
       status: result.status,
-      hasResult: true,
-      gamePlayId: result.gamePlayId,
-      gift: result.gift,
-      bookingExpiresAt: result.bookingExpiresAt?.toISOString(),
+      hasResult: result.hasResult,
     });
+  }
+
+  return NextResponse.json({
+    ok: true,
+    status: result.status,
+    hasResult: true,
+    gamePlayId: result.gamePlayId,
+    gift: result.gift,
+    bookingExpiresAt: result.bookingExpiresAt?.toISOString() ?? null,
+    bookingSubmitted: result.bookingSubmitted,
+  });
   } catch (error) {
     return handleGameSessionRouteError("[GET /api/game/session/result]", error);
   }

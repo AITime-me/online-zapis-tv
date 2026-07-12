@@ -46,7 +46,16 @@ export type GameSessionResultResponse = {
   hasResult: boolean;
   gamePlayId?: string;
   gift?: PublicGameGiftDto;
-  bookingExpiresAt?: string;
+  bookingExpiresAt?: string | null;
+  bookingSubmitted?: boolean;
+};
+
+export type GameSessionRestartResponse = {
+  ok: true;
+  status: "ACTIVE";
+  expiresAt: string;
+  hasResult: false;
+  mechanicType: GameMechanicTypeDto;
 };
 
 export type GameSessionClientMetrics = {
@@ -225,6 +234,12 @@ export function validateSessionCompleteBody(
       clientMetrics,
     },
   };
+}
+
+export function validateSessionRestartBody(
+  body: unknown,
+): { ok: true; catalogSlug: string } | { ok: false; error: string } {
+  return validateSessionStartBody(body);
 }
 
 export function validateSessionResultQuery(

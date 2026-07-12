@@ -20,8 +20,17 @@ import type {
   PublicGameGiftDto,
   SessionAuthContext,
 } from "@/lib/game/session/game-session-contract";
-import { GameSessionError } from "@/lib/game/session/game-session-errors";
+import {
+  GameSessionError,
+  GAME_BOOKING_ALREADY_SUBMITTED_MESSAGE,
+} from "@/lib/game/session/game-session-errors";
 import { expireGameSessionIfNeededWithDb } from "@/lib/game/session/game-session-expiration";
+import {
+  canRestartSession,
+  isPlayRewardConsumed,
+  resolveEffectiveSessionStatus,
+  shouldReuseSessionForStart,
+} from "@/lib/game/session/game-session-reuse-rules";
 import {
   buildGiftSnapshot,
   buildRulesSnapshot,
@@ -36,9 +45,14 @@ import {
 } from "@/lib/game/session/game-session-token";
 import { normalizeGameSlug } from "@/lib/games/catalog-contract";
 import { weightedGiftPick } from "@/lib/game/weighted-gift-pick";
+import {
+  assignmentToJson,
+  parseServerAssignment,
+  type CatchTimeServerAssignmentV1,
+} from "@/lib/game/tier/server-assignment";
+import { buildServerAssignment } from "@/lib/game/tier/server-tier-assignment";
 import { getStudioSettings } from "@/services/StudioSettingsService";
 
-const SERVER_RESULT_TIER = 0;
 const BOOKING_WINDOW_HOURS = 24;
 
 export type { SessionAuthContext } from "@/lib/game/session/game-session-contract";
@@ -52,6 +66,7 @@ export type ResolvedGameCatalog = {
   rulesVersion: string;
   legacyConfigId: string | null;
   mechanicType: GameMechanicTypeDto;
+  settings: unknown;
 };
 
 export type StartGameSessionResult = {
@@ -88,6 +103,16 @@ export type GameSessionResultData = {
   gamePlayId?: string;
   gift?: PublicGameGiftDto;
   bookingExpiresAt?: Date;
+  bookingSubmitted: boolean;
+};
+
+export type RestartGameSessionResult = {
+  status: "ACTIVE";
+  expiresAt: Date;
+  hasResult: false;
+  mechanicType: GameMechanicTypeDto;
+  sessionToken: string;
+  cookieOperations: CookieOperation[];
 };
 
 function isUniqueConstraintError(error: unknown): boolean {
@@ -134,6 +159,7 @@ export async function resolveActiveGameCatalog(
       legacyConfigId: true,
       activeFrom: true,
       activeTo: true,
+      settings: true,
     },
   });
 
@@ -177,7 +203,73 @@ export async function resolveActiveGameCatalog(
     rulesVersion: catalog.rulesVersion,
     legacyConfigId: catalog.legacyConfigId,
     mechanicType,
+    settings: catalog.settings,
   };
+}
+
+function buildCatalogServerAssignment(
+  catalog: ResolvedGameCatalog,
+  now: Date,
+): CatchTimeServerAssignmentV1 {
+  return buildServerAssignment({
+    mechanicType: "CATCH_TIME",
+    catalogCampaignKey: catalog.campaignKey,
+    catalogRulesVersion: catalog.rulesVersion,
+    settingsRaw: catalog.settings,
+    now,
+  });
+}
+
+async function ensureSessionServerAssignment(
+  session: {
+    id: string;
+    status: string;
+    serverAssignment: Prisma.JsonValue | null;
+  },
+  catalog: ResolvedGameCatalog,
+  now: Date,
+): Promise<CatchTimeServerAssignmentV1> {
+  const existing = parseServerAssignment(session.serverAssignment);
+  if (existing) {
+    return existing;
+  }
+
+  const assignment = buildCatalogServerAssignment(catalog, now);
+  const assignmentJson = assignmentToJson(assignment) as Prisma.InputJsonValue;
+
+  if (session.status !== "ACTIVE") {
+    return assignment;
+  }
+
+  await prisma.gameSession.updateMany({
+    where: {
+      id: session.id,
+      serverAssignment: { equals: Prisma.DbNull },
+    },
+    data: { serverAssignment: assignmentJson },
+  });
+
+  const refreshed = await prisma.gameSession.findUnique({
+    where: { id: session.id },
+    select: { serverAssignment: true },
+  });
+  const persisted = parseServerAssignment(refreshed?.serverAssignment ?? null);
+  if (persisted) {
+    return persisted;
+  }
+
+  await prisma.gameSession.update({
+    where: { id: session.id },
+    data: { serverAssignment: assignmentJson },
+  });
+
+  return assignment;
+}
+
+function resolveSessionServerResultTier(
+  assignment: CatchTimeServerAssignmentV1,
+): number {
+  return assignment.serverResultTier;
 }
 
 export function ensureVisitorAuth(
@@ -216,6 +308,41 @@ async function countRecentSessions(
   });
 }
 
+async function assertVisitorCanStartNewGameAttempt(
+  browserVisitorHash: string,
+  gameCatalogId: string,
+  now: Date = new Date(),
+): Promise<void> {
+  const since = new Date(now.getTime() - SESSION_LIMIT_WINDOW_MS);
+
+  const submittedSession = await prisma.gameSession.findFirst({
+    where: {
+      browserVisitorHash,
+      gameCatalogId,
+      startedAt: { gte: since },
+      OR: [
+        {
+          status: "CONSUMED",
+          consumedAt: { gte: since },
+          gamePlay: { is: { leadId: { not: null } } },
+        },
+        {
+          status: "COMPLETED",
+          gamePlay: { is: { leadId: { not: null } } },
+        },
+      ],
+    },
+    select: { id: true },
+  });
+
+  if (submittedSession) {
+    throw new GameSessionError(
+      "GAME_BOOKING_ALREADY_SUBMITTED",
+      GAME_BOOKING_ALREADY_SUBMITTED_MESSAGE,
+    );
+  }
+}
+
 async function findSessionForCatalog(
   gameCatalogId: string,
   tokenHash: string,
@@ -248,6 +375,59 @@ function mapPublicGift(snapshot: GiftSnapshot): PublicGameGiftDto {
   return gift;
 }
 
+async function loadSessionPlayReuseSnapshot(sessionId: string) {
+  return prisma.gamePlay.findUnique({
+    where: { gameSessionId: sessionId },
+    select: {
+      id: true,
+      leadId: true,
+      consumedAt: true,
+    },
+  });
+}
+
+async function reconcileCompletedSessionConsumption(
+  session: {
+    id: string;
+    status: string;
+    consumedAt: Date | null;
+  },
+  now: Date,
+): Promise<{ status: string; consumedAt: Date | null }> {
+  if (session.status !== "COMPLETED") {
+    return {
+      status: session.status,
+      consumedAt: session.consumedAt,
+    };
+  }
+
+  const play = await loadSessionPlayReuseSnapshot(session.id);
+  if (!isPlayRewardConsumed(play)) {
+    return {
+      status: session.status,
+      consumedAt: session.consumedAt,
+    };
+  }
+
+  const consumedAt = play?.consumedAt ?? session.consumedAt ?? now;
+  await prisma.gameSession.updateMany({
+    where: {
+      id: session.id,
+      status: "COMPLETED",
+      consumedAt: null,
+    },
+    data: {
+      status: "CONSUMED",
+      consumedAt,
+    },
+  });
+
+  return {
+    status: "CONSUMED",
+    consumedAt,
+  };
+}
+
 export async function startGameSession(
   catalogSlug: string,
   auth: SessionAuthContext,
@@ -266,39 +446,49 @@ export async function startGameSession(
     );
 
     if (existing) {
-      const session = await expireGameSessionIfNeededWithDb(existing, now);
-      if (session.status === "ACTIVE") {
-        return {
-          status: "ACTIVE",
-          expiresAt: session.playExpiresAt,
-          hasResult: false,
-          mechanicType: catalog.mechanicType,
-          sessionToken: existingToken,
-          cookieOperations: [
-            ...cookieOperations,
-            buildSessionSetOperation(
-              cookieName,
-              existingToken,
-              session.playExpiresAt,
-              now,
-            ),
-          ],
-        };
-      }
+      const expired = await expireGameSessionIfNeededWithDb(existing, now);
+      const reconciled = await reconcileCompletedSessionConsumption(expired, now);
+      const play = await loadSessionPlayReuseSnapshot(expired.id);
+      const effectiveStatus = resolveEffectiveSessionStatus({
+        status: reconciled.status,
+        play,
+      });
 
-      if (session.status === "COMPLETED") {
-        const expiresAt = sessionExpiryForResponse(session);
-        return {
-          status: "COMPLETED",
-          expiresAt,
-          hasResult: true,
-          mechanicType: catalog.mechanicType,
-          sessionToken: existingToken,
-          cookieOperations: [
-            ...cookieOperations,
-            buildSessionSetOperation(cookieName, existingToken, expiresAt, now),
-          ],
-        };
+      if (shouldReuseSessionForStart({ status: effectiveStatus, play })) {
+        if (effectiveStatus === "ACTIVE") {
+          await ensureSessionServerAssignment(expired, catalog, now);
+          return {
+            status: "ACTIVE",
+            expiresAt: expired.playExpiresAt,
+            hasResult: false,
+            mechanicType: catalog.mechanicType,
+            sessionToken: existingToken,
+            cookieOperations: [
+              ...cookieOperations,
+              buildSessionSetOperation(
+                cookieName,
+                existingToken,
+                expired.playExpiresAt,
+                now,
+              ),
+            ],
+          };
+        }
+
+        if (effectiveStatus === "COMPLETED") {
+          const expiresAt = sessionExpiryForResponse(expired);
+          return {
+            status: "COMPLETED",
+            expiresAt,
+            hasResult: true,
+            mechanicType: catalog.mechanicType,
+            sessionToken: existingToken,
+            cookieOperations: [
+              ...cookieOperations,
+              buildSessionSetOperation(cookieName, existingToken, expiresAt, now),
+            ],
+          };
+        }
       }
 
       cookieOperations.push(buildSessionDeleteOperation(cookieName));
@@ -317,9 +507,18 @@ export async function startGameSession(
     );
   }
 
+  await assertVisitorCanStartNewGameAttempt(
+    visitor.visitorTokenHash,
+    catalog.id,
+    now,
+  );
+
   const sessionToken = generateOpaqueToken();
   const tokenHash = hashOpaqueToken(sessionToken);
   const playExpiresAt = new Date(now.getTime() + PLAY_WINDOW_MS);
+  const serverAssignment = assignmentToJson(
+    buildCatalogServerAssignment(catalog, now),
+  ) as Prisma.InputJsonValue;
 
   await prisma.gameSession.create({
     data: {
@@ -329,9 +528,194 @@ export async function startGameSession(
       status: "ACTIVE",
       playExpiresAt,
       startedAt: now,
+      serverAssignment,
     },
   });
 
+  cookieOperations.push(
+    buildSessionSetOperation(cookieName, sessionToken, playExpiresAt, now),
+  );
+
+  return {
+    status: "ACTIVE",
+    expiresAt: playExpiresAt,
+    hasResult: false,
+    mechanicType: catalog.mechanicType,
+    sessionToken,
+    cookieOperations,
+  };
+}
+
+export async function restartGameSession(
+  catalogSlug: string,
+  auth: SessionAuthContext,
+  now: Date = new Date(),
+): Promise<RestartGameSessionResult> {
+  const catalog = await resolveActiveGameCatalog(catalogSlug, now);
+  const visitor = ensureVisitorAuth(auth);
+  const cookieName = buildCatalogSessionCookieName(catalog.slug);
+  const cookieOperations = [...visitor.cookieOperations];
+
+  await assertVisitorCanStartNewGameAttempt(
+    visitor.visitorTokenHash,
+    catalog.id,
+    now,
+  );
+
+  const existingToken = auth.sessionToken?.trim() || null;
+  if (!existingToken) {
+    throw new GameSessionError("GAME_SESSION_NOT_FOUND", "Игровая сессия не найдена");
+  }
+
+  const existing = await findSessionForCatalog(
+    catalog.id,
+    hashOpaqueToken(existingToken),
+  );
+  if (!existing) {
+    throw new GameSessionError("GAME_SESSION_NOT_FOUND", "Игровая сессия не найдена");
+  }
+
+  const expired = await expireGameSessionIfNeededWithDb(existing, now);
+  const reconciled = await reconcileCompletedSessionConsumption(expired, now);
+  const play = await loadSessionPlayReuseSnapshot(expired.id);
+  const effectiveStatus = resolveEffectiveSessionStatus({
+    status: reconciled.status,
+    play,
+  });
+
+  if (
+    !canRestartSession({
+      status: effectiveStatus,
+      play,
+    })
+  ) {
+    if (
+      effectiveStatus === "CONSUMED" ||
+      isPlayRewardConsumed(play)
+    ) {
+      throw new GameSessionError(
+        "GAME_BOOKING_ALREADY_SUBMITTED",
+        GAME_BOOKING_ALREADY_SUBMITTED_MESSAGE,
+      );
+    }
+    throw new GameSessionError(
+      "GAME_SESSION_EXPIRED",
+      "Время игры истекло. Начните заново.",
+    );
+  }
+
+  const recentCount = await countRecentSessions(
+    visitor.visitorTokenHash,
+    catalog.id,
+    now,
+  );
+  if (recentCount >= SESSION_START_LIMIT) {
+    throw new GameSessionError(
+      "GAME_SESSION_LIMIT",
+      "Превышен лимит игровых попыток. Попробуйте позже.",
+    );
+  }
+
+  const sessionToken = generateOpaqueToken();
+  const tokenHash = hashOpaqueToken(sessionToken);
+  const playExpiresAt = new Date(now.getTime() + PLAY_WINDOW_MS);
+  const serverAssignment = assignmentToJson(
+    buildCatalogServerAssignment(catalog, now),
+  ) as Prisma.InputJsonValue;
+
+  await prisma.$transaction(async (tx) => {
+    const locked = await tx.gameSession.findFirst({
+      where: { id: expired.id },
+    });
+    if (!locked) {
+      throw new GameSessionError("GAME_SESSION_NOT_FOUND", "Игровая сессия не найдена");
+    }
+
+    const current = await expireGameSessionIfNeededWithDb(locked, now, tx);
+    const lockedPlay = await tx.gamePlay.findUnique({
+      where: { gameSessionId: current.id },
+      select: { leadId: true, consumedAt: true },
+    });
+    const lockedStatus = resolveEffectiveSessionStatus({
+      status: current.status,
+      play: lockedPlay,
+    });
+
+    if (
+      !canRestartSession({
+        status: lockedStatus,
+        play: lockedPlay,
+      })
+    ) {
+      if (lockedStatus === "CONSUMED" || isPlayRewardConsumed(lockedPlay)) {
+        throw new GameSessionError(
+          "GAME_BOOKING_ALREADY_SUBMITTED",
+          GAME_BOOKING_ALREADY_SUBMITTED_MESSAGE,
+        );
+      }
+      throw new GameSessionError(
+        "GAME_RESULT_UNAVAILABLE",
+        "Результат игры недоступен",
+      );
+    }
+
+    const limitCount = await tx.gameSession.count({
+      where: {
+        browserVisitorHash: visitor.visitorTokenHash,
+        gameCatalogId: catalog.id,
+        startedAt: { gte: new Date(now.getTime() - SESSION_LIMIT_WINDOW_MS) },
+      },
+    });
+    if (limitCount >= SESSION_START_LIMIT) {
+      throw new GameSessionError(
+        "GAME_SESSION_LIMIT",
+        "Превышен лимит игровых попыток. Попробуйте позже.",
+      );
+    }
+
+    if (current.status === "ACTIVE") {
+      const updated = await tx.gameSession.updateMany({
+        where: { id: current.id, status: "ACTIVE" },
+        data: { status: "EXPIRED" },
+      });
+      if (updated.count !== 1) {
+        throw new GameSessionError(
+          "GAME_RESULT_UNAVAILABLE",
+          "Результат игры недоступен",
+        );
+      }
+    } else if (current.status === "COMPLETED") {
+      const updated = await tx.gameSession.updateMany({
+        where: { id: current.id, status: "COMPLETED" },
+        data: { status: "EXPIRED" },
+      });
+      if (updated.count !== 1) {
+        throw new GameSessionError(
+          "GAME_RESULT_UNAVAILABLE",
+          "Результат игры недоступен",
+        );
+      }
+    } else {
+      throw new GameSessionError(
+        "GAME_RESULT_UNAVAILABLE",
+        "Результат игры недоступен",
+      );
+    }
+
+    await tx.gameSession.create({
+      data: {
+        gameCatalogId: catalog.id,
+        tokenHash,
+        browserVisitorHash: visitor.visitorTokenHash,
+        status: "ACTIVE",
+        playExpiresAt,
+        startedAt: now,
+        serverAssignment,
+      },
+    });
+  });
+
+  cookieOperations.push(buildSessionDeleteOperation(cookieName));
   cookieOperations.push(
     buildSessionSetOperation(cookieName, sessionToken, playExpiresAt, now),
   );
@@ -359,7 +743,11 @@ async function loadCompletedPlay(sessionId: string) {
 
 async function completeActiveSession(
   catalog: ResolvedGameCatalog,
-  session: { id: string; playExpiresAt: Date },
+  session: {
+    id: string;
+    playExpiresAt: Date;
+    serverAssignment: Prisma.JsonValue | null;
+  },
   playInput: {
     gameDirection: string;
     skinNeed: string;
@@ -370,6 +758,13 @@ async function completeActiveSession(
   sessionToken: string,
   now: Date,
 ): Promise<CompleteGameSessionResult> {
+  const assignment = await ensureSessionServerAssignment(
+    { id: session.id, status: "ACTIVE", serverAssignment: session.serverAssignment },
+    catalog,
+    now,
+  );
+  const serverResultTier = resolveSessionServerResultTier(assignment);
+
   const gifts = await prisma.gameGift.findMany({
     where: {
       isActive: true,
@@ -378,7 +773,7 @@ async function completeActiveSession(
     orderBy: [{ probability: "desc" }, { createdAt: "asc" }],
   });
 
-  const eligible = buildCatalogScopedGiftPool(gifts, catalog.id, SERVER_RESULT_TIER);
+  const eligible = buildCatalogScopedGiftPool(gifts, catalog.id, serverResultTier);
   const picked = weightedGiftPick(eligible);
   if (!picked) {
     throw new GameSessionError(
@@ -391,10 +786,10 @@ async function completeActiveSession(
   const claimExpiresAt = new Date(completedAt.getTime() + CLAIM_WINDOW_MS);
   const giftSnapshot = buildGiftSnapshot(picked, completedAt);
   const rulesSnapshot = buildRulesSnapshot({
-    campaignKey: catalog.campaignKey,
-    rulesVersion: catalog.rulesVersion,
+    campaignKey: assignment.campaignKey,
+    rulesVersion: assignment.rulesVersion,
     mechanicType: catalog.mechanicType,
-    serverResultTier: SERVER_RESULT_TIER,
+    serverResultTier,
     catalogSlug: catalog.slug,
     catalogTitle: catalog.title,
     bookingWindowHours: BOOKING_WINDOW_HOURS,
@@ -464,9 +859,9 @@ async function completeActiveSession(
           gameCatalogId: catalog.id,
           gameSessionId: current.id,
           selectedGiftId: picked.id,
-          serverResultTier: SERVER_RESULT_TIER,
-          campaignKey: catalog.campaignKey,
-          rulesVersion: catalog.rulesVersion,
+          serverResultTier,
+          campaignKey: assignment.campaignKey,
+          rulesVersion: assignment.rulesVersion,
           giftSnapshot: giftSnapshot as Prisma.InputJsonValue,
           rulesSnapshot: rulesSnapshot as Prisma.InputJsonValue,
           clientMetrics: playInput.clientMetrics
@@ -688,6 +1083,7 @@ export async function getGameSessionResult(
     return {
       status: "ACTIVE",
       hasResult: false,
+      bookingSubmitted: false,
     };
   }
 
@@ -695,6 +1091,7 @@ export async function getGameSessionResult(
     throw new GameSessionError("GAME_SESSION_NOT_FOUND", "Игровая сессия не найдена");
   }
 
+  const reconciled = await reconcileCompletedSessionConsumption(current, now);
   const play = await loadCompletedPlay(current.id);
   if (!play) {
     throw new GameSessionError(
@@ -715,12 +1112,21 @@ export async function getGameSessionResult(
     current.claimExpiresAt ??
     new Date((play.completedAt ?? now).getTime() + CLAIM_WINDOW_MS);
 
+  const playReuse = await loadSessionPlayReuseSnapshot(current.id);
+  const effectiveStatus = resolveEffectiveSessionStatus({
+    status: reconciled.status,
+    play: playReuse,
+  });
+  const bookingSubmitted =
+    effectiveStatus === "CONSUMED" || isPlayRewardConsumed(playReuse);
+
   return {
-    status: current.status === "CONSUMED" ? "CONSUMED" : "COMPLETED",
+    status: bookingSubmitted ? "CONSUMED" : "COMPLETED",
     hasResult: true,
     gamePlayId: play.id,
     gift: mapPublicGift(snapshot),
     bookingExpiresAt,
+    bookingSubmitted,
   };
 }
 
@@ -737,21 +1143,62 @@ export async function runGamePlayAdapter(input: {
   cookieOperations: CookieOperation[];
 }> {
   const catalogSlug = input.catalogSlug?.trim() || "procedure-gift";
-  const start = await startGameSession(catalogSlug, input.auth);
-  const complete = await completeGameSession({
-    catalogSlug,
-    auth: input.auth,
-    sessionTokenOverride: start.sessionToken,
-    gameDirection: input.gameDirection,
-    skinNeed: input.skinNeed,
-    resultType: input.resultType,
-    premiumLevel: input.premiumLevel,
-    clientMetrics: null,
-  });
+  const catalog = await resolveActiveGameCatalog(catalogSlug);
+  const visitor = ensureVisitorAuth(input.auth);
+  await assertVisitorCanStartNewGameAttempt(
+    visitor.visitorTokenHash,
+    catalog.id,
+  );
 
-  return {
-    playId: complete.gamePlayId,
-    gift: complete.gift,
-    cookieOperations: [...start.cookieOperations, ...complete.cookieOperations],
-  };
+  let auth = input.auth;
+  const cookieOperations: CookieOperation[] = [];
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const start = await startGameSession(catalogSlug, auth);
+    cookieOperations.push(...start.cookieOperations);
+
+    const complete = await completeGameSession({
+      catalogSlug,
+      auth,
+      sessionTokenOverride: start.sessionToken,
+      gameDirection: input.gameDirection,
+      skinNeed: input.skinNeed,
+      resultType: input.resultType,
+      premiumLevel: input.premiumLevel,
+      clientMetrics: null,
+    });
+    cookieOperations.push(...complete.cookieOperations);
+
+    const play = await prisma.gamePlay.findUnique({
+      where: { id: complete.gamePlayId },
+      select: {
+        leadId: true,
+        consumedAt: true,
+        gameSession: {
+          select: { status: true },
+        },
+      },
+    });
+
+    const consumedResult =
+      isPlayRewardConsumed(play) || play?.gameSession?.status === "CONSUMED";
+
+    if (!consumedResult) {
+      return {
+        playId: complete.gamePlayId,
+        gift: complete.gift,
+        cookieOperations,
+      };
+    }
+
+    auth = {
+      visitorToken: auth.visitorToken,
+      sessionToken: null,
+    };
+  }
+
+  throw new GameSessionError(
+    "GAME_RESULT_UNAVAILABLE",
+    "Результат игры недоступен",
+  );
 }

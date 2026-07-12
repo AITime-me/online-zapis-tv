@@ -11,10 +11,16 @@ import {
   canActivateGameCatalog,
   getGameCatalogActivationBlockReason,
   type GameCatalogDto,
+  type GameCatalogServerReadinessDto,
   type GameCatalogStatusDto,
   type GameCatalogTypeDto,
   type GameCatalogWriteInput,
 } from "@/types/game-catalog";
+import { deriveSettingsStatus } from "@/lib/game/tier/game-catalog-settings";
+import {
+  C2_SERVER_TIER_POLICY,
+  PREMIUM_DISABLED_READINESS_WARNING,
+} from "@/lib/game/tier/server-tier-policy";
 
 export class GameCatalogValidationError extends Error {
   constructor(message: string) {
@@ -73,6 +79,14 @@ function gameStatusToDb(status: GameCatalogStatusDto): GameCatalogStatus {
   }
 }
 
+function buildServerReadiness(settingsRaw: unknown): GameCatalogServerReadinessDto {
+  return {
+    settingsStatus: deriveSettingsStatus(settingsRaw),
+    serverPolicy: C2_SERVER_TIER_POLICY,
+    premiumDisabledNotice: PREMIUM_DISABLED_READINESS_WARNING,
+  };
+}
+
 function mapGameCatalog(
   row: Awaited<ReturnType<typeof prisma.gameCatalog.findMany>>[number],
   origin?: string | null,
@@ -94,6 +108,13 @@ function mapGameCatalog(
     legacyConfigId: row.legacyConfigId,
     publicPath: buildGamePublicPath(row.slug),
     publicUrl: buildGamePublicUrl(row.slug, origin),
+    campaignKey: row.campaignKey,
+    rulesVersion: row.rulesVersion,
+    isPrimaryPublic: row.isPrimaryPublic,
+    publicPriority: row.publicPriority,
+    activeFrom: row.activeFrom?.toISOString() ?? null,
+    activeTo: row.activeTo?.toISOString() ?? null,
+    serverReadiness: buildServerReadiness(row.settings),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

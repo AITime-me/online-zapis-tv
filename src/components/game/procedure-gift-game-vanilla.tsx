@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Script from "next/script";
 import Link from "next/link";
 import { createPortal } from "react-dom";
@@ -38,6 +38,33 @@ type PublicGameConfig = {
 };
 
 const POIMAY_GAME_BASE = "/poimay-game";
+const GAME_CATALOG_SLUG = "procedure-gift";
+
+type ServerSessionResult = {
+  ok?: boolean;
+  status?: string;
+  hasResult?: boolean;
+  gamePlayId?: string;
+  gift?: {
+    name: string;
+    shortDescription: string;
+    image: string | null;
+    priority: string;
+    cardStyle: string;
+  };
+  bookingSubmitted?: boolean;
+  error?: string;
+  code?: string;
+};
+
+type PoimayGameAppApi = {
+  showScreen?: (screenId: string) => void;
+};
+
+type PoimayGameFlowGate = {
+  isBookingSubmitted: () => boolean;
+  beforeStartGame: (proceed: () => void) => void;
+};
 
 function readDomDirectionLabel(): string | null {
   return document.getElementById("result-direction")?.textContent?.trim() || null;
@@ -88,7 +115,45 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
   }
 }
 
-const GAME_BOOKING_IDEMPOTENCY_SCOPE = "booking:procedure-gift";
+const GAME_BOOKING_IDEMPOTENCY_SCOPE_PREFIX = "booking:procedure-gift";
+const BOOKING_SUBMITTED_PLAY_ID_KEY = "procedure-gift:booking-submitted-play-id";
+
+function buildGameBookingScope(playId: string): string {
+  return `${GAME_BOOKING_IDEMPOTENCY_SCOPE_PREFIX}:${playId}`;
+}
+
+function readSubmittedPlayId(): string | null {
+  if (typeof sessionStorage === "undefined") {
+    return null;
+  }
+  try {
+    return sessionStorage.getItem(BOOKING_SUBMITTED_PLAY_ID_KEY)?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function markSubmittedPlayId(playId: string): void {
+  if (typeof sessionStorage === "undefined") {
+    return;
+  }
+  try {
+    sessionStorage.setItem(BOOKING_SUBMITTED_PLAY_ID_KEY, playId);
+  } catch {
+    // Ignore storage errors.
+  }
+}
+
+function clearSubmittedPlayId(): void {
+  if (typeof sessionStorage === "undefined") {
+    return;
+  }
+  try {
+    sessionStorage.removeItem(BOOKING_SUBMITTED_PLAY_ID_KEY);
+  } catch {
+    // Ignore storage errors.
+  }
+}
 
 export function ProcedureGiftGameVanilla({
   config,
@@ -114,11 +179,15 @@ export function ProcedureGiftGameVanilla({
 
   const [leadSubmitting, setLeadSubmitting] = useState(false);
   const [leadSuccess, setLeadSuccess] = useState(false);
+  const [submittedPlayId, setSubmittedPlayId] = useState<string | null>(null);
   const [messengerCopied, setMessengerCopied] = useState(false);
 
   const [leadError, setLeadError] = useState<string | null>(null);
   const [gameRuntimeReady, setGameRuntimeReady] = useState(false);
   const [gameRuntimeError, setGameRuntimeError] = useState<string | null>(null);
+  const [replayLoading, setReplayLoading] = useState(false);
+  const [bookingSubmittedFromServer, setBookingSubmittedFromServer] = useState(false);
+  const [flowBlockedMessage, setFlowBlockedMessage] = useState<string | null>(null);
 
   const fullPhone = useMemo(
     () => buildFullPhoneNumber(countryCode, phoneLocal),
@@ -127,7 +196,84 @@ export function ProcedureGiftGameVanilla({
 
   useEffect(() => {
     setIsMounted(true);
+    setSubmittedPlayId(readSubmittedPlayId());
   }, []);
+
+  const syncServerSessionResult = useCallback(async () => {
+    try {
+      const response = await fetch(
+        `/api/game/session/result?catalogSlug=${encodeURIComponent(GAME_CATALOG_SLUG)}`,
+        { credentials: "same-origin" },
+      );
+      const payload = (await response.json()) as ServerSessionResult;
+      if (!response.ok || !payload.ok) {
+        return;
+      }
+
+      if (payload.bookingSubmitted) {
+        setBookingSubmittedFromServer(true);
+        setFlowBlockedMessage(
+          "Заявка по игре уже отправлена. Менеджер студии свяжется с вами.",
+        );
+      } else {
+        setBookingSubmittedFromServer(false);
+        setFlowBlockedMessage(null);
+      }
+
+      if (payload.hasResult && payload.gamePlayId && payload.gift) {
+        const session: GameLeadSession = {
+          playId: payload.gamePlayId,
+          giftId: null,
+          giftName: payload.gift.name,
+          gameDirection: null,
+          skinNeed: null,
+          resultType: null,
+          premiumLevel: null,
+        };
+        setPlaySession(session);
+        if (payload.bookingSubmitted) {
+          setSubmittedPlayId(payload.gamePlayId);
+          setLeadSuccess(true);
+          markSubmittedPlayId(payload.gamePlayId);
+        }
+        const poimayApp = (window as Window & { PoimayGameApp?: PoimayGameAppApi })
+          .PoimayGameApp;
+        poimayApp?.showScreen?.("screen-result");
+        const giftEl = document.getElementById("gift-value");
+        if (giftEl) {
+          giftEl.textContent = payload.gift.name;
+        }
+      }
+    } catch {
+      // Ignore sync errors; client markers remain fallback.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!config?.isActive) return;
+    void syncServerSessionResult();
+  }, [config?.isActive, syncServerSessionResult]);
+
+  useEffect(() => {
+    if (!config?.isActive) return;
+
+    const handleNewAttempt = () => {
+      if (bookingSubmittedFromServer) {
+        return;
+      }
+      setPlaySession(null);
+      setLeadOpen(false);
+      setLeadSuccess(false);
+      setLeadError(null);
+      setSubmittedPlayId(null);
+      clearSubmittedPlayId();
+    };
+
+    window.addEventListener("poimay-game:new-attempt", handleNewAttempt);
+    return () => {
+      window.removeEventListener("poimay-game:new-attempt", handleNewAttempt);
+    };
+  }, [config?.isActive, bookingSubmittedFromServer]);
 
   useEffect(() => {
     if (!config?.isActive) {
@@ -214,13 +360,22 @@ export function ProcedureGiftGameVanilla({
     let lastPlayId: string | null = null;
     const id = window.setInterval(() => {
       const session = safeGetPlaySession();
-      if (!session?.playId) return;
+      if (!session?.playId) {
+        if (lastPlayId !== null) {
+          lastPlayId = null;
+          setPlaySession(null);
+          setLeadOpen(false);
+        }
+        return;
+      }
       if (session.playId !== lastPlayId) {
         lastPlayId = session.playId;
         setPlaySession(session);
         setLeadOpen(false);
-        setLeadSuccess(false);
         setLeadError(null);
+        const storedSubmittedPlayId = readSubmittedPlayId();
+        setSubmittedPlayId(storedSubmittedPlayId);
+        setLeadSuccess(storedSubmittedPlayId === session.playId);
       }
     }, 500);
 
@@ -243,10 +398,134 @@ export function ProcedureGiftGameVanilla({
     }
   }, [config?.isActive, gameRuntimeReady]);
 
+  const isBookingSubmitted =
+    bookingSubmittedFromServer ||
+    (Boolean(submittedPlayId) &&
+      submittedPlayId === (playSession?.playId?.trim() ?? ""));
+
+  const clearClientAttemptState = useCallback((previousPlayId: string | null) => {
+    if (previousPlayId) {
+      clearIdempotencyKey(buildGameBookingScope(previousPlayId));
+    }
+    if ((window as Window & { PlaySession?: { beginNewAttempt?: () => void } }).PlaySession?.beginNewAttempt) {
+      (window as any).PlaySession.beginNewAttempt();
+    } else {
+      (window as any).PlaySession?.clear?.();
+    }
+    setPlaySession(null);
+    setLeadOpen(false);
+    setLeadSuccess(false);
+    setLeadError(null);
+    setSubmittedPlayId(null);
+    clearSubmittedPlayId();
+  }, []);
+
+  const restartGameAttempt = useCallback(async (): Promise<boolean> => {
+    const response = await fetch("/api/game/session/restart", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ catalogSlug: GAME_CATALOG_SLUG }),
+    });
+    const payload = (await response.json()) as ServerSessionResult;
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error ?? "Не удалось начать новую попытку");
+    }
+    return true;
+  }, []);
+
+  const playAgain = useCallback(async () => {
+    if (replayLoading || isBookingSubmitted) {
+      return;
+    }
+    const previousPlayId = playSession?.playId?.trim() ?? null;
+    setReplayLoading(true);
+    setLeadError(null);
+    try {
+      await restartGameAttempt();
+      clearClientAttemptState(previousPlayId);
+      const poimayApp = (window as Window & { PoimayGameApp?: PoimayGameAppApi }).PoimayGameApp;
+      poimayApp?.showScreen?.("screen-rules");
+    } catch (error) {
+      setLeadError(
+        error instanceof Error ? error.message : "Не удалось начать новую попытку",
+      );
+    } finally {
+      setReplayLoading(false);
+    }
+  }, [
+    clearClientAttemptState,
+    isBookingSubmitted,
+    playSession?.playId,
+    replayLoading,
+    restartGameAttempt,
+  ]);
+
+  useEffect(() => {
+    if (!config?.isActive) return;
+
+    const gate: PoimayGameFlowGate = {
+      isBookingSubmitted: () => isBookingSubmitted,
+      beforeStartGame: (proceed) => {
+        if (isBookingSubmitted) {
+          setFlowBlockedMessage(
+            "Заявка по игре уже отправлена. Менеджер студии свяжется с вами.",
+          );
+          return;
+        }
+        const previousPlayId = safeGetPlaySession()?.playId?.trim() ?? null;
+        if (!previousPlayId) {
+          proceed();
+          return;
+        }
+        setReplayLoading(true);
+        setLeadError(null);
+        restartGameAttempt()
+          .then(() => {
+            clearClientAttemptState(previousPlayId);
+            proceed();
+          })
+          .catch((error) => {
+            setLeadError(
+              error instanceof Error
+                ? error.message
+                : "Не удалось начать новую попытку",
+            );
+          })
+          .finally(() => {
+            setReplayLoading(false);
+          });
+      },
+    };
+
+    (window as Window & { PoimayGameFlowGate?: PoimayGameFlowGate }).PoimayGameFlowGate =
+      gate;
+
+    return () => {
+      delete (window as Window & { PoimayGameFlowGate?: PoimayGameFlowGate })
+        .PoimayGameFlowGate;
+    };
+  }, [
+    clearClientAttemptState,
+    config?.isActive,
+    isBookingSubmitted,
+    restartGameAttempt,
+  ]);
+
   const openPhoneForm = () => {
+    const playId = playSession?.playId?.trim() ?? "";
+    if (!playId) {
+      setLeadError("Не найден идентификатор прохождения игры");
+      return;
+    }
+    if (isBookingSubmitted) {
+      setLeadError("Заявка по этому результату уже отправлена");
+      return;
+    }
+
     setComment("");
     setLeadError(null);
-    getOrCreateIdempotencyKey(GAME_BOOKING_IDEMPOTENCY_SCOPE);
+    getOrCreateIdempotencyKey(buildGameBookingScope(playId));
     setLeadOpen(true);
   };
 
@@ -284,16 +563,21 @@ export function ProcedureGiftGameVanilla({
       setLeadError("Не найден идентификатор прохождения игры");
       return;
     }
+    if (isBookingSubmitted) {
+      setLeadError("Заявка по этому результату уже отправлена");
+      return;
+    }
 
     setLeadSubmitting(true);
     try {
       const userComment = comment.trim() || null;
+      const idempotencyScope = buildGameBookingScope(playId);
 
       const response = await fetch("/api/booking/request", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...buildIdempotencyHeaders(GAME_BOOKING_IDEMPOTENCY_SCOPE),
+          ...buildIdempotencyHeaders(idempotencyScope),
         },
         body: JSON.stringify({
           clientName: name.trim(),
@@ -313,12 +597,18 @@ export function ProcedureGiftGameVanilla({
       };
       if (!response.ok || !payload.ok) {
         if (payload.code === "IDEMPOTENCY_CONFLICT") {
-          resetIdempotencyKey(GAME_BOOKING_IDEMPOTENCY_SCOPE);
+          resetIdempotencyKey(idempotencyScope);
         }
         throw new Error(payload.error ?? "Не удалось отправить заявку");
       }
 
-      clearIdempotencyKey(GAME_BOOKING_IDEMPOTENCY_SCOPE);
+      clearIdempotencyKey(idempotencyScope);
+      markSubmittedPlayId(playId);
+      setSubmittedPlayId(playId);
+      setBookingSubmittedFromServer(true);
+      setFlowBlockedMessage(
+        "Заявка по игре уже отправлена. Менеджер студии свяжется с вами.",
+      );
 
       setLeadSuccess(true);
       setLeadOpen(false);
@@ -342,6 +632,9 @@ export function ProcedureGiftGameVanilla({
       document.body.style.overflow = prev;
     };
   }, [leadOpen]);
+
+  const currentPlayId = playSession?.playId?.trim() ?? "";
+  const isCurrentPlaySubmitted = isBookingSubmitted;
 
   if (!config) {
     return (
@@ -468,6 +761,16 @@ export function ProcedureGiftGameVanilla({
         </div>
       ) : null}
 
+      {flowBlockedMessage ? (
+        <div
+          className="mx-4 mt-4 rounded-xl border px-4 py-3 text-sm"
+          style={{ borderColor: studioBrand.goldLineSoft, color: studioBrand.inkMuted }}
+          role="status"
+        >
+          {flowBlockedMessage}
+        </div>
+      ) : null}
+
       {!gameRuntimeReady && !gameRuntimeError ? (
         <div
           className="mx-4 mt-4 rounded-xl border px-4 py-3 text-sm"
@@ -548,7 +851,7 @@ export function ProcedureGiftGameVanilla({
             </div>
 
             <button type="button" className="btn btn--primary" data-action="go-rules">
-              Начать игру
+              {isBookingSubmitted ? "Заявка уже отправлена" : "Начать игру"}
             </button>
           </div>
         </section>
@@ -646,11 +949,14 @@ export function ProcedureGiftGameVanilla({
 
             {playSession?.playId ? (
               <div className="mt-6">
-                {!leadSuccess ? (
+                {!isCurrentPlaySubmitted ? (
                   <div className="rounded-2xl border px-4 py-5" style={{ borderColor: studioBrand.goldLineSoft }}>
                     <p className="result-label" style={{ marginBottom: 12 }}>
                       Получите свой подарок удобным способом
                     </p>
+                    {leadError ? (
+                      <p className="font-body mb-3 text-xs text-red-700">{leadError}</p>
+                    ) : null}
                     {messengerCopied ? (
                       <p
                         className="font-body mb-3 text-xs"
@@ -662,8 +968,23 @@ export function ProcedureGiftGameVanilla({
                     <div className="flex flex-col gap-3">
                       <button
                         type="button"
-                        onClick={() => void openMessengerChannel(vkUrl)}
+                        onClick={openPhoneForm}
                         className="btn btn--primary w-full"
+                      >
+                        Оставить телефон и получить подарок
+                      </button>
+                      <button
+                        type="button"
+                        disabled={replayLoading}
+                        onClick={() => void playAgain()}
+                        className="btn btn--secondary w-full disabled:opacity-60"
+                      >
+                        {replayLoading ? "Готовим новую попытку…" : "Сыграть ещё раз"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void openMessengerChannel(vkUrl)}
+                        className="btn btn--secondary w-full"
                       >
                         Написать в VK
                       </button>
@@ -674,20 +995,19 @@ export function ProcedureGiftGameVanilla({
                       >
                         Написать в MAX
                       </button>
-                      <button
-                        type="button"
-                        onClick={openPhoneForm}
-                        className="btn btn--secondary w-full"
-                      >
-                        Оставить телефон
-                      </button>
                     </div>
                   </div>
                 ) : (
-                  <div className="mt-4 rounded-2xl border px-4 py-4" style={{ borderColor: studioBrand.goldLineSoft }}>
+                  <div className="mt-4 space-y-3 rounded-2xl border px-4 py-4" style={{ borderColor: studioBrand.goldLineSoft }}>
                     <p className="font-body text-sm" style={{ color: studioBrand.inkMuted }}>
-                      {gameSuccessMessage}
+                      Заявка уже отправлена. {gameSuccessMessage}
                     </p>
+                    <Link
+                      href="/"
+                      className="btn btn--primary w-full inline-flex items-center justify-center"
+                    >
+                      Вернуться на сайт
+                    </Link>
                   </div>
                 )}
               </div>

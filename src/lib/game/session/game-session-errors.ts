@@ -6,7 +6,11 @@ export const GAME_SESSION_ERROR_CODES = [
   "GAME_RESULT_UNAVAILABLE",
   "GAME_MECHANIC_UNSUPPORTED",
   "GAME_INVALID_REQUEST",
+  "GAME_BOOKING_ALREADY_SUBMITTED",
 ] as const;
+
+export const GAME_BOOKING_ALREADY_SUBMITTED_MESSAGE =
+  "Заявка по игре уже отправлена. Менеджер студии свяжется с вами.";
 
 export type GameSessionErrorCode = (typeof GAME_SESSION_ERROR_CODES)[number];
 
@@ -18,6 +22,7 @@ const ERROR_HTTP_STATUS: Record<GameSessionErrorCode, number> = {
   GAME_RESULT_UNAVAILABLE: 400,
   GAME_MECHANIC_UNSUPPORTED: 400,
   GAME_INVALID_REQUEST: 400,
+  GAME_BOOKING_ALREADY_SUBMITTED: 400,
 };
 
 export class GameSessionError extends Error {

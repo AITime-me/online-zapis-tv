@@ -24,6 +24,15 @@ import {
   shouldExpireCompletedSession,
 } from "../src/lib/game/session/game-session-expiration-rules";
 import {
+  canRestartSession,
+  isPlayRewardConsumed,
+  resolveEffectiveSessionStatus,
+  shouldReuseSessionForStart,
+} from "../src/lib/game/session/game-session-reuse-rules";
+import {
+  GAME_BOOKING_ALREADY_SUBMITTED_MESSAGE,
+} from "../src/lib/game/session/game-session-errors";
+import {
   buildGiftSnapshot,
   buildRulesSnapshot,
   parseGiftSnapshot,
@@ -334,6 +343,122 @@ function assertHashUsesSha256(): void {
   assert.equal(hashOpaqueToken(token), expected);
 }
 
+function assertSessionReuseRegression(): void {
+  const consumedPlayId = "33333333-3333-4333-8333-333333333333";
+  const consumedLeadId = "44444444-4444-4444-8444-444444444444";
+
+  assert.equal(
+    shouldReuseSessionForStart({
+      status: "CONSUMED",
+      play: { leadId: consumedLeadId, consumedAt: new Date() },
+    }),
+    false,
+  );
+  assert.equal(
+    shouldReuseSessionForStart({
+      status: "COMPLETED",
+      play: { leadId: consumedLeadId, consumedAt: new Date() },
+    }),
+    false,
+  );
+  assert.equal(
+    shouldReuseSessionForStart({
+      status: "COMPLETED",
+      play: { leadId: null, consumedAt: null },
+    }),
+    true,
+  );
+  assert.equal(
+    resolveEffectiveSessionStatus({
+      status: "COMPLETED",
+      play: { leadId: consumedPlayId, consumedAt: new Date() },
+    }),
+    "CONSUMED",
+  );
+  assert.equal(isPlayRewardConsumed({ leadId: null, consumedAt: new Date() }), true);
+
+  assert.equal(
+    canRestartSession({
+      status: "COMPLETED",
+      play: { leadId: null, consumedAt: null },
+    }),
+    true,
+  );
+  assert.equal(
+    canRestartSession({
+      status: "CONSUMED",
+      play: { leadId: consumedLeadId, consumedAt: new Date() },
+    }),
+    false,
+  );
+
+  const sessionService = fs.readFileSync(
+    path.join(process.cwd(), "src/services/GameSessionService.ts"),
+    "utf8",
+  );
+  assert.match(sessionService, /reconcileCompletedSessionConsumption/);
+  assert.match(sessionService, /shouldReuseSessionForStart/);
+  assert.match(sessionService, /restartGameSession/);
+  assert.match(sessionService, /assertVisitorCanStartNewGameAttempt/);
+  assert.match(sessionService, /for \(let attempt = 0; attempt < 2; attempt \+= 1\)/);
+
+  const restartRoute = fs.readFileSync(
+    path.join(process.cwd(), "src/app/api/game/session/restart/route.ts"),
+    "utf8",
+  );
+  assert.match(restartRoute, /restartGameSession/);
+  assert.match(restartRoute, /enforceSameOriginForMutatingRequest/);
+
+  const resultRoute = fs.readFileSync(
+    path.join(process.cwd(), "src/app/api/game/session/result/route.ts"),
+    "utf8",
+  );
+  assert.match(resultRoute, /bookingSubmitted/);
+
+  const csrfRules = fs.readFileSync(
+    path.join(process.cwd(), "src/lib/security/csrf-route-rules.ts"),
+    "utf8",
+  );
+  assert.match(csrfRules, /\/api\/game\/session\/restart/);
+
+  const vanilla = fs.readFileSync(
+    path.join(process.cwd(), "src/components/game/procedure-gift-game-vanilla.tsx"),
+    "utf8",
+  );
+  assert.match(vanilla, /\/api\/game\/session\/restart/);
+  assert.match(vanilla, /Оставить телефон и получить подарок/);
+  assert.match(vanilla, /Сыграть ещё раз/);
+  assert.match(vanilla, /type="button"/);
+  assert.match(vanilla, /onClick=\{\(\) => void playAgain\(\)\}/);
+  assert.ok(!vanilla.includes('data-action="go-rules"') || !/Заявка уже отправлена[\s\S]*data-action="go-rules"[\s\S]*Сыграть ещё раз/.test(vanilla));
+  assert.match(vanilla, /PoimayGameFlowGate/);
+  assert.match(vanilla, /bookingSubmittedFromServer/);
+  assert.match(GAME_BOOKING_ALREADY_SUBMITTED_MESSAGE, /Заявка по игре уже отправлена/);
+
+  const playSessionJs = fs.readFileSync(
+    path.join(process.cwd(), "public/poimay-game/js/play-session.js"),
+    "utf8",
+  );
+  assert.match(playSessionJs, /beginNewAttempt/);
+  assert.match(playSessionJs, /poimay-game:new-attempt/);
+
+  const appJs = fs.readFileSync(
+    path.join(process.cwd(), "public/poimay-game/js/app.js"),
+    "utf8",
+  );
+  assert.match(appJs, /PoimayGameFlowGate/);
+  assert.match(appJs, /beforeStartGame/);
+  assert.match(appJs, /showScreen/);
+
+  const giftApiJs = fs.readFileSync(
+    path.join(process.cwd(), "public/poimay-game/js/gift-api.js"),
+    "utf8",
+  );
+  assert.match(giftApiJs, /credentials:\s*'same-origin'/);
+  assert.match(vanilla, /buildGameBookingScope/);
+  assert.match(vanilla, /BOOKING_SUBMITTED_PLAY_ID_KEY/);
+}
+
 function runChecks(): void {
   assertTokenSecurity();
   assertCookiePolicy();
@@ -351,6 +476,7 @@ function runChecks(): void {
   assertErrorCodes();
   assertPlayWindowConstant();
   assertHashUsesSha256();
+  assertSessionReuseRegression();
 }
 
 runChecks();

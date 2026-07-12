@@ -61,10 +61,18 @@
     }
   }
 
+  function beginNewAttempt() {
+    clear();
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('poimay-game:new-attempt'));
+    }
+  }
+
   window.PlaySession = {
     save: save,
     get: get,
     getPlayId: getPlayId,
-    clear: clear
+    clear: clear,
+    beginNewAttempt: beginNewAttempt
   };
 })();

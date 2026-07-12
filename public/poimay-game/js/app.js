@@ -165,6 +165,13 @@
 
     GiftApi.selectGift(payload, result).then(function (gift) {
       setGiftLoading(false);
+      if (!gift || !gift.playId) {
+        if (window.PlaySession && typeof PlaySession.clear === 'function') {
+          PlaySession.clear();
+        }
+        showToast('Не удалось получить результат игры. Попробуйте ещё раз.', true);
+        return;
+      }
       applyGiftToResult(gift);
       persistPlaySession(payload, gift, analytics);
       updateBookingLink();
@@ -228,12 +235,33 @@
     }
   }
 
+  function canStartNewFlow() {
+    if (window.PoimayGameFlowGate && typeof window.PoimayGameFlowGate.isBookingSubmitted === 'function') {
+      return !window.PoimayGameFlowGate.isBookingSubmitted();
+    }
+    return true;
+  }
+
   function bindEvents(signal) {
     requireElement('[data-action="go-rules"]').addEventListener('click', function () {
+      if (!canStartNewFlow()) {
+        showToast('Заявка по игре уже отправлена. Менеджер студии свяжется с вами.', true);
+        return;
+      }
       showScreen('screen-rules');
     }, { signal: signal });
 
     requireElement('[data-action="start-game"]').addEventListener('click', function () {
+      if (!canStartNewFlow()) {
+        showToast('Заявка по игре уже отправлена. Менеджер студии свяжется с вами.', true);
+        return;
+      }
+      if (window.PoimayGameFlowGate && typeof window.PoimayGameFlowGate.beforeStartGame === 'function') {
+        window.PoimayGameFlowGate.beforeStartGame(function proceed() {
+          showScreen('screen-game');
+        });
+        return;
+      }
       showScreen('screen-game');
     }, { signal: signal });
 
@@ -314,6 +342,7 @@
     destroy: destroyApp,
     isMounted: function () {
       return mounted;
-    }
+    },
+    showScreen: showScreen
   };
 })();

@@ -50,6 +50,7 @@ export const API_RATE_LIMIT_RULES: ApiRateLimitRouteRule[] = [
       method === "POST" &&
       (exactPath(pathname, "/api/game/play") ||
         exactPath(pathname, "/api/game/session/start") ||
+        exactPath(pathname, "/api/game/session/restart") ||
         exactPath(pathname, "/api/game/session/complete")),
   },
   {
@@ -91,6 +92,7 @@ export const RATE_LIMITED_API_PATHS = API_RATE_LIMIT_RULES.flatMap((rule) => {
       return [
         { method: "POST", pathname: "/api/game/play" },
         { method: "POST", pathname: "/api/game/session/start" },
+        { method: "POST", pathname: "/api/game/session/restart" },
         { method: "POST", pathname: "/api/game/session/complete" },
       ];
     case "gameSessionRead":
