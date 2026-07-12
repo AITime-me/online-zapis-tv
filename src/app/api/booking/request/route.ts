@@ -6,10 +6,16 @@ import {
   validateClientData,
   type ClientDataInput,
 } from "@/lib/booking/client-validation";
+import {
+  IDEMPOTENCY_KEY_HEADER,
+  validateIdempotencyKeyHeader,
+} from "@/lib/booking-requests/idempotency-contract";
 import { toPublicBookingRequestCreateResponse } from "@/lib/booking-requests/public-booking-request-contract";
+import { enforceSameOriginForMutatingRequest } from "@/lib/security/csrf";
 import { enforceRequestRateLimit } from "@/lib/security/rate-limit/enforce-policy";
 import { enforceValidatedPhoneRateLimit } from "@/lib/security/rate-limit/booking-phone";
 import {
+  BookingRequestPublicError,
   BookingRequestValidationError,
   createBookingRequest,
 } from "@/services/BookingRequestService";
@@ -32,6 +38,25 @@ export async function POST(request: Request) {
   const rateLimitResponse = enforceRequestRateLimit(request);
   if (rateLimitResponse) {
     return rateLimitResponse;
+  }
+
+  const originResponse = enforceSameOriginForMutatingRequest(request);
+  if (originResponse) {
+    return originResponse;
+  }
+
+  const idempotencyValidation = validateIdempotencyKeyHeader(
+    request.headers.get(IDEMPOTENCY_KEY_HEADER),
+  );
+  if (!idempotencyValidation.ok) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: idempotencyValidation.message,
+        code: idempotencyValidation.code,
+      },
+      { status: 400 },
+    );
   }
 
   try {
@@ -88,15 +113,24 @@ export async function POST(request: Request) {
       type: body.type,
       consent: body.consent === true,
       gamePlayId:
-        typeof body.gamePlayId === "string" ? body.gamePlayId : body.gamePlayId ?? null,
-      serviceName:
-        typeof body.serviceName === "string" ? body.serviceName : body.serviceName ?? null,
+        typeof body.gamePlayId === "string"
+          ? body.gamePlayId
+          : body.gamePlayId ?? null,
+      idempotencyKey: idempotencyValidation.key,
+      request,
     });
 
     return NextResponse.json(
       toPublicBookingRequestCreateResponse({ id: bookingRequest.id }),
     );
   } catch (error) {
+    if (error instanceof BookingRequestPublicError) {
+      return NextResponse.json(
+        { ok: false, error: error.message, code: error.code },
+        { status: error.status },
+      );
+    }
+
     if (error instanceof BookingRequestValidationError) {
       return NextResponse.json(
         { ok: false, error: error.message },

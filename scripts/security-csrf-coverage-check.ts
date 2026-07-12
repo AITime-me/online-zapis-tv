@@ -98,8 +98,39 @@ export function collectCsrfCoverageIssues(apiRoot = path.join("src", "app", "api
   return issues;
 }
 
+function collectBookingRequestOriginGuardIssues(): CoverageIssue[] {
+  const routeFile = path.join("src", "app", "api", "booking", "request", "route.ts");
+  if (!fs.existsSync(routeFile)) {
+    return [
+      {
+        file: "src/app/api/booking/request/route.ts",
+        method: "POST",
+        pathname: "/api/booking/request",
+        reason: "booking request route file is missing",
+      },
+    ];
+  }
+
+  const source = fs.readFileSync(routeFile, "utf8");
+  if (!source.includes("enforceSameOriginForMutatingRequest")) {
+    return [
+      {
+        file: "src/app/api/booking/request/route.ts",
+        method: "POST",
+        pathname: "/api/booking/request",
+        reason: "booking request route must call enforceSameOriginForMutatingRequest",
+      },
+    ];
+  }
+
+  return [];
+}
+
 export function assertCsrfRouteCoverage(apiRoot?: string): void {
-  const issues = collectCsrfCoverageIssues(apiRoot);
+  const issues = [
+    ...collectCsrfCoverageIssues(apiRoot),
+    ...collectBookingRequestOriginGuardIssues(),
+  ];
   if (issues.length > 0) {
     const details = issues
       .map((issue) => `${issue.file} [${issue.method} ${issue.pathname}]: ${issue.reason}`)

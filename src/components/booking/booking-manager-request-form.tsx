@@ -18,6 +18,12 @@ import {
 } from "@/lib/booking/client-validation";
 import type { BookingCatalogMaster } from "@/lib/booking/catalog-types";
 import { BOOKING_REQUEST_SUCCESS_MESSAGE } from "@/lib/booking/request-success-copy";
+import {
+  buildIdempotencyHeaders,
+  clearIdempotencyKey,
+  getOrCreateIdempotencyKey,
+  resetIdempotencyKey,
+} from "@/lib/booking-requests/idempotency-client";
 
 export type BookingRequestFormType =
   | "MANAGER_REQUEST"
@@ -56,6 +62,10 @@ export function BookingManagerRequestForm({
       return;
     }
 
+    getOrCreateIdempotencyKey(
+      `booking:manager:${type}:${master?.id ?? "none"}`,
+    );
+
     const body = document.body;
     const previousOverflow = body.style.overflow;
     body.style.overflow = "hidden";
@@ -63,7 +73,7 @@ export function BookingManagerRequestForm({
     return () => {
       body.style.overflow = previousOverflow;
     };
-  }, [isMounted, open]);
+  }, [isMounted, master?.id, open, type]);
 
   useEffect(() => {
     return () => {
@@ -124,10 +134,14 @@ export function BookingManagerRequestForm({
 
     setSubmitting(true);
     setError(null);
+    const idempotencyScope = `booking:manager:${type}:${master?.id ?? "none"}`;
     try {
       const response = await fetch("/api/booking/request", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...buildIdempotencyHeaders(idempotencyScope),
+        },
         body: JSON.stringify({
           clientName: name.trim(),
           clientPhone: fullPhone,
@@ -140,14 +154,19 @@ export function BookingManagerRequestForm({
       const data = (await response.json()) as {
         ok?: boolean;
         error?: string;
+        code?: string;
         fieldErrors?: ClientDataFieldErrors;
       };
       if (!response.ok || !data.ok) {
+        if (data.code === "IDEMPOTENCY_CONFLICT") {
+          resetIdempotencyKey(idempotencyScope);
+        }
         if (data.fieldErrors) {
           setFieldErrors(data.fieldErrors);
         }
         throw new Error(data.error ?? "Не удалось отправить заявку");
       }
+      clearIdempotencyKey(idempotencyScope);
       setSuccess(true);
     } catch (submitError) {
       setError(

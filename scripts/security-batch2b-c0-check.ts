@@ -331,6 +331,7 @@ function runVanillaGameMountRegressionTests(): void {
   assert.match(reactSource, /gameRuntimeReady/);
   assert.doesNotMatch(reactSource, /buildManagerGameComment/);
   assert.match(reactSource, /comment: userComment/);
+  assert.match(reactSource, /buildIdempotencyHeaders/);
 }
 
 function runNonGameBookingRegressionTests(): void {
@@ -338,9 +339,11 @@ function runNonGameBookingRegressionTests(): void {
     path.join("src", "services", "BookingRequestService.ts"),
     "utf8",
   );
-  assert.match(source, /if \(trimmedGamePlayId\)/);
-  assert.match(source, /source: resolveLeadSource\(input\)/);
-  assert.match(source, /serviceName: input\.serviceName/);
+  assert.match(source, /if \(resolvedGamePlayId\)/);
+  assert.match(source, /createRegularBookingRequest/);
+  assert.match(source, /resolveLeadSource\(null\)/);
+  assert.match(source, /resolveGamePlayIdInput/);
+  assert.match(source, /GAME_INVALID_REQUEST_CODE/);
 }
 
 function runWeightedPickerTests(): void {
@@ -385,9 +388,10 @@ function runBookingServiceAtomicTransactionTests(): void {
   );
   assert.match(source, /\$transaction/);
   assert.match(source, /updateMany/);
-  assert.match(source, /shouldRejectGamePlayLink/);
-  assert.match(source, /buildServerGameManagerComment/);
-  assert.match(source, /extractGameBookingUserMessage/);
+  assert.match(source, /playUpdated\.count !== 1/);
+  assert.match(source, /sessionUpdated\.count !== 1/);
+  assert.match(source, /buildServerGameBookingComment/);
+  assert.match(source, /extractGameBookingCommentForPayload/);
   assert.doesNotMatch(
     source,
     /\/\/ Связка optional: заявку не блокируем/,

@@ -27,6 +27,7 @@
     "test:security:batch2b-c0": "tsx scripts/security-batch2b-c0-check.ts",
     "test:security:game-platform-migration": "tsx scripts/security-game-platform-migration-check.ts",
     "test:security:game-session": "tsx scripts/security-game-session-check.ts",
+    "test:security:game-booking-consume": "tsx scripts/security-game-booking-consume-check.ts",
     "test:security:csrf-coverage": "tsx scripts/security-csrf-coverage-check.ts",
     "test:e2e": "playwright test"
   },

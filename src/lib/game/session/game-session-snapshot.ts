@@ -102,6 +102,36 @@ export function publicGiftFromSnapshot(
   };
 }
 
+export function parseRulesSnapshot(value: unknown): RulesSnapshot | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const snapshot = value as Partial<RulesSnapshot>;
+  if (
+    typeof snapshot.rulesVersion !== "string" ||
+    typeof snapshot.mechanicType !== "string" ||
+    typeof snapshot.serverResultTier !== "number" ||
+    typeof snapshot.probabilityBucket !== "string" ||
+    typeof snapshot.bookingWindowHours !== "number" ||
+    typeof snapshot.catalogSlug !== "string" ||
+    typeof snapshot.catalogTitle !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    campaignKey: snapshot.campaignKey ?? null,
+    rulesVersion: snapshot.rulesVersion,
+    mechanicType: snapshot.mechanicType,
+    serverResultTier: snapshot.serverResultTier,
+    probabilityBucket: snapshot.probabilityBucket,
+    bookingWindowHours: snapshot.bookingWindowHours,
+    catalogSlug: snapshot.catalogSlug,
+    catalogTitle: snapshot.catalogTitle,
+  };
+}
+
 export function parseGiftSnapshot(value: unknown): GiftSnapshot | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;

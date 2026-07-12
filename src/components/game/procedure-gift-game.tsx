@@ -11,6 +11,14 @@ import {
 } from "@/lib/booking/client-validation";
 import { studioBrand } from "@/lib/brand/studio-brand";
 import { BOOKING_REQUEST_SUCCESS_MESSAGE } from "@/lib/booking/request-success-copy";
+import {
+  buildIdempotencyHeaders,
+  clearIdempotencyKey,
+  getOrCreateIdempotencyKey,
+  resetIdempotencyKey,
+} from "@/lib/booking-requests/idempotency-client";
+
+const GAME_BOOKING_IDEMPOTENCY_SCOPE = "booking:procedure-gift-legacy";
 
 type PublicGameConfig = {
   isActive: boolean;
@@ -196,36 +204,38 @@ export function ProcedureGiftGame({ config }: { config: PublicGameConfig | null 
 
     setLeadSubmitting(true);
     setError(null);
+    getOrCreateIdempotencyKey(GAME_BOOKING_IDEMPOTENCY_SCOPE);
     try {
-      const comment = buildManagerMessage({
-        header: config.managerMessageHeader,
-        footer: config.managerMessageFooter,
-        gameDirection,
-        skinNeed,
-        resultType,
-        premiumLevel,
-        gift,
-        clientName: name,
-      });
+      const userComment = null;
 
       const response = await fetch("/api/booking/request", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...buildIdempotencyHeaders(GAME_BOOKING_IDEMPOTENCY_SCOPE),
+        },
         body: JSON.stringify({
           clientName: name.trim(),
           clientPhone: fullPhone,
-          comment,
+          comment: userComment,
           masterId: null,
           type: "CONSULTATION_REQUEST",
           consent,
           gamePlayId: playId,
-          serviceName: gift?.name ?? null,
         }),
       });
-      const payload = (await response.json()) as { ok?: boolean; error?: string };
+      const payload = (await response.json()) as {
+        ok?: boolean;
+        error?: string;
+        code?: string;
+      };
       if (!response.ok || !payload.ok) {
+        if (payload.code === "IDEMPOTENCY_CONFLICT") {
+          resetIdempotencyKey(GAME_BOOKING_IDEMPOTENCY_SCOPE);
+        }
         throw new Error(payload.error ?? "Не удалось отправить заявку");
       }
+      clearIdempotencyKey(GAME_BOOKING_IDEMPOTENCY_SCOPE);
       setLeadSuccess(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось отправить заявку");
@@ -407,7 +417,10 @@ export function ProcedureGiftGame({ config }: { config: PublicGameConfig | null 
             <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:justify-center">
               <button
                 type="button"
-                onClick={() => setStep("lead")}
+                onClick={() => {
+                  getOrCreateIdempotencyKey(GAME_BOOKING_IDEMPOTENCY_SCOPE);
+                  setStep("lead");
+                }}
                 className="home-btn home-btn-primary font-body flex min-h-12 items-center justify-center rounded-2xl px-5 py-3 text-base font-medium text-white sm:min-w-[260px]"
               >
                 {config.ctaButtonText}

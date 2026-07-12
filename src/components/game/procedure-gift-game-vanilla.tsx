@@ -14,6 +14,12 @@ import {
 import { studioBrand } from "@/lib/brand/studio-brand";
 import { BOOKING_REQUEST_SUCCESS_MESSAGE } from "@/lib/booking/request-success-copy";
 import {
+  buildIdempotencyHeaders,
+  clearIdempotencyKey,
+  getOrCreateIdempotencyKey,
+  resetIdempotencyKey,
+} from "@/lib/booking-requests/idempotency-client";
+import {
   buildClientGameMessage,
   type GameLeadSession,
 } from "@/lib/game/game-lead-messages";
@@ -81,6 +87,8 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
     return false;
   }
 }
+
+const GAME_BOOKING_IDEMPOTENCY_SCOPE = "booking:procedure-gift";
 
 export function ProcedureGiftGameVanilla({
   config,
@@ -238,6 +246,7 @@ export function ProcedureGiftGameVanilla({
   const openPhoneForm = () => {
     setComment("");
     setLeadError(null);
+    getOrCreateIdempotencyKey(GAME_BOOKING_IDEMPOTENCY_SCOPE);
     setLeadOpen(true);
   };
 
@@ -282,7 +291,10 @@ export function ProcedureGiftGameVanilla({
 
       const response = await fetch("/api/booking/request", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...buildIdempotencyHeaders(GAME_BOOKING_IDEMPOTENCY_SCOPE),
+        },
         body: JSON.stringify({
           clientName: name.trim(),
           clientPhone: fullPhone,
@@ -294,10 +306,19 @@ export function ProcedureGiftGameVanilla({
         }),
       });
 
-      const payload = (await response.json()) as { ok?: boolean; error?: string };
+      const payload = (await response.json()) as {
+        ok?: boolean;
+        error?: string;
+        code?: string;
+      };
       if (!response.ok || !payload.ok) {
+        if (payload.code === "IDEMPOTENCY_CONFLICT") {
+          resetIdempotencyKey(GAME_BOOKING_IDEMPOTENCY_SCOPE);
+        }
         throw new Error(payload.error ?? "Не удалось отправить заявку");
       }
+
+      clearIdempotencyKey(GAME_BOOKING_IDEMPOTENCY_SCOPE);
 
       setLeadSuccess(true);
       setLeadOpen(false);

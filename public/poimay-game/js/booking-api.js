@@ -2,6 +2,7 @@
   'use strict';
 
   var DEFAULT_TIMEOUT = 8000;
+  var IDEMPOTENCY_STORAGE_PREFIX = 'booking-idempotency:';
 
   function getBaseUrl() {
     if (window.GiftConfig) {
@@ -18,6 +19,70 @@
 
   function normalizeBase(url) {
     return (url || '').replace(/\/$/, '');
+  }
+
+  function formatUuidFromBytes(bytes) {
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    var hex = Array.prototype.map
+      .call(bytes, function (byte) {
+        return byte.toString(16).padStart(2, '0');
+      })
+      .join('');
+    return (
+      hex.slice(0, 8) +
+      '-' +
+      hex.slice(8, 12) +
+      '-' +
+      hex.slice(12, 16) +
+      '-' +
+      hex.slice(16, 20) +
+      '-' +
+      hex.slice(20)
+    );
+  }
+
+  function generateIdempotencyKey() {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+      return window.crypto.randomUUID();
+    }
+    if (!window.crypto || typeof window.crypto.getRandomValues !== 'function') {
+      throw new Error('secure_random_unavailable');
+    }
+    var bytes = new Uint8Array(16);
+    window.crypto.getRandomValues(bytes);
+    return formatUuidFromBytes(bytes);
+  }
+
+  function resolveIdempotencyScope(data) {
+    var playId = getPlayId(data.gamePlayId);
+    if (playId) {
+      return 'booking:poimay-game:' + playId;
+    }
+    return 'booking:poimay-game:regular';
+  }
+
+  function getOrCreateIdempotencyKey(scope) {
+    var storageKey = IDEMPOTENCY_STORAGE_PREFIX + scope;
+    try {
+      var existing = sessionStorage.getItem(storageKey);
+      if (existing) {
+        return existing;
+      }
+      var created = generateIdempotencyKey();
+      sessionStorage.setItem(storageKey, created);
+      return created;
+    } catch (_error) {
+      return generateIdempotencyKey();
+    }
+  }
+
+  function clearIdempotencyKey(scope) {
+    try {
+      sessionStorage.removeItem(IDEMPOTENCY_STORAGE_PREFIX + scope);
+    } catch (_error) {
+      // Ignore storage errors.
+    }
   }
 
   function fetchWithTimeout(url, options, timeoutMs) {
@@ -91,11 +156,26 @@
       body.comment = data.comment;
     }
 
-    return fetchWithTimeout(base + '/api/booking/request', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    }, DEFAULT_TIMEOUT);
+    var scope = resolveIdempotencyScope(data);
+    var idempotencyKey = getOrCreateIdempotencyKey(scope);
+
+    return fetchWithTimeout(
+      base + '/api/booking/request',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idempotencyKey
+        },
+        body: JSON.stringify(body)
+      },
+      DEFAULT_TIMEOUT
+    ).then(function (payload) {
+      if (payload && payload.ok) {
+        clearIdempotencyKey(scope);
+      }
+      return payload;
+    });
   }
 
   window.BookingApi = {

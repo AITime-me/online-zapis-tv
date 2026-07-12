@@ -237,6 +237,9 @@ test.describe("Security Batch 1", () => {
 
   test("public booking request response is whitelist-only", async ({ request }) => {
     const response = await request.post("/api/booking/request", {
+      headers: {
+        "Idempotency-Key": crypto.randomUUID(),
+      },
       data: {
         clientName: "Security Test Client",
         clientPhone: "+70000000001",
