@@ -18,12 +18,24 @@
 
 ```bash
 cp .env.production.example .env.staging
-# Отредактируйте: AUTH_SECRET (≥32 символов), AUTH_URL (HTTPS), SCHEDULE_VIEW_TOKEN, пароли Postgres
+# Отредактируйте: AUTH_SECRET (≥32 символов), AUTH_URL, SCHEDULE_VIEW_TOKEN, пароли Postgres
 ```
 
 Файл `.env.staging` / `.env.production` **не коммитится**.
 
 Рекомендуемый секрет сессии: **`AUTH_SECRET`** (не `NEXTAUTH_SECRET`).
+
+**`APP_ENV` и `AUTH_URL`:**
+
+- Реальный production: `APP_ENV=production` и `AUTH_URL=https://ваш-домен` (разрешён только `https://`).
+- Закрытый staging по SSH-туннелю (без домена и HTTPS): `APP_ENV=staging` и
+  `AUTH_URL=http://127.0.0.1:3000`. HTTP допускается только для loopback
+  (`127.0.0.1`, `localhost`, `::1`) и только при `APP_ENV=staging`.
+- Без `APP_ENV=staging` вход падает с ошибкой
+  `AUTH_URL должен использовать HTTPS в production`.
+
+`docker-compose.staging.yml` пробрасывает `APP_ENV` в контейнер `app`, поэтому переменная
+должна присутствовать в `.env.staging`.
 
 ### 2. Поднять чистую PostgreSQL
 

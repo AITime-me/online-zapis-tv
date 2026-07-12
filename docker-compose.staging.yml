@@ -38,6 +38,9 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       NODE_ENV: production
+      # Маркер окружения для env-валидации. Для закрытого staging по SSH-туннелю
+      # задайте APP_ENV=staging в .env.staging — иначе loopback HTTP AUTH_URL запрещён.
+      APP_ENV: ${APP_ENV}
       APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Yekaterinburg}
       AUTH_SECRET: ${AUTH_SECRET}
       AUTH_URL: ${AUTH_URL}
