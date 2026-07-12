@@ -25,6 +25,7 @@
     "test:security:batch1": "tsx scripts/security-batch1-check.ts",
     "test:security:batch2a": "tsx scripts/security-batch2a-check.ts",
     "test:security:batch2b-c0": "tsx scripts/security-batch2b-c0-check.ts",
+    "test:security:game-platform-migration": "tsx scripts/security-game-platform-migration-check.ts",
     "test:security:csrf-coverage": "tsx scripts/security-csrf-coverage-check.ts",
     "test:e2e": "playwright test"
   },

@@ -135,6 +135,13 @@ enum GameCatalogStatus {
   ARCHIVED
 }
 
+enum GameSessionStatus {
+  ACTIVE
+  COMPLETED
+  CONSUMED
+  EXPIRED
+}
+
 model User {
   id            String    @id @default(uuid()) @db.Uuid
   email         String    @unique
@@ -404,9 +411,13 @@ model BookingRequest {
   createdAt   DateTime             @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime             @updatedAt @map("updated_at") @db.Timestamptz
 
+  idempotencyKey         String? @unique @map("idempotency_key")
+  idempotencyPayloadHash String? @map("idempotency_payload_hash") @db.VarChar(64)
+
   master       Master?       @relation(fields: [masterId], references: [id], onDelete: SetNull)
   client       Client?       @relation(fields: [clientId], references: [id], onDelete: SetNull)
   botEventLogs BotEventLog[]
+  gamePlay     GamePlay?     @relation("GamePlayLead")
 
   @@index([status, createdAt(sort: Desc)])
   @@index([clientId])
@@ -506,6 +517,9 @@ model GameGift {
   allowedResultTypes    String[] @default([]) @map("allowed_result_types")
   requiredPremiumLevel  Int      @default(0) @map("required_premium_level")
 
+  gameCatalogId String?      @map("game_catalog_id") @db.Uuid
+  gameCatalog   GameCatalog? @relation(fields: [gameCatalogId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -513,6 +527,7 @@ model GameGift {
 
   @@index([isActive])
   @@index([probability])
+  @@index([gameCatalogId])
   @@map("game_gifts")
 }
 
@@ -523,20 +538,35 @@ model GamePlay {
   resultType    String @map("result_type")
   premiumLevel  Int    @default(0) @map("premium_level")
 
+  gameCatalogId String?      @map("game_catalog_id") @db.Uuid
+  gameCatalog   GameCatalog? @relation(fields: [gameCatalogId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  gameSessionId String?      @unique @map("game_session_id") @db.Uuid
+  gameSession   GameSession? @relation(fields: [gameSessionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
   selectedGiftId String?   @map("selected_gift_id") @db.Uuid
   selectedGift   GameGift? @relation(fields: [selectedGiftId], references: [id], onDelete: SetNull)
 
-  /**
-   * Будущая связь с заявкой/лидом (например bookingRequest.id).
-   */
-  leadId String? @map("lead_id") @db.Uuid
+  serverResultTier Int     @default(0) @map("server_result_tier")
+  campaignKey      String? @map("campaign_key")
+  rulesVersion     String? @map("rules_version")
+  giftSnapshot     Json?   @map("gift_snapshot")
+  rulesSnapshot    Json?   @map("rules_snapshot")
+  clientMetrics    Json?   @map("client_metrics")
 
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  leadId String?         @unique @map("lead_id") @db.Uuid
+  lead   BookingRequest? @relation("GamePlayLead", fields: [leadId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  completedAt DateTime? @map("completed_at") @db.Timestamptz
+  consumedAt  DateTime? @map("consumed_at") @db.Timestamptz
 
   @@index([createdAt])
   @@index([gameDirection])
   @@index([resultType])
   @@index([selectedGiftId])
+  @@index([gameCatalogId])
+  @@index([consumedAt])
   @@map("game_plays")
 }
 
@@ -553,12 +583,50 @@ model GameCatalog {
   settings       Json?
   externalUrl    String?           @map("external_url")
   legacyConfigId String?           @map("legacy_config_id")
-  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt      DateTime          @updatedAt @map("updated_at") @db.Timestamptz
+
+  campaignKey     String?   @map("campaign_key")
+  rulesVersion    String    @default("1") @map("rules_version")
+  isPrimaryPublic Boolean   @default(false) @map("is_primary_public")
+  publicPriority  Int       @default(0) @map("public_priority")
+  activeFrom      DateTime? @map("active_from") @db.Timestamptz
+  activeTo        DateTime? @map("active_to") @db.Timestamptz
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  gameSessions GameSession[]
+  gamePlays    GamePlay[]
+  gameGifts    GameGift[]
 
   @@index([status])
   @@index([type])
+  @@index([status, isPrimaryPublic, publicPriority])
   @@map("game_catalog")
+}
+
+model GameSession {
+  id                 String            @id @default(uuid()) @db.Uuid
+  gameCatalogId      String            @map("game_catalog_id") @db.Uuid
+  tokenHash          String?           @unique @map("token_hash") @db.VarChar(64)
+  browserVisitorHash String?           @map("browser_visitor_hash") @db.VarChar(64)
+  status             GameSessionStatus @default(ACTIVE)
+  startedAt          DateTime          @default(now()) @map("started_at") @db.Timestamptz
+  playExpiresAt      DateTime          @map("play_expires_at") @db.Timestamptz
+  completedAt        DateTime?         @map("completed_at") @db.Timestamptz
+  claimExpiresAt     DateTime?         @map("claim_expires_at") @db.Timestamptz
+  consumedAt         DateTime?         @map("consumed_at") @db.Timestamptz
+  serverAssignment   Json?             @map("server_assignment")
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime          @updatedAt @map("updated_at") @db.Timestamptz
+
+  gameCatalog GameCatalog @relation(fields: [gameCatalogId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  gamePlay    GamePlay?
+
+  @@index([gameCatalogId, status])
+  @@index([status, playExpiresAt])
+  @@index([status, claimExpiresAt])
+  @@index([browserVisitorHash, gameCatalogId, startedAt])
+  @@map("game_sessions")
 }
 
 model Promotion {
