@@ -47,7 +47,15 @@ export const API_RATE_LIMIT_RULES: ApiRateLimitRouteRule[] = [
   {
     policyId: "gamePlay",
     match: (pathname, method) =>
-      method === "POST" && exactPath(pathname, "/api/game/play"),
+      method === "POST" &&
+      (exactPath(pathname, "/api/game/play") ||
+        exactPath(pathname, "/api/game/session/start") ||
+        exactPath(pathname, "/api/game/session/complete")),
+  },
+  {
+    policyId: "gameSessionRead",
+    match: (pathname, method) =>
+      method === "GET" && exactPath(pathname, "/api/game/session/result"),
   },
   {
     policyId: "availabilityCatalog",
@@ -80,7 +88,13 @@ export const RATE_LIMITED_API_PATHS = API_RATE_LIMIT_RULES.flatMap((rule) => {
     case "bookingClientContext":
       return [{ method: "POST", pathname: "/api/booking/client-context" }];
     case "gamePlay":
-      return [{ method: "POST", pathname: "/api/game/play" }];
+      return [
+        { method: "POST", pathname: "/api/game/play" },
+        { method: "POST", pathname: "/api/game/session/start" },
+        { method: "POST", pathname: "/api/game/session/complete" },
+      ];
+    case "gameSessionRead":
+      return [{ method: "GET", pathname: "/api/game/session/result" }];
     case "availabilityCatalog":
       return AVAILABILITY_CATALOG_PREFIXES.map((pathname) => ({
         method: "GET",

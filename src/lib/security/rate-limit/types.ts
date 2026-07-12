@@ -4,6 +4,7 @@ export type RateLimitPolicyId =
   | "bookingRequest"
   | "bookingClientContext"
   | "gamePlay"
+  | "gameSessionRead"
   | "availabilityCatalog"
   | "health";
 

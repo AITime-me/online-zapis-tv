@@ -1,14 +1,11 @@
 import { NextResponse } from "next/server";
 import { applyCookieOperations } from "@/lib/game/session/game-session-cookie";
-import {
-  validateGamePlayBody,
-  type GamePlayRequestBody,
-} from "@/lib/game/play-contract";
+import { validateSessionStartBody } from "@/lib/game/session/game-session-contract";
 import { handleGameSessionRouteError } from "@/lib/game/session/game-session-http";
 import { readSessionAuthFromRequest } from "@/lib/game/session/game-session-request";
 import { enforceSameOriginForMutatingRequest } from "@/lib/security/csrf";
 import { enforceRequestRateLimit } from "@/lib/security/rate-limit/enforce-policy";
-import { runGamePlayAdapter } from "@/services/GameSessionService";
+import { startGameSession } from "@/services/GameSessionService";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -25,36 +22,33 @@ export async function POST(request: Request) {
   }
 
   try {
-    const body = (await request.json()) as GamePlayRequestBody;
-    const validation = validateGamePlayBody(body);
-
+    const body = (await request.json()) as unknown;
+    const validation = validateSessionStartBody(body);
     if (!validation.ok) {
       return NextResponse.json(
-        { ok: false, error: validation.error, code: "GAME_INVALID_REQUEST" },
+        {
+          ok: false,
+          error: validation.error,
+          code: "GAME_INVALID_REQUEST",
+        },
         { status: 400 },
       );
     }
 
-    const catalogSlug = validation.data.catalogSlug ?? "procedure-gift";
-    const auth = readSessionAuthFromRequest(request, catalogSlug);
-    const result = await runGamePlayAdapter({
-      catalogSlug,
-      auth,
-      gameDirection: validation.data.gameDirection,
-      skinNeed: validation.data.skinNeed,
-      resultType: validation.data.resultType,
-      premiumLevel: validation.data.premiumLevel,
-    });
+    const auth = readSessionAuthFromRequest(request, validation.catalogSlug);
+    const result = await startGameSession(validation.catalogSlug, auth);
 
     const response = NextResponse.json({
       ok: true,
-      playId: result.playId,
-      gift: result.gift,
+      status: result.status,
+      expiresAt: result.expiresAt.toISOString(),
+      hasResult: result.hasResult,
+      mechanicType: result.mechanicType,
     });
 
     applyCookieOperations(response, result.cookieOperations);
     return response;
   } catch (error) {
-    return handleGameSessionRouteError("[POST /api/game/play]", error);
+    return handleGameSessionRouteError("[POST /api/game/session/start]", error);
   }
 }
