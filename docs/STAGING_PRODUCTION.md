@@ -145,6 +145,99 @@ Persistent volumes в staging compose:
 Карусель управляется через админку (`showOnHomepage`, активность, период, приоритет).
 Статическая акция «холодная плазма −30%» **не** добавляется автоматически.
 
+## Аварийный сброс пароля OWNER
+
+Если владелец потерял доступ (забыт пароль, нет публичного восстановления) —
+сброс выполняется **только на сервере через SSH** в интерактивном терминале.
+
+> ⚠️ **Runtime-контейнер `app` не подходит для запуска CLI.** Он собран из
+> Next.js standalone (стадия `runner`) и содержит только `server.js`, `.next`,
+> `public`, `prisma` и Prisma-клиент. В нём **нет** `scripts/`, `tsx` и полного
+> `package.json`, поэтому запуск CLI внутри контейнера `app` (через
+> `docker compose exec app npm run …`) завершится ошибкой. Используйте
+> одноразовый **ops-образ** из стадии `builder`.
+
+Ops-образ (`--target builder`) содержит полный исходный код, `scripts/`, все
+зависимости (включая `tsx`) и сгенерированный Prisma-клиент — этого достаточно
+для CLI и не раздувает основной runtime-образ.
+
+**Шаг 1. Собрать актуальный ops-образ из свежего кода:**
+
+```bash
+cd /opt/online-zapis-tv && git pull --ff-only
+docker build --target builder -t online-zapis-tv-ops:local .
+```
+
+`DATABASE_URL` берётся из уже запущенного контейнера `tvoe-vremya-staging-app`
+(его значение **не** выводится в терминал) и передаётся в ops-контейнер только по
+имени (`--env DATABASE_URL`), поэтому не попадает в историю shell и process list.
+Никакие другие секреты из `.env.staging` (`AUTH_SECRET`, `SCHEDULE_VIEW_TOKEN` и
+т.д.) в SSH-сеанс **не** экспортируются. Каждый сценарий — изолированный subshell
+с `trap ... EXIT`, гарантированно очищающим переменные даже при ошибке.
+
+**Шаг 2 (Сценарий A). Dry-run — база не изменяется, пароль не запрашивается:**
+
+```bash
+(
+  set -e
+  trap 'unset DATABASE_URL NET' EXIT
+  cd /opt/online-zapis-tv
+  DATABASE_URL="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' tvoe-vremya-staging-app | sed -n 's/^DATABASE_URL=//p')"
+  test -n "$DATABASE_URL"
+  NET="$(docker inspect --format '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}' tvoe-vremya-staging-app | grep 'staging_internal$')"
+  test "$(printf '%s\n' "$NET" | grep -c .)" -eq 1
+  export DATABASE_URL
+  docker run --rm -it --env DATABASE_URL --network "$NET" online-zapis-tv-ops:local npm run owner:reset-password -- --email owner@your-domain.ru --dry-run
+)
+```
+
+**Шаг 2 (Сценарий B). Реальный аварийный сброс — новый пароль вводится интерактивно (скрыто, дважды):**
+
+```bash
+(
+  set -e
+  trap 'unset DATABASE_URL NET' EXIT
+  cd /opt/online-zapis-tv
+  DATABASE_URL="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' tvoe-vremya-staging-app | sed -n 's/^DATABASE_URL=//p')"
+  test -n "$DATABASE_URL"
+  NET="$(docker inspect --format '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}' tvoe-vremya-staging-app | grep 'staging_internal$')"
+  test "$(printf '%s\n' "$NET" | grep -c .)" -eq 1
+  export DATABASE_URL
+  docker run --rm -it --env DATABASE_URL --network "$NET" online-zapis-tv-ops:local npm run owner:reset-password -- --email owner@your-domain.ru
+)
+```
+
+Определение сети однозначно: имена сетей берутся напрямую из контейнера
+`tvoe-vremya-staging-app`, фильтруются по суффиксу `staging_internal`, и `test`
+завершает subshell с ошибкой, если совпадений не ровно одно (сеть отсутствует
+или неоднозначна). Глобальный список сетей хоста для этого не используется.
+
+Проверка интерактивного TTY (опционально, секретов не выводит — ожидается `true`/`true`):
+
+```bash
+docker run --rm -it online-zapis-tv-ops:local \
+  node -e "console.log('stdin TTY:', process.stdin.isTTY===true, '| stdout TTY:', process.stdout.isTTY===true)"
+```
+
+`docker run -it` (`-i` — открытый stdin, `-t` — псевдо-TTY) внутри интерактивной
+SSH-сессии делает и `stdin`, и `stdout` контейнера TTY, поэтому скрытый prompt
+(`promptHidden` → `assertInteractiveTerminal`) работает. Без `-it` или в
+неинтерактивном режиме ввод пароля намеренно отклоняется.
+
+Правила безопасности:
+
+- запускать **только** через SSH на сервере, в **интерактивном** терминале (TTY) с `-it`;
+- пароль **не** передавать в команде, аргументах, переменных окружения или файле —
+  флаг `--password` отклоняется, ввод возможен только через скрытый prompt;
+- новый пароль вводится дважды (первый ввод + подтверждение), символы не отображаются;
+- пароль проходит ту же политику (`validatePasswordPolicy`, ≥12 символов) и хешируется
+  тем же bcrypt, что при обычном входе и создании OWNER;
+- обновление атомарно: `passwordHash` + `passwordChangedAt` меняются одной транзакцией,
+  неиспользованные `PasswordResetToken` пользователя удаляются;
+- после сброса **все прежние сессии автоматически отзываются** (проверка `passwordChangedAt`),
+  войдите заново новым паролем;
+- сброс доступен строго для роли `OWNER`; для остальных ролей команда завершится отказом.
+
 ## Rollback
 
 1. Остановить приложение

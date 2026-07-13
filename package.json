@@ -12,6 +12,7 @@
     "db:seed": "prisma db seed",
     "db:seed:production": "tsx prisma/seed.production.ts",
     "owner:create": "tsx scripts/create-owner.ts",
+    "owner:reset-password": "tsx scripts/reset-owner-password.ts",
     "db:studio": "prisma studio",
     "import:services": "tsx scripts/import-services.ts",
     "import:services:apply": "tsx scripts/import-services.ts --apply",
@@ -33,6 +34,7 @@
     "test:security:env-auth-url": "tsx scripts/security-env-auth-url-check.ts",
     "test:security:last-login": "tsx scripts/security-last-login-check.ts",
     "test:security:session-freshness": "tsx scripts/security-session-freshness-check.ts",
+    "test:security:owner-password-reset": "tsx scripts/security-owner-password-reset-check.ts",
     "test:e2e": "playwright test"
   },
   "prisma": {
