@@ -7,6 +7,7 @@ import {
   OWNER_ROLES,
 } from "@/lib/auth/permissions";
 import { enforceSameOriginForMutatingRequest } from "@/lib/security/csrf";
+import { verifySessionFreshness } from "@/lib/auth/session-freshness";
 
 export type ApiAuthSuccess = {
   user: {
@@ -23,8 +24,9 @@ export async function requireApiRoles(
   allowedRoles: UserRole[],
 ): Promise<ApiAuthResult> {
   const session = await auth();
+  const user = await verifySessionFreshness(session);
 
-  if (!session?.user) {
+  if (!user) {
     return {
       response: NextResponse.json(
         { ok: false, error: "Unauthorized" },
@@ -33,7 +35,7 @@ export async function requireApiRoles(
     };
   }
 
-  if (!allowedRoles.includes(session.user.role)) {
+  if (!allowedRoles.includes(user.role)) {
     return {
       response: NextResponse.json(
         { ok: false, error: "Forbidden" },
@@ -42,7 +44,7 @@ export async function requireApiRoles(
     };
   }
 
-  return { user: session.user };
+  return { user };
 }
 
 export async function requireProtectedMutatingApi(

@@ -33,6 +33,8 @@ export const authConfig = {
       if (user) {
         token.id = user.id!;
         token.role = user.role as UserRole;
+        // Момент входа фиксируется один раз; при обновлении токена не меняется.
+        token.authTime = Math.floor(Date.now() / 1000);
       }
       return token;
     },
@@ -41,6 +43,7 @@ export const authConfig = {
         session.user.id = token.id;
         session.user.role = token.role;
       }
+      session.authTime = token.authTime;
       return session;
     },
   },

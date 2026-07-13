@@ -32,6 +32,7 @@
     "test:security:csrf-coverage": "tsx scripts/security-csrf-coverage-check.ts",
     "test:security:env-auth-url": "tsx scripts/security-env-auth-url-check.ts",
     "test:security:last-login": "tsx scripts/security-last-login-check.ts",
+    "test:security:session-freshness": "tsx scripts/security-session-freshness-check.ts",
     "test:e2e": "playwright test"
   },
   "prisma": {

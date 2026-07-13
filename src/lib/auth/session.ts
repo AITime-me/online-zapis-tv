@@ -7,10 +7,11 @@ import {
   OWNER_ROLES,
   type AdminSection,
 } from "@/lib/auth/permissions";
+import { verifySessionFreshness } from "@/lib/auth/session-freshness";
 
 export async function getCurrentUser() {
   const session = await auth();
-  return session?.user ?? null;
+  return verifySessionFreshness(session);
 }
 
 export async function requireAuth() {
