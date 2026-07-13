@@ -238,6 +238,121 @@ SSH-сессии делает и `stdin`, и `stdout` контейнера TTY, 
   войдите заново новым паролем;
 - сброс доступен строго для роли `OWNER`; для остальных ролей команда завершится отказом.
 
+## Служебная почта (SMTP)
+
+Служебные письма отправляются через SMTP Mail.ru с ящика `ipku82@bk.ru`.
+
+Правила безопасности пароля:
+
+- **основной** пароль почтового ящика **не используется**;
+- используется **отдельный пароль внешнего приложения** Mail.ru с правом
+  «Только отправка писем в Почте / SMTP»;
+- реальный пароль хранится **только** в закрытом server env (`.env.staging` на
+  сервере) и вносится владельцем вручную;
+- пароль **запрещено** добавлять в GitHub, чат, скриншоты и shell-команды
+  (в т.ч. в аргументы `docker run`/`npm`);
+- в репозитории и `.env.production.example` — только пустой placeholder
+  `SMTP_PASSWORD=`.
+
+Параметры Mail.ru/BK (несекретные):
+
+| Переменная | Значение |
+| --- | --- |
+| `MAIL_PROVIDER` | `smtp` (или `disabled`, чтобы выключить почту) |
+| `MAIL_FROM_NAME` | `Твоё время` |
+| `MAIL_FROM_ADDRESS` | `ipku82@bk.ru` |
+| `SMTP_HOST` | `smtp.mail.ru` |
+| `SMTP_PORT` | `465` (SSL/TLS) |
+| `SMTP_SECURE` | `true` |
+| `SMTP_USER` | `ipku82@bk.ru` |
+| `SMTP_PASSWORD` | пароль внешнего приложения — только в server env |
+
+Если `MAIL_PROVIDER=disabled` (или пусто), приложение стартует **без** SMTP и
+сетевые подключения к почте не выполняются. При `MAIL_PROVIDER=smtp` env-валидация
+fail-closed требует непустые `MAIL_FROM_ADDRESS`/`SMTP_HOST`/`SMTP_USER`/`SMTP_PASSWORD`,
+корректный email отправителя, порт в диапазоне и `SMTP_SECURE=true` для порта 465.
+
+### Тестовая отправка (только на сервере)
+
+Правильный порядок серверной проверки (реальные команды на этом этапе не выполняются):
+
+1. вручную внести mail-переменные в закрытый `.env.staging` (права доступа только владельцу);
+2. пересоздать контейнер `app`, чтобы он получил новые mail-переменные:
+   `docker compose -f docker-compose.staging.yml --env-file .env.staging up -d app`;
+3. собрать актуальный ops-образ: `docker build --target builder -t online-zapis-tv-ops:local .`;
+4. выполнить безопасный subshell-сценарий `mail:test` (ниже);
+5. проверить получение нейтрального тестового письма;
+6. использовать **только** пароль внешнего приложения, **не** основной пароль почты.
+
+> ⚠️ **Нельзя** запускать `mail:test` через `docker run --env-file .env.staging`:
+> это передаст в ops-контейнер весь файл, включая `AUTH_SECRET`, `DATABASE_URL`,
+> `SCHEDULE_VIEW_TOKEN` и другие секреты, которые CLI отправки письма не нужны.
+
+CLI зависит только от восьми mail-переменных. Извлекаем их из уже пересозданного
+контейнера `tvoe-vremya-staging-app` потоково (по одному имени, без сохранения
+всего вывода `docker inspect`), значения не печатаются, а в `docker run`
+передаются только **имена** переменных (`--env ИМЯ`):
+
+```bash
+(
+  set -euo pipefail
+
+  MAIL_VARS="MAIL_PROVIDER MAIL_FROM_NAME MAIL_FROM_ADDRESS SMTP_HOST SMTP_PORT SMTP_SECURE SMTP_USER SMTP_PASSWORD"
+
+  cleanup_mail_env() {
+    for name in $MAIL_VARS; do
+      unset "$name"
+    done
+    unset MAIL_VARS
+    unset -f read_mail_env cleanup_mail_env
+  }
+
+  trap cleanup_mail_env EXIT
+
+  read_mail_env() {
+    local name="$1"
+    local value
+
+    value="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' tvoe-vremya-staging-app | sed -n "s/^${name}=//p")"
+
+    test -n "$value"
+
+    printf -v "$name" '%s' "$value"
+    export "$name"
+  }
+
+  for name in $MAIL_VARS; do
+    read_mail_env "$name"
+  done
+
+  docker run --rm \
+    --env MAIL_PROVIDER \
+    --env MAIL_FROM_NAME \
+    --env MAIL_FROM_ADDRESS \
+    --env SMTP_HOST \
+    --env SMTP_PORT \
+    --env SMTP_SECURE \
+    --env SMTP_USER \
+    --env SMTP_PASSWORD \
+    online-zapis-tv-ops:local \
+    npm run mail:test -- --to recipient@example.com
+)
+```
+
+Свойства сценария:
+
+- изолированный subshell `( ... )` с `set -euo pipefail`; без трассировки команд
+  и без автоэкспорта всех переменных окружения;
+- `.env.staging` целиком **не** загружается в shell и **не** передаётся контейнеру;
+- из контейнера извлекаются **только** восемь разрешённых mail-переменных, по одной;
+- каждая переменная проверяется `test -n` (пустое значение прерывает сценарий);
+- в `docker run` передаются только имена (`--env ИМЯ`), без `--env ИМЯ=значение`;
+- значение `SMTP_PASSWORD` не печатается и не попадает в argv/историю/документацию;
+- `trap cleanup_mail_env EXIT` гарантированно очищает переменные при завершении и ошибке;
+- письмо **нейтральное**: без токенов и ссылок восстановления
+  (публичного домена/HTTPS ещё нет, сценарий «Забыли пароль?» не реализован);
+- вывод — только факт успешной отправки либо обобщённое `[mail] delivery failed`.
+
 ## Rollback
 
 1. Остановить приложение

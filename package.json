@@ -13,6 +13,7 @@
     "db:seed:production": "tsx prisma/seed.production.ts",
     "owner:create": "tsx scripts/create-owner.ts",
     "owner:reset-password": "tsx scripts/reset-owner-password.ts",
+    "mail:test": "tsx scripts/send-test-mail.ts",
     "db:studio": "prisma studio",
     "import:services": "tsx scripts/import-services.ts",
     "import:services:apply": "tsx scripts/import-services.ts --apply",
@@ -35,6 +36,7 @@
     "test:security:last-login": "tsx scripts/security-last-login-check.ts",
     "test:security:session-freshness": "tsx scripts/security-session-freshness-check.ts",
     "test:security:owner-password-reset": "tsx scripts/security-owner-password-reset-check.ts",
+    "test:security:mail": "tsx scripts/security-mail-check.ts",
     "test:e2e": "playwright test"
   },
   "prisma": {
@@ -46,6 +48,7 @@
     "exceljs": "^4.4.0",
     "next": "16.2.10",
     "next-auth": "^5.0.0-beta.30",
+    "nodemailer": "^7.0.13",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "server-only": "^0.0.1",
@@ -55,6 +58,7 @@
     "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/nodemailer": "^8.0.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",

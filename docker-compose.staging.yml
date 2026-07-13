@@ -47,6 +47,16 @@ services:
       SCHEDULE_VIEW_TOKEN: ${SCHEDULE_VIEW_TOKEN}
       EXPORT_STORAGE: ${EXPORT_STORAGE:-local}
       EXPORT_LOCAL_DIR: /app/exports/emergency
+      # Почта. MAIL_PROVIDER=disabled → приложение стартует без SMTP.
+      # Реальный SMTP_PASSWORD приходит из server env (.env.staging), не хардкодится.
+      MAIL_PROVIDER: ${MAIL_PROVIDER:-disabled}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-}
+      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       NEXT_PUBLIC_STUDIO_PHONE: ${NEXT_PUBLIC_STUDIO_PHONE:-}
       NEXT_PUBLIC_STUDIO_PHONE_DISPLAY: ${NEXT_PUBLIC_STUDIO_PHONE_DISPLAY:-}
     ports:

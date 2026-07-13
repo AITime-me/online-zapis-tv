@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { validateAuthUrlForRuntime } from "@/lib/auth-url-policy";
+import { validateMailConfig } from "@/lib/mail/mail-config";
 
 const baseEnvSchema = z.object({
   DATABASE_URL: z.string().min(1),
@@ -8,6 +9,15 @@ const baseEnvSchema = z.object({
   EXPORT_LOCAL_DIR: z.string().default("./exports/emergency"),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   APP_ENV: z.enum(["development", "staging", "production"]).optional(),
+  // Почта (провайдеро-независимо). Валидируется в production через mail-config.
+  MAIL_PROVIDER: z.string().optional(),
+  MAIL_FROM_NAME: z.string().optional(),
+  MAIL_FROM_ADDRESS: z.string().optional(),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.string().optional(),
+  SMTP_SECURE: z.string().optional(),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASSWORD: z.string().optional(),
 });
 
 const productionEnvSchema = baseEnvSchema
@@ -27,6 +37,26 @@ const productionEnvSchema = baseEnvSchema
         code: z.ZodIssueCode.custom,
         path: ["AUTH_URL"],
         message: result.message,
+      });
+    }
+
+    // Fail-closed для почты: при MAIL_PROVIDER=smtp обязательны корректные
+    // SMTP-параметры. Значение SMTP_PASSWORD в сообщение не попадает.
+    const mailResult = validateMailConfig({
+      MAIL_PROVIDER: value.MAIL_PROVIDER,
+      MAIL_FROM_NAME: value.MAIL_FROM_NAME,
+      MAIL_FROM_ADDRESS: value.MAIL_FROM_ADDRESS,
+      SMTP_HOST: value.SMTP_HOST,
+      SMTP_PORT: value.SMTP_PORT,
+      SMTP_SECURE: value.SMTP_SECURE,
+      SMTP_USER: value.SMTP_USER,
+      SMTP_PASSWORD: value.SMTP_PASSWORD,
+    });
+    if (!mailResult.ok) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["MAIL_PROVIDER"],
+        message: mailResult.message,
       });
     }
   });
