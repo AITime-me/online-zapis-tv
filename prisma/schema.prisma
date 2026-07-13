@@ -143,18 +143,19 @@ enum GameSessionStatus {
 }
 
 model User {
-  id            String    @id @default(uuid()) @db.Uuid
-  email         String    @unique
-  passwordHash  String    @map("password_hash")
-  role          UserRole
-  name          String
-  phone         String?
-  positionTitle String?   @map("position_title")
-  notes         String?
-  isActive      Boolean   @default(true) @map("is_active")
-  lastLoginAt   DateTime? @map("last_login_at") @db.Timestamptz
-  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  id                String    @id @default(uuid()) @db.Uuid
+  email             String    @unique
+  passwordHash      String    @map("password_hash")
+  role              UserRole
+  name              String
+  phone             String?
+  positionTitle     String?   @map("position_title")
+  notes             String?
+  isActive          Boolean   @default(true) @map("is_active")
+  lastLoginAt       DateTime? @map("last_login_at") @db.Timestamptz
+  passwordChangedAt DateTime? @map("password_changed_at") @db.Timestamptz
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz
 
   master                  Master?
   createdAppointments     Appointment[]           @relation("AppointmentCreatedBy")
@@ -167,8 +168,24 @@ model User {
   clientsMergedBy         Client[]                @relation("ClientMergedBy")
   clientMergeLogs         ClientMergeLog[]        @relation("ClientMergePerformedBy")
   botSettingsUpdated      BotSettings[]           @relation("BotSettingsUpdatedBy")
+  passwordResetTokens     PasswordResetToken[]
 
   @@map("users")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz
+  usedAt    DateTime? @map("used_at") @db.Timestamptz
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("password_reset_tokens")
 }
 
 model Master {
