@@ -8,6 +8,9 @@
 
 export type MailProvider = "disabled" | "smtp";
 
+/** Выбор IP-семейства для SMTP-подключения (динамический DNS, без жёсткого IP). */
+export type SmtpIpFamily = "auto" | "4" | "6";
+
 export type SmtpConfig = {
   provider: "smtp";
   fromName: string;
@@ -17,6 +20,8 @@ export type SmtpConfig = {
   secure: boolean;
   user: string;
   password: string;
+  /** auto — обычное имя хоста; 4/6 — динамический A/AAAA с tls.servername = host. */
+  ipFamily: SmtpIpFamily;
 };
 
 export type MailConfig = { provider: "disabled" } | SmtpConfig;
@@ -32,6 +37,7 @@ export type MailEnvInput = {
   SMTP_SECURE?: string;
   SMTP_USER?: string;
   SMTP_PASSWORD?: string;
+  SMTP_IP_FAMILY?: string;
 };
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -48,6 +54,23 @@ export function parseStrictBoolean(value: string | undefined): boolean | null {
   const normalized = (value ?? "").trim().toLowerCase();
   if (normalized === "true") return true;
   if (normalized === "false") return false;
+  return null;
+}
+
+const SMTP_IP_FAMILY_VALUES = new Set<SmtpIpFamily>(["auto", "4", "6"]);
+
+/**
+ * Разбор SMTP_IP_FAMILY. Пустое значение => auto (по умолчанию).
+ * Недопустимые значения => null (fail-closed в validateMailConfig).
+ */
+export function parseSmtpIpFamily(value: string | undefined): SmtpIpFamily | null {
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (normalized === "" || normalized === "auto") {
+    return "auto";
+  }
+  if (SMTP_IP_FAMILY_VALUES.has(normalized as SmtpIpFamily)) {
+    return normalized as SmtpIpFamily;
+  }
   return null;
 }
 
@@ -121,8 +144,16 @@ export function validateMailConfig(input: MailEnvInput): MailConfigResult {
     return { ok: false, message: "Для порта 465 требуется SMTP_SECURE=true" };
   }
 
+  const ipFamily = parseSmtpIpFamily(input.SMTP_IP_FAMILY);
+  if (ipFamily === null) {
+    return {
+      ok: false,
+      message: 'SMTP_IP_FAMILY должен быть "auto", "4" или "6"',
+    };
+  }
+
   return {
     ok: true,
-    config: { provider: "smtp", fromName, fromAddress, host, port, secure, user, password },
+    config: { provider: "smtp", fromName, fromAddress, host, port, secure, user, password, ipFamily },
   };
 }

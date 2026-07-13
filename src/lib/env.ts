@@ -18,6 +18,7 @@ const baseEnvSchema = z.object({
   SMTP_SECURE: z.string().optional(),
   SMTP_USER: z.string().optional(),
   SMTP_PASSWORD: z.string().optional(),
+  SMTP_IP_FAMILY: z.string().optional(),
 });
 
 const productionEnvSchema = baseEnvSchema
@@ -51,6 +52,7 @@ const productionEnvSchema = baseEnvSchema
       SMTP_SECURE: value.SMTP_SECURE,
       SMTP_USER: value.SMTP_USER,
       SMTP_PASSWORD: value.SMTP_PASSWORD,
+      SMTP_IP_FAMILY: value.SMTP_IP_FAMILY,
     });
     if (!mailResult.ok) {
       ctx.addIssue({

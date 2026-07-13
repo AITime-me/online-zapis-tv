@@ -31,6 +31,7 @@ function readMailEnv(source: NodeJS.ProcessEnv): MailEnvInput {
     SMTP_SECURE: source.SMTP_SECURE,
     SMTP_USER: source.SMTP_USER,
     SMTP_PASSWORD: source.SMTP_PASSWORD,
+    SMTP_IP_FAMILY: source.SMTP_IP_FAMILY,
   };
 }
 

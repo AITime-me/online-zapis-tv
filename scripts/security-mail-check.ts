@@ -5,6 +5,7 @@ import {
   formatFromHeader,
   isEmailAddress,
   parseStrictBoolean,
+  parseSmtpIpFamily,
   type SmtpConfig,
   validateMailConfig,
 } from "../src/lib/mail/mail-config";
@@ -40,6 +41,7 @@ function smtpConfig(overrides: Partial<SmtpConfig> = {}): SmtpConfig {
     secure: true,
     user: "ipku82@bk.ru",
     password: SECRET_PASSWORD,
+    ipFamily: "auto",
     ...overrides,
   };
 }
@@ -113,7 +115,7 @@ function testInvalidFromAddressRejected(): void {
   assert.equal(result.ok, false, "некорректный email отправителя должен быть отклонён");
 }
 
-function testValidConfigCreatesTlsTransport(): void {
+async function testValidConfigCreatesTlsTransport(): Promise<void> {
   const result = validateMailConfig(VALID_SMTP_ENV);
   assert.equal(result.ok, true, "корректная конфигурация должна проходить");
 
@@ -123,8 +125,9 @@ function testValidConfigCreatesTlsTransport(): void {
     return { async sendMail() {} };
   };
 
-  createMailerFromEnv(VALID_SMTP_ENV as NodeJS.ProcessEnv, spy);
-  assert.ok(captured, "transport должен быть создан для валидной smtp-конфигурации");
+  const mailer = createMailerFromEnv(VALID_SMTP_ENV as NodeJS.ProcessEnv, spy);
+  await mailer.sendMail({ to: "a@b.ru", subject: "s", text: "t" });
+  assert.ok(captured, "transport должен быть создан при отправке для валидной smtp-конфигурации");
 
   const opts = captured as unknown as Record<string, unknown>;
   assert.equal(opts.secure, true, "465 => secure:true (implicit TLS)");
@@ -137,6 +140,98 @@ function testValidConfigCreatesTlsTransport(): void {
       typeof opts.socketTimeout === "number",
     "должны быть заданы connection/greeting/socket timeouts",
   );
+}
+
+function testTlsServernameOnResolvedIp(): void {
+  const optsIp = buildTransportOptions(smtpConfig({ host: "smtp.example.com" }), "2001:db8::1");
+  const tlsIp = optsIp.tls as Record<string, unknown>;
+  assert.equal(optsIp.host, "2001:db8::1");
+  assert.equal(tlsIp.servername, "smtp.example.com", "при IP-подключении tls.servername = исходный SMTP_HOST");
+
+  const optsHost = buildTransportOptions(smtpConfig({ host: "smtp.example.com" }), "smtp.example.com");
+  const tlsHost = optsHost.tls as Record<string, unknown>;
+  assert.equal(tlsHost.servername, undefined, "при подключении по имени servername не переопределяется");
+}
+
+function testSmtpIpFamilyParsing(): void {
+  assert.equal(parseSmtpIpFamily(undefined), "auto");
+  assert.equal(parseSmtpIpFamily(""), "auto");
+  assert.equal(parseSmtpIpFamily("auto"), "auto");
+  assert.equal(parseSmtpIpFamily("4"), "4");
+  assert.equal(parseSmtpIpFamily("6"), "6");
+  assert.equal(parseSmtpIpFamily("invalid"), null);
+
+  const withSix = validateMailConfig({ ...VALID_SMTP_ENV, SMTP_IP_FAMILY: "6" });
+  assert.equal(withSix.ok, true);
+  if (withSix.ok) {
+    assert.equal(withSix.config.ipFamily, "6");
+  }
+
+  const defaultFamily = validateMailConfig(VALID_SMTP_ENV);
+  assert.equal(defaultFamily.ok, true);
+  if (defaultFamily.ok) {
+    assert.equal(defaultFamily.config.ipFamily, "auto", "по умолчанию ipFamily=auto");
+  }
+
+  assert.equal(validateMailConfig({ ...VALID_SMTP_ENV, SMTP_IP_FAMILY: "bogus" }).ok, false);
+}
+
+function testNoHardcodedSmtpIp(): void {
+  const mailFiles = [
+    "src/lib/mail/mail-config.ts",
+    "src/lib/mail/smtp-mailer.ts",
+    "src/lib/mail/smtp-host-resolve.ts",
+    "src/lib/mail/index.ts",
+  ];
+  for (const file of mailFiles) {
+    const source = readSource(file);
+    assert.doesNotMatch(
+      source,
+      /\b(?:host|connectHost):\s*["'][0-9]{1,3}(?:\.[0-9]{1,3}){3}["']/,
+      `${file} не должен содержать жёстко прописанный IPv4 SMTP`,
+    );
+  }
+
+  const resolveSource = readSource("src/lib/mail/smtp-host-resolve.ts");
+  assert.match(resolveSource, /dns\.resolve6/, "AAAA через node:dns/promises.resolve6");
+  assert.match(resolveSource, /dns\.resolve4/, "A через node:dns/promises.resolve4");
+  assert.doesNotMatch(resolveSource, /rejectUnauthorized:\s*false/, "rejectUnauthorized не отключается");
+
+  const smtpSource = readSource("src/lib/mail/smtp-mailer.ts");
+  assert.match(smtpSource, /connectHosts\.length/, "должен перебирать несколько адресов из DNS");
+  assert.match(smtpSource, /servername:\s*config\.host/, "servername при IP = исходный SMTP_HOST");
+}
+
+async function testRetriesNextResolvedIp(): Promise<void> {
+  let transportCreates = 0;
+  const spy: CreateTransport = () => {
+    transportCreates += 1;
+    if (transportCreates === 1) {
+      return {
+        async sendMail() {
+          throw new Error("connection timeout");
+        },
+        close() {},
+      };
+    }
+    return {
+      async sendMail() {
+        return { messageId: "ok" };
+      },
+      close() {},
+    };
+  };
+
+  const resolveStub = async () => ["198.51.100.1", "198.51.100.2"];
+
+  const mailer = createSmtpMailer(
+    smtpConfig({ host: "smtp.example.com", ipFamily: "4" }),
+    spy,
+    resolveStub,
+  );
+
+  await mailer.sendMail({ to: "user@example.com", subject: "Test", text: "hello" });
+  assert.equal(transportCreates, 2, "при ошибке первого IP должен пробоваться следующий");
 }
 
 function testCertificateVerificationNotDisabled(): void {
@@ -271,6 +366,7 @@ function testMailChainDoesNotRequireAppEnv(): void {
     "src/lib/mail/index.ts",
     "src/lib/mail/mail-config.ts",
     "src/lib/mail/smtp-mailer.ts",
+    "src/lib/mail/smtp-host-resolve.ts",
     "src/lib/mail/mailer.ts",
   ];
   for (const file of chain) {
@@ -293,6 +389,7 @@ const ALLOWED_MAIL_VARS = [
   "SMTP_SECURE",
   "SMTP_USER",
   "SMTP_PASSWORD",
+  "SMTP_IP_FAMILY",
 ];
 
 /**
@@ -320,7 +417,7 @@ function testMailTestDocsSecurity(): void {
   assert.match(section, /\(\s*\n\s*set -euo pipefail/, "сценарий должен быть изолированным subshell с set -euo pipefail");
   assert.match(
     section,
-    /MAIL_VARS="MAIL_PROVIDER MAIL_FROM_NAME MAIL_FROM_ADDRESS SMTP_HOST SMTP_PORT SMTP_SECURE SMTP_USER SMTP_PASSWORD"/,
+    /MAIL_VARS="MAIL_PROVIDER MAIL_FROM_NAME MAIL_FROM_ADDRESS SMTP_HOST SMTP_PORT SMTP_SECURE SMTP_USER SMTP_PASSWORD SMTP_IP_FAMILY"/,
     "должен использоваться разрешённый список mail-переменных",
   );
   assert.match(section, /trap\s+cleanup_mail_env\s+EXIT/, "очистка переменных должна гарантироваться через trap ... EXIT");
@@ -366,6 +463,7 @@ function testDocsAndExampleNoRealSecrets(): void {
   assert.match(example, /^SMTP_HOST=smtp\.mail\.ru$/m);
   assert.match(example, /^SMTP_PORT=465$/m);
   assert.match(example, /^SMTP_SECURE=true$/m);
+  assert.match(example, /^SMTP_IP_FAMILY=auto$/m, "example default SMTP_IP_FAMILY=auto");
 
   const docs = readSource("docs/STAGING_PRODUCTION.md");
   assert.match(docs, /отдельный пароль внешнего приложения/i, "docs должны описывать отдельный пароль приложения");
@@ -383,9 +481,13 @@ async function main(): Promise<void> {
   testSecureMustBeStrictBoolean();
   testInvalidPortRejected();
   testInvalidFromAddressRejected();
-  testValidConfigCreatesTlsTransport();
+  testSmtpIpFamilyParsing();
+  testTlsServernameOnResolvedIp();
+  testNoHardcodedSmtpIp();
+  await testValidConfigCreatesTlsTransport();
   testCertificateVerificationNotDisabled();
   await testSuccessfulSendCallsMailerOnce();
+  await testRetriesNextResolvedIp();
   await testTransportErrorLeaksNothing();
   testFromHeader();
   testEmailValidation();
