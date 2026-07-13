@@ -5,9 +5,17 @@ import { headers } from "next/headers";
 import type { UserRole } from "@prisma/client";
 import { authConfig, SESSION_MAX_AGE_SECONDS } from "@/auth.config";
 import { prisma } from "@/lib/db";
+import { markLastLogin } from "@/lib/auth/last-login";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
+  events: {
+    async signIn({ user }) {
+      if (user?.id) {
+        await markLastLogin(user.id);
+      }
+    },
+  },
   providers: [
     Credentials({
       credentials: {
