@@ -36,6 +36,7 @@
     "test:security:last-login": "tsx scripts/security-last-login-check.ts",
     "test:security:session-freshness": "tsx scripts/security-session-freshness-check.ts",
     "test:security:owner-password-reset": "tsx scripts/security-owner-password-reset-check.ts",
+    "test:security:password-reset": "tsx scripts/security-password-reset-check.ts",
     "test:security:mail": "tsx scripts/security-mail-check.ts",
     "test:e2e": "playwright test"
   },

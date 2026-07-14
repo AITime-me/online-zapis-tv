@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, Suspense } from "react";
@@ -77,6 +78,12 @@ function LoginForm() {
       >
         {loading ? "Вход..." : "Войти"}
       </button>
+
+      <p className="text-center text-sm">
+        <Link href="/forgot-password" className="text-zinc-600 underline-offset-2 hover:underline">
+          Забыли пароль?
+        </Link>
+      </p>
     </form>
   );
 }

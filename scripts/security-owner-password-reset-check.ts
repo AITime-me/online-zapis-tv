@@ -338,18 +338,29 @@ function testDocsDoNotRecommendRunnerExec(): void {
     );
 
     // Однозначное определение внутренней staging-сети из контейнера (не по docker network ls).
+    // Проверяем только секцию аварийного OWNER-сброса: read-only `docker network ls`
+    // допустим в других разделах (например IPv6), но не для выбора сети ops-контейнера.
+    const ownerResetSectionMatch = docs.match(
+      /## Аварийный сброс пароля OWNER[\s\S]*?(?=\n## )/,
+    );
+    assert.ok(
+      ownerResetSectionMatch,
+      "в docs должна быть секция «Аварийный сброс пароля OWNER»",
+    );
+    const ownerResetSection = ownerResetSectionMatch[0];
+
     assert.doesNotMatch(
-      docs,
+      ownerResetSection,
       /docker network ls/,
-      "определение сети не должно опираться на docker network ls",
+      "определение сети для owner:reset-password не должно опираться на docker network ls",
     );
     assert.match(
-      docs,
+      ownerResetSection,
       /docker inspect --format '\{\{range \$name, \$_ := \.NetworkSettings\.Networks\}\}[\s\S]*?grep 'staging_internal\$'/,
       "сеть должна определяться из контейнера с фильтром по суффиксу staging_internal",
     );
     assert.match(
-      docs,
+      ownerResetSection,
       /grep -c \.[^\n]*-eq 1/,
       "docs должны падать при неоднозначном совпадении сети (ровно одно совпадение)",
     );
