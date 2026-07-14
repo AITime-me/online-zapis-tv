@@ -783,21 +783,44 @@ ops_verify_pg_dump_file() {
   local container="$STAGING_POSTGRES_CONTAINER"
   local remote_path="/tmp/ops-verify-$$.dump"
   local copied=0
+  local status=0
 
   if [[ "$OPS_DRY_RUN" -eq 1 ]]; then
     return 0
   fi
 
-  cleanup() {
+  ops_pg_dump_verify_remove_remote() {
     if (( copied )); then
       docker exec "$container" rm -f -- "$remote_path" >/dev/null 2>&1 || true
+      copied=0
     fi
   }
-  trap cleanup RETURN
 
-  docker cp "$dump_path" "${container}:${remote_path}"
+  ops_pg_dump_verify_on_signal() {
+    ops_pg_dump_verify_remove_remote
+    trap - INT TERM
+    exit "$1"
+  }
+
+  trap 'ops_pg_dump_verify_on_signal 130' INT
+  trap 'ops_pg_dump_verify_on_signal 143' TERM
+
+  if ! docker cp "$dump_path" "${container}:${remote_path}"; then
+    trap - INT TERM
+    return 1
+  fi
   copied=1
+
+  set +e
   docker exec "$container" pg_restore -l "$remote_path" >/dev/null
+  status=$?
+  set -e
+
+  ops_pg_dump_verify_remove_remote
+  trap - INT TERM
+
+  set +e
+  return "$status"
 }
 
 ops_create_postgres_backup() {

@@ -131,6 +131,136 @@ function assertNormalizeImageIdBehavior(): void {
   assert.equal(pipeSuccess.stdout?.trim(), SAMPLE_IMAGE_ID, "pipeline stdin");
 }
 
+type VerifyPgDumpMockConfig = {
+  dockerCpStatus?: number;
+  pgRestoreStatus?: number;
+  rmStatus?: number;
+};
+
+function runOpsVerifyPgDumpFileMock(config: VerifyPgDumpMockConfig = {}): {
+  status: number | null;
+  log: string[];
+  hostDumpExists: boolean;
+} {
+  const bash = resolveBashExecutable();
+  const commonPath = OPS_COMMON_SH.replace(/\\/g, "/");
+  const dockerCpStatus = config.dockerCpStatus ?? 0;
+  const pgRestoreStatus = config.pgRestoreStatus ?? 0;
+  const rmStatus = config.rmStatus ?? 0;
+  const script = `
+    set -Eeuo pipefail
+    source ${JSON.stringify(commonPath)}
+    OPS_DRY_RUN=0
+    DOCKER_CP_STATUS=${dockerCpStatus}
+    PG_RESTORE_STATUS=${pgRestoreStatus}
+    RM_STATUS=${rmStatus}
+    declare -a DOCKER_LOG=()
+    docker() {
+      DOCKER_LOG+=("$*")
+      case "$1" in
+        cp)
+          return "$DOCKER_CP_STATUS"
+          ;;
+        exec)
+          shift
+          shift
+          if [[ "$1" == "rm" ]]; then
+            return "$RM_STATUS"
+          fi
+          if [[ "$1" == "pg_restore" ]]; then
+            return "$PG_RESTORE_STATUS"
+          fi
+          return 0
+          ;;
+      esac
+      return 0
+    }
+    HOST_DUMP="$(mktemp)"
+    printf 'x' >"$HOST_DUMP"
+    set +e
+    ops_verify_pg_dump_file "$HOST_DUMP"
+    verify_status=$?
+    host_dump_exists=0
+    [[ -f "$HOST_DUMP" ]] && host_dump_exists=1
+    printf 'VERIFY_STATUS=%s\\n' "$verify_status"
+    printf 'HOST_DUMP_EXISTS=%s\\n' "$host_dump_exists"
+    for entry in "\${DOCKER_LOG[@]}"; do
+      printf 'DOCKER_LOG=%s\\n' "$entry"
+    done
+    rm -f "$HOST_DUMP"
+  `;
+  const result = spawnSync(bash, ["-c", script], { cwd: ROOT, encoding: "utf8" });
+  const log: string[] = [];
+  let status: number | null = result.status;
+  let hostDumpExists = false;
+  for (const line of (result.stdout ?? "").split("\n")) {
+    if (line.startsWith("VERIFY_STATUS=")) {
+      status = Number(line.slice("VERIFY_STATUS=".length));
+    } else if (line.startsWith("HOST_DUMP_EXISTS=")) {
+      hostDumpExists = line.slice("HOST_DUMP_EXISTS=".length) === "1";
+    } else if (line.startsWith("DOCKER_LOG=")) {
+      log.push(line.slice("DOCKER_LOG=".length));
+    }
+  }
+  return { status, log, hostDumpExists };
+}
+
+function assertVerifyPgDumpFileBehavior(): void {
+  const commonSource = readFile("scripts/ops/lib/staging-ops-common.sh");
+  const fnStart = commonSource.indexOf("ops_verify_pg_dump_file()");
+  assert.ok(fnStart >= 0, "ops_verify_pg_dump_file must exist");
+  const fnSlice = commonSource.slice(fnStart, fnStart + 2200);
+  assert.doesNotMatch(fnSlice, /trap\s+\w+\s+RETURN/);
+  assert.match(fnSlice, /ops_pg_dump_verify_remove_remote/);
+  assert.match(fnSlice, /return "\$status"/);
+  assert.match(fnSlice, /pg_restore -l "\$remote_path"/);
+  assert.doesNotMatch(fnSlice, /pg_restore -l[^\n]*\|\|\s*true/);
+  assert.match(fnSlice, /rm -f -- "\$remote_path"/);
+
+  const success = runOpsVerifyPgDumpFileMock({ dockerCpStatus: 0, pgRestoreStatus: 0 });
+  assert.equal(success.status, 0, "successful verify must exit 0");
+  assert.equal(success.hostDumpExists, true, "host dump must not be deleted");
+  assert.ok(
+    success.log.some((entry) => entry.startsWith("cp ") && entry.includes("ops-verify-")),
+    "docker cp must use remote verify path",
+  );
+  assert.ok(
+    success.log.some((entry) => entry.includes("pg_restore -l /tmp/ops-verify-")),
+    "pg_restore -l must run",
+  );
+  assert.ok(
+    success.log.some((entry) => entry.includes("rm -f -- /tmp/ops-verify-")),
+    "remote temp file must be removed on success",
+  );
+
+  const cpFail = runOpsVerifyPgDumpFileMock({ dockerCpStatus: 1 });
+  assert.notEqual(cpFail.status, 0, "docker cp failure must exit non-zero");
+  assert.equal(cpFail.hostDumpExists, true);
+  assert.ok(!cpFail.log.some((entry) => entry.includes("pg_restore")), "pg_restore must not run after cp failure");
+
+  const restoreFail = runOpsVerifyPgDumpFileMock({ dockerCpStatus: 0, pgRestoreStatus: 2 });
+  assert.equal(restoreFail.status, 2, `pg_restore failure exit code must be preserved (log: ${restoreFail.log.join(" | ")})`);
+  assert.ok(
+    restoreFail.log.some((entry) => entry.includes("rm -f --")),
+    `remote temp file must be removed after pg_restore failure (log: ${restoreFail.log.join(" | ")})`,
+  );
+
+  const rmMissing = runOpsVerifyPgDumpFileMock({ dockerCpStatus: 0, pgRestoreStatus: 0, rmStatus: 1 });
+  assert.equal(rmMissing.status, 0, "cleanup rm failure must not mask successful verify");
+  assert.equal(rmMissing.hostDumpExists, true);
+
+  const first = runOpsVerifyPgDumpFileMock({ dockerCpStatus: 0, pgRestoreStatus: 0 });
+  const second = runOpsVerifyPgDumpFileMock({ dockerCpStatus: 0, pgRestoreStatus: 0 });
+  assert.equal(first.status, 0);
+  assert.equal(second.status, 0, "verify must not recurse via RETURN trap on repeated calls");
+
+  const restoreLog = success.log.find((entry) => entry.includes("pg_restore -l")) ?? "";
+  const rmLog = success.log.find((entry) => entry.includes("rm -f --")) ?? "";
+  const remotePath = restoreLog.match(/pg_restore -l (\S+)/)?.[1] ?? "";
+  assert.ok(remotePath.length > 0);
+  assert.match(rmLog, new RegExp(`rm -f -- ${remotePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`));
+}
+
 
 const OPS_SHELL_FILES = [
   "scripts/ops/staging-deploy.sh",
@@ -617,6 +747,7 @@ function assertCommonHelpers(): void {
 function run(): void {
   assertPrismaMigrateStatusClassifier();
   assertNormalizeImageIdBehavior();
+  assertVerifyPgDumpFileBehavior();
   assertShellBasics();
   assertForbiddenPatterns();
   assertNoHostNodePrerequisites();
