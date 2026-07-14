@@ -289,6 +289,64 @@ SMTP_IP_FAMILY=6
 Пересоздайте контейнер `app` после изменения env. Работает с любым SMTP-провайдером,
 не только Mail.ru.
 
+### IPv6 в Docker-сети staging
+
+Контейнер `app` должен иметь исходящий IPv6 в сети `staging_internal`, иначе
+`SMTP_IP_FAMILY=6` не сможет подключиться к `smtp.mail.ru` по AAAA-записям.
+
+В `docker-compose.staging.yml` для сети задано только `enable_ipv6: true` — Docker
+сам выделяет IPv6-подсеть (без ручного `ipam`), привязка к host-сети и новые
+публичные порты **не** используются.
+
+**Безопасное пересоздание сети** (volumes Postgres и `emergency_exports` сохраняются):
+
+1. Остановить стек **без** `-v` (флаг `-v` удалил бы volumes — не используйте его):
+   ```bash
+   docker compose -f docker-compose.staging.yml --env-file .env.staging down
+   ```
+2. Убедиться, что staging-контейнеры остановлены (`docker ps` не показывает
+   `tvoe-vremya-staging-*`).
+3. Если после `down` сеть `*staging_internal` осталась (создана без IPv6), удалить её:
+   ```bash
+   docker network ls --filter name=staging_internal --format '{{.Name}}'
+   docker network rm <имя_сети>
+   ```
+   Выполняйте только когда контейнеры уже остановлены.
+4. Поднять стек заново — сеть создаётся с `enable_ipv6: true`:
+   ```bash
+   docker compose -f docker-compose.staging.yml --env-file .env.staging up -d
+   ```
+
+**Проверка IPv6 в контейнере `app`** (на сервере, без вывода секретов):
+
+```bash
+(
+  set -euo pipefail
+  CID="tvoe-vremya-staging-app"
+  test -n "$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.GlobalIPv6Address}}{{end}}' "$CID")"
+
+  docker exec "$CID" node -e "
+    const dns = require('node:dns/promises');
+    const net = require('node:net');
+    (async () => {
+      const host = 'smtp.mail.ru';
+      const addrs = await dns.resolve6(host);
+      console.log('AAAA_RESOLVED=' + (addrs.length > 0));
+      const ip = addrs[0];
+      await new Promise((resolve, reject) => {
+        const s = net.createConnection({ host: ip, port: 465, family: 6 }, resolve);
+        s.on('error', reject);
+        s.setTimeout(10000, () => { s.destroy(); reject(new Error('timeout')); });
+      });
+      console.log('APP_IPV6_TCP_OK');
+    })().catch((e) => { console.error(e.message); process.exit(1); });
+  "
+)
+```
+
+Ожидается: `AAAA_RESOLVED=true` и `APP_IPV6_TCP_OK`. Затем выполните сценарий
+`mail:test` из раздела ниже.
+
 Если `MAIL_PROVIDER=disabled` (или пусто), приложение стартует **без** SMTP и
 сетевые подключения к почте не выполняются. При `MAIL_PROVIDER=smtp` env-валидация
 fail-closed требует непустые `MAIL_FROM_ADDRESS`/`SMTP_HOST`/`SMTP_USER`/`SMTP_PASSWORD`,

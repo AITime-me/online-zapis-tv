@@ -76,6 +76,7 @@ services:
 networks:
   staging_internal:
     driver: bridge
+    enable_ipv6: true
 
 volumes:
   postgres_staging_data:

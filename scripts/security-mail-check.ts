@@ -456,6 +456,39 @@ function testMailTestDocsSecurity(): void {
   assert.match(section, /без токенов и ссылок восстановления/, "docs должны фиксировать нейтральность письма");
 }
 
+function testStagingComposeIpv6Enabled(): void {
+  const compose = readSource("docker-compose.staging.yml");
+
+  assert.match(
+    compose,
+    /staging_internal:\s*\n\s*driver:\s*bridge\s*\n\s*enable_ipv6:\s*true/,
+    "staging_internal должна иметь driver: bridge и enable_ipv6: true",
+  );
+  assert.doesNotMatch(compose, /network_mode:\s*host/, "staging compose не должен использовать network_mode: host");
+  assert.doesNotMatch(
+    compose,
+    /ipam:[\s\S]*?subnet:\s*["']?[0-9a-f:]+::/i,
+    "IPv6-подсеть не должна задаваться вручную в compose",
+  );
+}
+
+function testStagingIpv6Docs(): void {
+  const docs = readSource("docs/STAGING_PRODUCTION.md");
+
+  const sectionMatch = docs.match(/### IPv6 в Docker-сети staging[\s\S]*?(?=\n### |\n## )/);
+  assert.ok(sectionMatch, "в docs должна быть секция «IPv6 в Docker-сети staging»");
+  const section = sectionMatch[0];
+
+  assert.match(section, /enable_ipv6:\s*true/, "docs должны описывать enable_ipv6: true");
+  assert.match(section, /docker compose -f docker-compose\.staging\.yml[\s\S]*?down/, "должен быть безопасный down без -v");
+  assert.doesNotMatch(section, /\bdown\s+-v\b/, "пересоздание сети не должно удалять volumes (-v)");
+  assert.match(section, /docker network rm/, "должна быть инструкция удаления старой сети при необходимости");
+  assert.match(section, /AAAA_RESOLVED=/, "должна быть проверка DNS AAAA");
+  assert.match(section, /APP_IPV6_TCP_OK/, "должна быть проверка TCP по IPv6");
+  assert.doesNotMatch(section, /network_mode:\s*host/, "docs не должны предлагать network_mode: host");
+  assert.doesNotMatch(section, /ipam:[\s\S]*?subnet:/, "docs не должны предлагать ручную IPv6-подсеть");
+}
+
 function testDocsAndExampleNoRealSecrets(): void {
   const example = readSource(".env.production.example");
   // Плейсхолдер пароля пуст.
@@ -495,6 +528,8 @@ async function main(): Promise<void> {
   testEdgeFilesDoNotImportSmtp();
   testMailChainDoesNotRequireAppEnv();
   testMailTestDocsSecurity();
+  testStagingComposeIpv6Enabled();
+  testStagingIpv6Docs();
   testDocsAndExampleNoRealSecrets();
   console.log("security-mail-check: OK");
 }
