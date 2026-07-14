@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { PASSWORD_RESET_NEUTRAL_MESSAGE } from "@/lib/auth/password-reset";
+import { PASSWORD_RESET_NEUTRAL_MESSAGE } from "@/lib/auth/password-reset-messages";
 import { requestPasswordResetByEmail } from "@/services/PasswordResetService";
 
 export const dynamic = "force-dynamic";

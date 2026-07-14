@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { PASSWORD_RESET_NEUTRAL_MESSAGE } from "@/lib/auth/password-reset";
+import { PASSWORD_RESET_NEUTRAL_MESSAGE } from "@/lib/auth/password-reset-messages";
 
 export default function ForgotPasswordPage() {
   const [submitted, setSubmitted] = useState(false);

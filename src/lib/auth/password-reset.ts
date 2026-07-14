@@ -12,13 +12,13 @@ import {
   type AppEnv,
 } from "@/lib/auth-url-policy";
 import type { Mailer } from "@/lib/mail/mailer";
+import { PASSWORD_RESET_NEUTRAL_MESSAGE } from "./password-reset-messages";
 import { validatePasswordPolicy } from "./password-policy";
+
+export { PASSWORD_RESET_NEUTRAL_MESSAGE } from "./password-reset-messages";
 
 export const PASSWORD_RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
 export const PASSWORD_RESET_EMAIL_COOLDOWN_MS = 60 * 1000;
-
-export const PASSWORD_RESET_NEUTRAL_MESSAGE =
-  "Если пользователь с таким email существует, инструкция отправлена.";
 
 const TOKEN_BYTE_LENGTH = 32;
 

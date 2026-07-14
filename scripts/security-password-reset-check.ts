@@ -646,6 +646,75 @@ function testNoAutoSignInAfterReset(): void {
   assert.doesNotMatch(resetRoute, /signIn\(/, "API не выполняет автоматический вход");
 }
 
+function testResetPageStripsTokenFromUrl(): void {
+  const resetPage = readSource("src/app/(internal)/reset-password/page.tsx");
+
+  assert.match(resetPage, /captureTokenFromQuery/, "token должен считываться из query один раз");
+  assert.match(resetPage, /searchParams\.get\("token"\)/, "token читается из query");
+  assert.match(
+    resetPage,
+    /history\.replaceState\(null,\s*"",\s*"\/reset-password"\)/,
+    "token должен удаляться из адресной строки",
+  );
+  assert.match(
+    resetPage,
+    /useState\(capture\.token\)|useState\(\(\)\s*=>\s*captureTokenFromQuery\(searchParams\)\)/,
+    "token сохраняется во внутреннем state",
+  );
+  assert.match(resetPage, /JSON\.stringify\(\{\s*token,/s, "POST использует token из state");
+  assert.doesNotMatch(resetPage, /value=\{token\}/, "token не должен отображаться в DOM");
+  assert.doesNotMatch(resetPage, />\{token\}</, "token не должен выводиться в разметке");
+}
+
+function testResetPageReferrerPolicy(): void {
+  const middleware = readSource("src/middleware.ts");
+
+  assert.match(middleware, /\/reset-password/, "middleware должен обрабатывать /reset-password");
+  assert.match(
+    middleware,
+    /pathname === "\/reset-password"[\s\S]*?Referrer-Policy",\s*"no-referrer"/,
+    "для /reset-password должен задаваться Referrer-Policy: no-referrer",
+  );
+}
+
+function testClientPagesDoNotImportServerPasswordReset(): void {
+  const clientPages = [
+    "src/app/(internal)/forgot-password/page.tsx",
+    "src/app/(internal)/reset-password/page.tsx",
+  ];
+
+  for (const file of clientPages) {
+    const source = readSource(file);
+    assert.doesNotMatch(
+      source,
+      /@\/lib\/auth\/password-reset["']/,
+      `${file} не должен импортировать серверный password-reset.ts`,
+    );
+    assert.doesNotMatch(source, /node:crypto|@prisma\/client/, `${file} не должен тянуть Node/Prisma`);
+  }
+
+  const forgot = readSource("src/app/(internal)/forgot-password/page.tsx");
+  assert.match(
+    forgot,
+    /password-reset-messages/,
+    "forgot-password должен использовать client-safe messages-модуль",
+  );
+}
+
+function testPasswordResetMessagesModuleIsClientSafe(): void {
+  const messages = readSource("src/lib/auth/password-reset-messages.ts");
+
+  assert.doesNotMatch(messages, /node:crypto|@prisma\/client|bcrypt|nodemailer/i);
+  assert.match(messages, /PASSWORD_RESET_NEUTRAL_MESSAGE/);
+
+  const serverModule = readSource("src/lib/auth/password-reset.ts");
+  assert.match(
+    serverModule,
+    /password-reset-messages/,
+    "серверный password-reset.ts должен переиспользовать messages-модуль",
+  );
+}
+
 function testRateLimitCheckedInsideTransaction(): void {
   const source = readSource("src/lib/auth/password-reset.ts");
   assert.match(
@@ -791,6 +860,10 @@ async function main(): Promise<void> {
   testPasswordValidationReused();
   testLibDoesNotImportRuntimePrisma();
   testNoAutoSignInAfterReset();
+  testResetPageStripsTokenFromUrl();
+  testResetPageReferrerPolicy();
+  testClientPagesDoNotImportServerPasswordReset();
+  testPasswordResetMessagesModuleIsClientSafe();
   testRateLimitCheckedInsideTransaction();
   await testConcurrentRequestsOnlyOneTokenAndEmail();
   await testMailFailureDoesNotDeleteSuccessfulConcurrentToken();

@@ -45,6 +45,12 @@ export default auth((req) => {
   const isLoggedIn = !!req.auth?.user;
   const role = req.auth?.user?.role;
 
+  if (pathname === "/reset-password") {
+    const response = NextResponse.next();
+    response.headers.set("Referrer-Policy", "no-referrer");
+    return response;
+  }
+
   if (pathname.startsWith("/view/schedule")) {
     const token = req.nextUrl.searchParams.get("token");
     if (!isValidScheduleViewToken(token)) {
@@ -94,5 +100,12 @@ export default auth((req) => {
 });
 
 export const config = {
-  matcher: ["/api/:path*", "/schedule/:path*", "/admin/:path*", "/login", "/view/schedule"],
+  matcher: [
+    "/api/:path*",
+    "/schedule/:path*",
+    "/admin/:path*",
+    "/login",
+    "/reset-password",
+    "/view/schedule",
+  ],
 };

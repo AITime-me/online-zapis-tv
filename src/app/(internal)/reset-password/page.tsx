@@ -2,11 +2,16 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { Suspense, useLayoutEffect, useState } from "react";
 
 type ResetState = "form" | "success" | "invalid" | "expired" | "used";
 
 type ResetErrorCode = "invalid" | "expired" | "used" | "policy" | "mismatch";
+
+type TokenCapture = {
+  token: string;
+  initialState: ResetState;
+};
 
 function mapErrorCodeToState(code: ResetErrorCode | undefined): ResetState {
   switch (code) {
@@ -21,13 +26,25 @@ function mapErrorCodeToState(code: ResetErrorCode | undefined): ResetState {
   }
 }
 
-function ResetPasswordForm() {
-  const searchParams = useSearchParams();
-  const token = searchParams.get("token") ?? "";
+function captureTokenFromQuery(searchParams: URLSearchParams): TokenCapture {
+  const rawToken = searchParams.get("token")?.trim() ?? "";
+  return {
+    token: rawToken,
+    initialState: rawToken ? "form" : "invalid",
+  };
+}
 
-  const [state, setState] = useState<ResetState>(token ? "form" : "invalid");
+function ResetPasswordFormInner({ capture }: { capture: TokenCapture }) {
+  const [token] = useState(capture.token);
+  const [state, setState] = useState<ResetState>(capture.initialState);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useLayoutEffect(() => {
+    if (token) {
+      window.history.replaceState(null, "", "/reset-password");
+    }
+  }, [token]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -166,6 +183,13 @@ function ResetPasswordForm() {
       </button>
     </form>
   );
+}
+
+function ResetPasswordForm() {
+  const searchParams = useSearchParams();
+  const [capture] = useState(() => captureTokenFromQuery(searchParams));
+
+  return <ResetPasswordFormInner capture={capture} />;
 }
 
 export default function ResetPasswordPage() {
