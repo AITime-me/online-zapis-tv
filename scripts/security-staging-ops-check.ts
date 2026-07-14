@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -8,6 +9,128 @@ import {
 } from "./ops/lib/prisma-migrate-status";
 
 const ROOT = process.cwd();
+const OPS_COMMON_SH = path.join(ROOT, "scripts/ops/lib/staging-ops-common.sh");
+const SAMPLE_IMAGE_ID = "f9b62564978b9f008d279bea829cbd32900a2fa66db35b63986250bee8d67caa";
+const SAMPLE_IMAGE_ID_SHA256 = `sha256:${SAMPLE_IMAGE_ID}`;
+
+function resolveBashExecutable(): string {
+  if (process.platform === "win32") {
+    const gitBash = "C:\\Program Files\\Git\\bin\\bash.exe";
+    if (fs.existsSync(gitBash)) {
+      return gitBash;
+    }
+  }
+  return "bash";
+}
+
+function runOpsNormalizeImageId(options: {
+  arg?: string;
+  stdin?: string;
+  pipeline?: string;
+}): { stdout: string; stderr: string; status: number | null } {
+  const bash = resolveBashExecutable();
+  const commonPath = OPS_COMMON_SH.replace(/\\/g, "/");
+  let body: string;
+  if (options.pipeline) {
+    body = options.pipeline;
+  } else if (options.arg !== undefined) {
+    body = `result="$(ops_normalize_image_id ${JSON.stringify(options.arg)})"`;
+  } else {
+    body = `result="$(ops_normalize_image_id)"`;
+  }
+  const script = `
+    set -Eeuo pipefail
+    source ${JSON.stringify(commonPath)}
+    ${body}
+    printf '%s' "$result"
+  `;
+  const result = spawnSync(bash, ["-c", script], {
+    cwd: ROOT,
+    input: options.stdin,
+    encoding: "utf8",
+  });
+  return {
+    stdout: (result.stdout ?? "").trimEnd(),
+    stderr: (result.stderr ?? "").trimEnd(),
+    status: result.status,
+  };
+}
+
+function runOpsNormalizeImageIdExpectFailure(options: {
+  arg?: string;
+  stdin?: string;
+  pipeline?: string;
+}): { stderr: string; status: number | null } {
+  const run = runOpsNormalizeImageId(options);
+  assert.notEqual(run.status, 0, `expected failure for ${JSON.stringify(options)}`);
+  return { stderr: run.stderr, status: run.status };
+}
+
+function assertNormalizeImageIdBehavior(): void {
+  const commonSource = readFile("scripts/ops/lib/staging-ops-common.sh");
+  assert.match(commonSource, /ops_normalize_image_id\(\)\s*\{/);
+  assert.doesNotMatch(commonSource, /ops_normalize_image_id\(\)[\s\S]*?local image_id="\$1"/);
+  assert.match(commonSource, /ops_normalize_image_id\(\)[\s\S]*?\$\# >= 1/);
+
+  assert.equal(
+    runOpsNormalizeImageId({ arg: SAMPLE_IMAGE_ID_SHA256 }).stdout,
+    SAMPLE_IMAGE_ID,
+    "arg sha256:<64 hex>",
+  );
+  assert.equal(
+    runOpsNormalizeImageId({ arg: SAMPLE_IMAGE_ID }).stdout,
+    SAMPLE_IMAGE_ID,
+    "arg <64 hex>",
+  );
+  assert.equal(
+    runOpsNormalizeImageId({ stdin: `${SAMPLE_IMAGE_ID_SHA256}\n` }).stdout,
+    SAMPLE_IMAGE_ID,
+    "stdin sha256:<64 hex>",
+  );
+  assert.equal(
+    runOpsNormalizeImageId({ stdin: `${SAMPLE_IMAGE_ID}\n` }).stdout,
+    SAMPLE_IMAGE_ID,
+    "stdin <64 hex>",
+  );
+
+  runOpsNormalizeImageIdExpectFailure({});
+  runOpsNormalizeImageIdExpectFailure({ arg: "" });
+  runOpsNormalizeImageIdExpectFailure({ stdin: "\n" });
+  runOpsNormalizeImageIdExpectFailure({ stdin: `${SAMPLE_IMAGE_ID}\n${SAMPLE_IMAGE_ID}\n` });
+  runOpsNormalizeImageIdExpectFailure({ arg: "abc123" });
+  runOpsNormalizeImageIdExpectFailure({ arg: "online-zapis-tv-app" });
+  runOpsNormalizeImageIdExpectFailure({ arg: `sha256:${SAMPLE_IMAGE_ID}ZZ` });
+
+  const bash = resolveBashExecutable();
+  const commonPath = OPS_COMMON_SH.replace(/\\/g, "/");
+  const pipelineFail = spawnSync(
+    bash,
+    [
+      "-c",
+      `
+      set -Eeuo pipefail
+      source ${JSON.stringify(commonPath)}
+      set +e
+      false | ops_normalize_image_id >/dev/null
+      printf '%s' "$?"
+    `,
+    ],
+    { cwd: ROOT, encoding: "utf8" },
+  );
+  assert.equal(pipelineFail.stdout?.trim(), "1", "upstream pipeline failure must not be masked");
+
+  const pipeSuccess = spawnSync(
+    bash,
+    [
+      "-c",
+      `set -Eeuo pipefail; source ${JSON.stringify(commonPath)}; echo ${JSON.stringify(SAMPLE_IMAGE_ID_SHA256)} | ops_normalize_image_id`,
+    ],
+    { cwd: ROOT, encoding: "utf8" },
+  );
+  assert.equal(pipeSuccess.status, 0, `pipeline failed: ${pipeSuccess.stderr}`);
+  assert.equal(pipeSuccess.stdout?.trim(), SAMPLE_IMAGE_ID, "pipeline stdin");
+}
+
 
 const OPS_SHELL_FILES = [
   "scripts/ops/staging-deploy.sh",
@@ -493,6 +616,7 @@ function assertCommonHelpers(): void {
 
 function run(): void {
   assertPrismaMigrateStatusClassifier();
+  assertNormalizeImageIdBehavior();
   assertShellBasics();
   assertForbiddenPatterns();
   assertNoHostNodePrerequisites();

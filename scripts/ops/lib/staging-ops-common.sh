@@ -220,8 +220,35 @@ ops_run_prisma_migrate_status() {
 }
 
 ops_normalize_image_id() {
-  local image_id="$1"
+  local image_id
+  local stdin_line extra_line
+
+  if (( $# >= 1 )); then
+    image_id="$1"
+  else
+    if ! IFS= read -r stdin_line; then
+      echo "ops_normalize_image_id: missing image id input" >&2
+      return 1
+    fi
+    image_id="$stdin_line"
+    if IFS= read -r extra_line && [[ -n "$extra_line" ]]; then
+      echo "ops_normalize_image_id: expected a single image id line" >&2
+      return 1
+    fi
+  fi
+
   image_id="${image_id#sha256:}"
+
+  if [[ -z "$image_id" ]]; then
+    echo "ops_normalize_image_id: empty image id" >&2
+    return 1
+  fi
+
+  if [[ ! "$image_id" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    echo "ops_normalize_image_id: invalid docker image id" >&2
+    return 1
+  fi
+
   printf '%s' "$image_id"
 }
 
