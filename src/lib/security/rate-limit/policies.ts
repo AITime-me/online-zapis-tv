@@ -10,7 +10,8 @@ export const RATE_LIMIT_POLICIES: Record<RateLimitPolicyId, RateLimitPolicy> = {
     id: "login",
     windowMs: 15 * 60 * 1000,
     maxRequests: 20,
-    maxFailures: 8,
+    /** Устаревшая справочная запись: фактический лимит — DB-backed login-throttle (5/account). */
+    maxFailures: 5,
   },
   bookingCreate: {
     id: "bookingCreate",

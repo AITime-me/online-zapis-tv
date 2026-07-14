@@ -115,6 +115,11 @@ enum ClientDuplicateReviewStatus {
   POSTPONED
 }
 
+enum LoginThrottleScope {
+  ACCOUNT
+  IP
+}
+
 enum PromotionSource {
   MANUAL
   GAME
@@ -171,6 +176,22 @@ model User {
   passwordResetTokens     PasswordResetToken[]
 
   @@map("users")
+}
+
+model LoginThrottleEntry {
+  id              String             @id @default(uuid()) @db.Uuid
+  scope           LoginThrottleScope
+  keyHash         String             @map("key_hash") @db.VarChar(64)
+  failedCount     Int                @default(0) @map("failed_count")
+  windowStartedAt DateTime           @map("window_started_at") @db.Timestamptz
+  blockedUntil    DateTime?          @map("blocked_until") @db.Timestamptz
+  createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime           @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([scope, keyHash])
+  @@index([blockedUntil])
+  @@index([windowStartedAt])
+  @@map("login_throttle_entries")
 }
 
 model PasswordResetToken {

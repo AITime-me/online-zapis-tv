@@ -20,7 +20,6 @@ import { PUBLIC_MUTATING_API_PATHS } from "../src/lib/security/csrf-route-rules"
 import { assertCsrfRouteCoverage } from "./security-csrf-coverage-check";
 import {
   buildEndpointRateLimitKey,
-  buildLoginRateLimitKey,
   checkRateLimitByPolicy,
   consumeRateLimit,
   createRateLimitResponse,
@@ -28,12 +27,9 @@ import {
   getRateLimitPolicy,
   getRateLimitStoreSizeForTests,
   hashRateLimitIdentity,
-  isLoginRateLimited,
   MAX_RATE_LIMIT_STORE_SIZE,
   PUBLIC_RATE_LIMIT_MESSAGE,
   RATE_LIMITED_API_PATHS,
-  recordLoginRateLimitFailure,
-  resetLoginRateLimitState,
   resetRateLimitStoreForTests,
   setRateLimitClockForTests,
 } from "../src/lib/security/rate-limit";
@@ -109,31 +105,25 @@ async function runRateLimitTests(): Promise<void> {
   assert.equal(getRateLimitStoreSizeForTests() <= MAX_RATE_LIMIT_STORE_SIZE, true);
 }
 
-function runLoginRateLimitTests(): void {
-  resetRateLimitStoreForTests();
+function runLoginThrottleDelegationTests(): void {
+  const authSource = fs.readFileSync(path.join("src", "auth.ts"), "utf8");
+  assert.match(
+    authSource,
+    /verifyCredentialsLogin/,
+    "credentials-login должен использовать DB-backed verifyCredentialsLogin",
+  );
+  assert.doesNotMatch(
+    authSource,
+    /recordLoginRateLimitFailure|isLoginRateLimited/,
+    "auth.ts не должен использовать in-memory login rate limit",
+  );
 
-  const headers = mockHeaders({
-    "user-agent": "login-agent",
-    "accept-language": "ru",
-  });
-  const email = "user@studio.test";
-
-  assert.equal(isLoginRateLimited(email, headers), false);
-
-  const policy = getRateLimitPolicy("login");
-  const maxFailures = policy.maxFailures ?? policy.maxRequests;
-
-  for (let index = 0; index < maxFailures; index += 1) {
-    recordLoginRateLimitFailure(email, headers);
-  }
-
-  assert.equal(isLoginRateLimited(email, headers), true);
-
-  resetLoginRateLimitState(email, headers);
-  assert.equal(isLoginRateLimited(email, headers), false);
-
-  const loginKey = buildLoginRateLimitKey(email, headers);
-  assert.doesNotMatch(loginKey, /user@studio\.test/);
+  const loginThrottleSource = fs.readFileSync(
+    path.join("src", "lib", "security", "login-throttle", "credentials-login.ts"),
+    "utf8",
+  );
+  assert.match(loginThrottleSource, /recordLoginThrottleFailure|isLoginThrottleBlocked/, "throttle должен быть DB-backed");
+  assert.match(loginThrottleSource, /LOGIN_DUMMY_BCRYPT_HASH/, "должен использоваться dummy bcrypt");
 }
 
 async function runCsrfTests(): Promise<void> {
@@ -339,7 +329,7 @@ async function main(): Promise<void> {
   runRateLimitRouteCoverageTests();
   assertCsrfRouteCoverage();
   await runRateLimitTests();
-  runLoginRateLimitTests();
+  runLoginThrottleDelegationTests();
   await runCsrfTests();
   await runServiceBypassTest();
   runCsvNeutralizationTests();
