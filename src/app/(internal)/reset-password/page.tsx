@@ -1,8 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { Suspense, useLayoutEffect, useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 
 type ResetState = "form" | "success" | "invalid" | "expired" | "used";
 
@@ -26,12 +25,33 @@ function mapErrorCodeToState(code: ResetErrorCode | undefined): ResetState {
   }
 }
 
-function captureTokenFromQuery(searchParams: URLSearchParams): TokenCapture {
-  const rawToken = searchParams.get("token")?.trim() ?? "";
+function captureTokenFromFragment(): TokenCapture {
+  const hash = window.location.hash.replace(/^#/, "");
+  const params = new URLSearchParams(hash);
+  const rawToken = params.get("token")?.trim() ?? "";
   return {
     token: rawToken,
     initialState: rawToken ? "form" : "invalid",
   };
+}
+
+let cachedFragmentCapture: TokenCapture | null = null;
+
+function readFragmentCaptureOnce(): TokenCapture | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  if (!cachedFragmentCapture) {
+    cachedFragmentCapture = captureTokenFromFragment();
+    window.history.replaceState(null, "", "/reset-password");
+  }
+
+  return cachedFragmentCapture;
+}
+
+function subscribeToFragmentCapture() {
+  return () => {};
 }
 
 function ResetPasswordFormInner({ capture }: { capture: TokenCapture }) {
@@ -39,12 +59,6 @@ function ResetPasswordFormInner({ capture }: { capture: TokenCapture }) {
   const [state, setState] = useState<ResetState>(capture.initialState);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-
-  useLayoutEffect(() => {
-    if (token) {
-      window.history.replaceState(null, "", "/reset-password");
-    }
-  }, [token]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -186,8 +200,15 @@ function ResetPasswordFormInner({ capture }: { capture: TokenCapture }) {
 }
 
 function ResetPasswordForm() {
-  const searchParams = useSearchParams();
-  const [capture] = useState(() => captureTokenFromQuery(searchParams));
+  const capture = useSyncExternalStore(
+    subscribeToFragmentCapture,
+    readFragmentCaptureOnce,
+    () => null,
+  );
+
+  if (!capture) {
+    return <p className="text-sm text-zinc-500">Загрузка...</p>;
+  }
 
   return <ResetPasswordFormInner capture={capture} />;
 }
@@ -200,9 +221,7 @@ export default function ResetPasswordPage() {
         <p className="mt-2 text-sm text-zinc-600">Задайте новый пароль для входа</p>
       </div>
 
-      <Suspense fallback={<p className="text-sm text-zinc-500">Загрузка...</p>}>
-        <ResetPasswordForm />
-      </Suspense>
+      <ResetPasswordForm />
 
       <Link href="/login" className="text-sm text-zinc-600 underline-offset-2 hover:underline">
         Назад ко входу

@@ -160,6 +160,14 @@ export function normalizePasswordResetEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+export function isSyntacticallyValidPasswordResetEmail(email: string): boolean {
+  const normalized = normalizePasswordResetEmail(email);
+  if (!normalized) {
+    return false;
+  }
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized);
+}
+
 export function generatePasswordResetToken(): string {
   return randomBytes(TOKEN_BYTE_LENGTH).toString("base64url");
 }
@@ -170,14 +178,22 @@ export function hashPasswordResetToken(token: string): string {
 
 /**
  * Абсолютная ссылка сброса только из доверенного AUTH_URL (не из Host запроса).
+ * Token передаётся во fragment (#token=), не в query string — не попадает в access-логи HTTP.
  */
 export function buildPasswordResetUrl(authUrl: string, rawToken: string): string {
   const base = new URL(authUrl);
   base.pathname = "/reset-password";
   base.search = "";
-  base.hash = "";
-  base.searchParams.set("token", rawToken);
+  base.hash = `token=${encodeURIComponent(rawToken)}`;
   return base.toString();
+}
+
+/**
+ * Извлекает token из URL fragment (#token=...). Для клиента и тестов.
+ */
+export function parsePasswordResetTokenFromHash(hash: string): string {
+  const normalizedHash = hash.startsWith("#") ? hash.slice(1) : hash;
+  return new URLSearchParams(normalizedHash).get("token")?.trim() ?? "";
 }
 
 export function resolveTrustedAuthUrl(

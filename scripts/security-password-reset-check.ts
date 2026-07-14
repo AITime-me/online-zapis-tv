@@ -5,6 +5,8 @@ import {
   applyPasswordReset,
   buildPasswordResetUrl,
   hashPasswordResetToken,
+  isSyntacticallyValidPasswordResetEmail,
+  parsePasswordResetTokenFromHash,
   PASSWORD_RESET_EMAIL_COOLDOWN_MS,
   PASSWORD_RESET_NEUTRAL_MESSAGE,
   PASSWORD_RESET_TOKEN_TTL_MS,
@@ -467,8 +469,24 @@ async function testResetUrlBuiltFromAuthUrl(): Promise<void> {
   const parsed = new URL(url);
   assert.equal(parsed.origin, "https://trusted.example.ru");
   assert.equal(parsed.pathname, "/reset-password");
-  assert.equal(parsed.searchParams.get("token"), RAW_TOKEN);
+  assert.equal(parsed.search, "", "token не должен быть в query string");
+  assert.doesNotMatch(url, /\?token=/, "сырой token не должен быть в query string");
+  assert.match(url, /#token=/, "reset URL должен использовать fragment #token=");
+  assert.equal(
+    parsePasswordResetTokenFromHash(parsed.hash),
+    RAW_TOKEN,
+    "token должен извлекаться из fragment",
+  );
   assert.doesNotMatch(url, /request\.headers|req\.headers|get\("host"\)/i);
+}
+
+function testParsePasswordResetTokenFromHash(): void {
+  assert.equal(
+    parsePasswordResetTokenFromHash(`#token=${encodeURIComponent(RAW_TOKEN)}`),
+    RAW_TOKEN,
+  );
+  assert.equal(parsePasswordResetTokenFromHash(""), "");
+  assert.equal(parsePasswordResetTokenFromHash("#other=value"), "");
 }
 
 async function testSuccessfulResetUpdatesPasswordChangedAt(): Promise<void> {
@@ -599,7 +617,8 @@ function testLoginPageHasForgotPasswordLink(): void {
 
 function testAuthUrlNotFromHostHeader(): void {
   const lib = readSource("src/lib/auth/password-reset.ts");
-  assert.match(lib, /buildPasswordResetUrl\(authUrl/, "URL строится из authUrl");
+  assert.match(lib, /base\.hash = `token=\$\{encodeURIComponent\(rawToken\)\}`/, "URL использует fragment");
+  assert.doesNotMatch(lib, /searchParams\.set\("token"/, "buildPasswordResetUrl не должен использовать query");
   assert.doesNotMatch(lib, /headers\(\)|req\.headers|request\.headers|get\("host"\)/i, "Host заголовок не используется");
 
   const service = readSource("src/services/PasswordResetService.ts");
@@ -634,6 +653,13 @@ function testPasswordValidationReused(): void {
   );
 }
 
+function testSyntacticallyValidEmailHelper(): void {
+  assert.equal(isSyntacticallyValidPasswordResetEmail("user@studio.ru"), true);
+  assert.equal(isSyntacticallyValidPasswordResetEmail("  User@Studio.RU  "), true);
+  assert.equal(isSyntacticallyValidPasswordResetEmail(""), false);
+  assert.equal(isSyntacticallyValidPasswordResetEmail("not-an-email"), false);
+}
+
 function testLibDoesNotImportRuntimePrisma(): void {
   const lib = readSource("src/lib/auth/password-reset.ts");
   assert.ok(!lib.includes("@/lib/db"), "password-reset.ts не должен импортировать prisma");
@@ -649,21 +675,43 @@ function testNoAutoSignInAfterReset(): void {
 function testResetPageStripsTokenFromUrl(): void {
   const resetPage = readSource("src/app/(internal)/reset-password/page.tsx");
 
-  assert.match(resetPage, /captureTokenFromQuery/, "token должен считываться из query один раз");
-  assert.match(resetPage, /searchParams\.get\("token"\)/, "token читается из query");
+  assert.match(resetPage, /readFragmentCaptureOnce|captureTokenFromFragment/, "token считывается из fragment один раз");
+  assert.match(resetPage, /window\.location\.hash/, "token читается из window.location.hash");
+  assert.match(resetPage, /new URLSearchParams\(hash\)/, "token декодируется через URLSearchParams");
+  assert.match(resetPage, /useSyncExternalStore/, "чтение fragment через client-only store");
+  assert.doesNotMatch(resetPage, /searchParams\.get\("token"\)/, "query string ?token= не используется");
+  assert.doesNotMatch(resetPage, /useSearchParams/, "страница не должна читать token из query через useSearchParams");
   assert.match(
     resetPage,
     /history\.replaceState\(null,\s*"",\s*"\/reset-password"\)/,
     "token должен удаляться из адресной строки",
   );
-  assert.match(
-    resetPage,
-    /useState\(capture\.token\)|useState\(\(\)\s*=>\s*captureTokenFromQuery\(searchParams\)\)/,
-    "token сохраняется во внутреннем state",
-  );
+  assert.match(resetPage, /useState\(capture\.token\)/, "token сохраняется во внутреннем state");
+  assert.match(resetPage, /Загрузка\.\.\./, "должно быть промежуточное состояние загрузки");
   assert.match(resetPage, /JSON\.stringify\(\{\s*token,/s, "POST использует token из state");
   assert.doesNotMatch(resetPage, /value=\{token\}/, "token не должен отображаться в DOM");
   assert.doesNotMatch(resetPage, />\{token\}</, "token не должен выводиться в разметке");
+}
+
+function testForgotPasswordUsesAfterWithoutAwaitingSmtp(): void {
+  const route = readSource("src/app/api/auth/forgot-password/route.ts");
+  const postHandler = route.match(/export async function POST[\s\S]*$/)?.[0] ?? "";
+
+  assert.ok(postHandler, "должен быть POST handler");
+  assert.match(route, /import\s*\{[^}]*\bafter\b[^}]*\}\s*from\s*"next\/server"/, "route должен использовать after() из next/server");
+  assert.match(postHandler, /after\s*\(\s*async\s*\(\)\s*=>\s*\{/, "фоновая работа через after(async () => ...)");
+  assert.match(postHandler, /after\s*\([\s\S]*?await\s+requestPasswordResetByEmail\(email\)/, "await допустим только внутри after()");
+  assert.doesNotMatch(
+    postHandler.split("return NextResponse")[0] ?? "",
+    /await\s+requestPasswordResetByEmail/,
+    "HTTP-ответ не должен ждать SMTP/Prisma",
+  );
+  assert.match(postHandler, /background request failed/, "ошибки фона логируются обобщённо");
+  assert.doesNotMatch(postHandler, /void\s+requestPasswordResetByEmail/, "не использовать void promise вместо after()");
+  assert.match(route, /PASSWORD_RESET_NEUTRAL_MESSAGE/, "нейтральный ответ сохранён");
+  assert.match(postHandler, /NEUTRAL_RESPONSE/, "handler возвращает нейтральный ответ");
+  assert.match(postHandler, /isSyntacticallyValidPasswordResetEmail/, "фон запускается для синтаксически валидного email");
+  assert.doesNotMatch(postHandler, /console\.(log|info|warn)\([^)]*email/i, "фон не логирует email");
 }
 
 function testResetPageReferrerPolicy(): void {
@@ -847,6 +895,7 @@ async function main(): Promise<void> {
   await testRateLimitNeutralResponse();
   await testMailFailureRemovesToken();
   await testResetUrlBuiltFromAuthUrl();
+  testParsePasswordResetTokenFromHash();
   await testSuccessfulResetUpdatesPasswordChangedAt();
   await testExpiredTokenRejected();
   await testUsedTokenRejected();
@@ -858,9 +907,11 @@ async function main(): Promise<void> {
   testSha256Implementation();
   testCooldownConstant();
   testPasswordValidationReused();
+  testSyntacticallyValidEmailHelper();
   testLibDoesNotImportRuntimePrisma();
   testNoAutoSignInAfterReset();
   testResetPageStripsTokenFromUrl();
+  testForgotPasswordUsesAfterWithoutAwaitingSmtp();
   testResetPageReferrerPolicy();
   testClientPagesDoNotImportServerPasswordReset();
   testPasswordResetMessagesModuleIsClientSafe();
