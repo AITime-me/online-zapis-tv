@@ -20,6 +20,9 @@ readonly STAGING_DOCKER_HEALTH_TIMEOUT_SEC=180
 readonly STAGING_DOCKER_HEALTH_INTERVAL_SEC=5
 readonly STAGING_HTTP_HEALTH_TIMEOUT_SEC=10
 readonly STAGING_APP_IMAGE_REF="online-zapis-tv-staging-app:current"
+readonly STAGING_MIGRATOR_TSX="/app/node_modules/.bin/tsx"
+readonly STAGING_MIGRATOR_PRISMA="/app/node_modules/.bin/prisma"
+readonly STAGING_CLASSIFIER_CLI="/app/scripts/ops/lib/classify-migrate-status-cli.ts"
 
 OPS_REPO_ROOT=""
 OPS_DRY_RUN=0
@@ -158,16 +161,18 @@ ops_print_pending_migration_names() {
 ops_classify_prisma_migrate_output() {
   local exit_code="$1"
   local output_file="$2"
+  local classification
 
   if [[ ! -f "$output_file" ]]; then
     ops_die "migrate status output file is missing"
   fi
 
-  if ! command -v npx >/dev/null 2>&1; then
-    ops_die "npx is required to classify prisma migrate status output"
-  fi
+  classification="$(ops_compose --profile ops run --rm --no-TTY -i \
+    --entrypoint "$STAGING_MIGRATOR_TSX" \
+    migrator "$STAGING_CLASSIFIER_CLI" "$exit_code" <"$output_file")" \
+    || ops_die "migrate status classification failed inside migrator container"
 
-  npx tsx "${OPS_REPO_ROOT}/scripts/ops/lib/classify-migrate-status-cli.ts" "$exit_code" "$output_file"
+  printf '%s' "$classification"
 }
 
 ops_run_prisma_migrate_status() {

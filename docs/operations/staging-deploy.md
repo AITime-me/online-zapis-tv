@@ -72,18 +72,22 @@ Manifest содержит только несекретные поля: commit S
 
 Вместо полного `builder`-образа используется минимальный target `migrator`:
 
-- Node + `npm ci` зависимости из стадии `deps`.
+- Node + `npm ci` зависимости из стадии `deps` (включая локальный `tsx` и Prisma CLI).
 - `prisma/` (schema + migrations).
-- Prisma CLI из `node_modules`.
-- Без `prisma generate`, без исходников приложения, без секретов в image.
+- Runtime-файлы классификатора `prisma-migrate-status.ts` и `classify-migrate-status-cli.ts`.
+- Локальные бинарники `/app/node_modules/.bin/prisma` и `/app/node_modules/.bin/tsx` — **без** host `npx`/`npm`/`node` на Ubuntu.
+- Без `prisma generate`, без исходников приложения, без `.env*` и секретов в image.
 
 Compose-сервис `migrator`:
 
 - profile `ops` — не стартует при обычном `docker compose up`.
-- `DATABASE_URL` собирается из `POSTGRES_*` через Compose environment.
+- `entrypoint: ["/app/node_modules/.bin/prisma"]` — Prisma CLI из image, без автозагрузки пакетов через `npx`.
+- `DATABASE_URL` собирается из `POSTGRES_*` через Compose environment (не в image).
 - Только сеть `staging_internal`, без published ports.
 - `depends_on: postgres (healthy)`.
-- Одноразовый: `docker compose ... --profile ops run --rm migrator migrate ...`.
+- `prisma migrate status` и классификатор выполняются внутри одноразового контейнера; вывод status передаётся классификатору через **stdin**.
+
+На Ubuntu-хосте для deploy/rollback/restore **не** требуются `node`, `npm` или `npx`.
 
 ## Запуск
 
@@ -122,9 +126,11 @@ bash scripts/ops/staging-deploy.sh --yes
 ## Миграции
 
 1. Postgres healthy.
-2. `migrator migrate status` — показать ожидающие миграции.
-3. `migrator migrate deploy`.
-4. Повторный `migrate status`.
+2. Сборка migrator image (до любого `migrate status`).
+3. `migrator migrate status` внутри контейнера — pre-deploy проверка.
+4. Классификатор внутри того же migrator image (stdin, локальный `tsx`) — `up_to_date` / `pending` / `error:*`.
+5. При `pending` — `migrator migrate deploy`; при connection/failed/diverged/unknown — deploy останавливается.
+6. Повторный `migrate status` + классификация; post-deploy принимает только `up_to_date`.
 
 Запрещено в deploy-скрипте: `migrate reset`, `db push`, `migrate dev`, ручное удаление `_prisma_migrations`.
 

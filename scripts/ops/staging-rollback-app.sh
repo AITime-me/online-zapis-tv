@@ -274,7 +274,7 @@ main() {
 
   ops_cd_repo_root "$(pwd)"
 
-  ops_require_commands docker curl npx
+  ops_require_commands docker curl
 
   ops_check_docker_daemon
 

@@ -29,6 +29,8 @@ RUN npm run build
 FROM deps AS migrator
 WORKDIR /app
 COPY prisma ./prisma
+COPY scripts/ops/lib/prisma-migrate-status.ts ./scripts/ops/lib/prisma-migrate-status.ts
+COPY scripts/ops/lib/classify-migrate-status-cli.ts ./scripts/ops/lib/classify-migrate-status-cli.ts
 
 FROM base AS runner
 WORKDIR /app

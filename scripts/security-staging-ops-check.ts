@@ -31,6 +31,26 @@ const FORBIDDEN_PATTERNS: Array<{ name: string; pattern: RegExp; files?: readonl
   { name: "cat .env.staging", pattern: /\bcat\b[^;\n]*\.env\.staging/ },
   { name: "source .env.staging", pattern: /\bsource\b[^;\n]*\.env\.staging/ },
   { name: ". env.staging", pattern: /^\s*\.\s+\.env\.staging/m },
+  {
+    name: "host npx tsx classifier",
+    pattern: /\bnpx\s+tsx\b/,
+    files: OPS_SHELL_FILES,
+  },
+  {
+    name: "host node classifier",
+    pattern: /\bnode\b[^;\n]*classify-migrate-status/,
+    files: OPS_SHELL_FILES,
+  },
+  {
+    name: "host npm exec",
+    pattern: /\bnpm\s+exec\b/,
+    files: OPS_SHELL_FILES,
+  },
+  {
+    name: "host npx prerequisite check",
+    pattern: /command\s+-v\s+npx\b/,
+    files: OPS_SHELL_FILES,
+  },
 ];
 
 const SECRET_MANIFEST_KEYS = [
@@ -206,6 +226,7 @@ function assertDeployScript(): void {
   assert.match(source, /flock/, "deploy must use flock");
   assert.match(executable, /ops_require_interactive_confirmation\s+"DEPLOY"/);
   assert.match(executable, /ops_compose_preflight/, "deploy must run compose preflight");
+  assert.match(executable, /ops_require_commands git docker flock curl/);
   assert.match(executable, /ops_run_prisma_migrate_status\s+"pre"/);
   assert.match(executable, /ops_run_prisma_migrate_status\s+"post"/);
   assert.doesNotMatch(migrationsBody, /\|\|\s*true/, "migrate status must not be masked with || true");
@@ -215,14 +236,6 @@ function assertDeployScript(): void {
   assertIndexOrder(mainBody, "init_state_manifest", "build_images", "initial manifest before image build");
   assertIndexOrder(mainBody, "build_images", "run_migrations", "build before migrations");
   assertIndexOrder(mainBody, "run_migrations", "restart_app_only", "migrations before app restart");
-
-  const dryRunExit = mainBody.indexOf('ops_info "Dry-run complete');
-  for (const token of ["ops_create_postgres_backup", "init_state_manifest", "run_migrations", "restart_app_only"]) {
-    const idx = mainBody.indexOf(token);
-    if (idx >= 0) {
-      assert.ok(dryRunExit >= 0 && dryRunExit < idx, `dry-run must exit before ${token}`);
-    }
-  }
 
   assert.match(executable, /ops_apply_compose_app_image/, "rollback must retag compose app image");
   assert.match(executable, /ops_recreate_app_container/, "rollback must recreate app without rebuild");
@@ -290,6 +303,127 @@ function assertComposeMigrator(): void {
   assert.match(migratorService, /ops/);
 }
 
+function assertNoHostNodePrerequisites(): void {
+  const hostNodeCommands = ["node", "npm", "npx"] as const;
+
+  for (const rel of OPS_SHELL_FILES) {
+    const executable = stripBashComments(readFile(rel));
+    const requireMatch = executable.match(/ops_require_commands\s+([^;\n]+)/g) ?? [];
+    for (const call of requireMatch) {
+      for (const cmd of hostNodeCommands) {
+        assert.doesNotMatch(
+          call,
+          new RegExp(`\\b${cmd}\\b`),
+          `${rel}: ops_require_commands must not require host ${cmd}`,
+        );
+      }
+    }
+  }
+}
+
+function assertHostNodeNotInHelpOrErrors(): void {
+  for (const rel of OPS_SHELL_FILES) {
+    const source = readFile(rel);
+    assert.doesNotMatch(source, /missing required commands:[^\n]*\bnpx\b/);
+    assert.doesNotMatch(source, /Requires:[^\n]*\bnpx\b/);
+    assert.doesNotMatch(source, /requires host npx/i);
+  }
+}
+
+function assertClassifierRunsInMigrator(): void {
+  const classifyBody = extractFunctionBodies(readFile("scripts/ops/lib/staging-ops-common.sh"), "ops_classify_prisma_migrate_output");
+
+  assert.match(classifyBody, /ops_compose\b[^}]*--profile ops run/);
+  assert.match(classifyBody, /--entrypoint\s+"\$STAGING_MIGRATOR_TSX"/);
+  assert.match(classifyBody, /STAGING_CLASSIFIER_CLI/);
+  assert.match(classifyBody, /--no-TTY -i\b|--no-TTY\s+-i\b/);
+  assert.match(classifyBody, /<\s*"\$output_file"/);
+  assert.doesNotMatch(classifyBody, /\bnpx\b/);
+  assert.doesNotMatch(classifyBody, /\bnode\b/);
+
+  const migrateBody = extractFunctionBodies(readFile("scripts/ops/lib/staging-ops-common.sh"), "ops_run_prisma_migrate_status");
+  const commonExecutable = stripBashComments(readFile("scripts/ops/lib/staging-ops-common.sh"));
+  assert.match(commonExecutable, /ops_compose[^;\n]*migrator migrate status/);
+  assert.doesNotMatch(classifyBody, /\bnpx\b/);
+  assert.doesNotMatch(migrateBody || commonExecutable, /\bnpx\b/);
+  assert.match(readFile("scripts/ops/lib/staging-ops-common.sh"), /readonly STAGING_MIGRATOR_PRISMA="\/app\/node_modules\/\.bin\/prisma"/);
+}
+
+function assertMigratorImageContainsClassifier(): void {
+  const dockerfile = readFile("Dockerfile");
+  const migratorBlock = dockerfile.match(/FROM deps AS migrator[\s\S]*?(?=\nFROM |\n# |\z)/)?.[0] ?? "";
+  assert.ok(migratorBlock.length > 0, "migrator target must exist");
+  assert.match(migratorBlock, /COPY scripts\/ops\/lib\/prisma-migrate-status\.ts/);
+  assert.match(migratorBlock, /COPY scripts\/ops\/lib\/classify-migrate-status-cli\.ts/);
+  assert.doesNotMatch(migratorBlock, /\.env/);
+}
+
+function assertMigratorUsesLocalBinariesOnly(): void {
+  const compose = readFile("docker-compose.staging.yml");
+  const migratorService =
+    compose.match(/\r?\n  migrator:\r?\n[\s\S]*?(?=\r?\n  [a-z_]+:|\r?\nnetworks:)/)?.[0] ?? "";
+  assert.match(migratorService, /entrypoint:\s*\["\/app\/node_modules\/\.bin\/prisma"\]/);
+  assert.doesNotMatch(migratorService, /\bnpx\b/);
+}
+
+function assertClassifierCliReadsStdin(): void {
+  const cli = readFile("scripts/ops/lib/classify-migrate-status-cli.ts");
+  assert.match(cli, /readFileSync\(0/);
+  assert.doesNotMatch(cli, /process\.argv\[3\]/);
+}
+
+function assertRollbackRestoreSkipClassifier(): void {
+  for (const rel of ["scripts/ops/staging-rollback-app.sh", "scripts/ops/staging-restore-db.sh"] as const) {
+    const executable = stripBashComments(readFile(rel));
+    assert.doesNotMatch(executable, /ops_classify_prisma_migrate_output/);
+    assert.doesNotMatch(executable, /ops_run_prisma_migrate_status/);
+    assert.doesNotMatch(executable, /--profile ops run[^;\n]*migrator/);
+  }
+}
+
+function assertMigrationFlowSemantics(): void {
+  const common = readFile("scripts/ops/lib/staging-ops-common.sh");
+  const commonExecutable = stripBashComments(common);
+  const migrateStatusBody = extractFunctionBodies(common, "ops_run_prisma_migrate_status") || commonExecutable;
+  const migrationsBody = extractFunctionBodies(readFile("scripts/ops/staging-deploy.sh"), "run_migrations");
+
+  assert.match(migrateStatusBody, /pending\)/);
+  assert.match(migrateStatusBody, /phase" == "post"/);
+  assert.match(migrateStatusBody, /error:\*/);
+  assert.match(migrationsBody, /migrate deploy/);
+  assertIndexOrder(migrationsBody, 'ops_run_prisma_migrate_status "pre"', "migrate deploy", "deploy after pre-status");
+  assertIndexOrder(migrationsBody, "migrate deploy", 'ops_run_prisma_migrate_status "post"', "post-status after deploy");
+
+  const classifierOutput = formatMigrateStatusResult({ kind: "up_to_date" });
+  assert.equal(classifierOutput, "up_to_date");
+  for (const secret of SECRET_MANIFEST_KEYS) {
+    assert.doesNotMatch(classifierOutput, new RegExp(secret, "i"));
+  }
+}
+
+function assertDryRunSkipsMigratorAndClassifier(): void {
+  const deploy = readFile("scripts/ops/staging-deploy.sh");
+  const mainBody = extractFunctionBodies(deploy, "main");
+  const migrationsBody = extractFunctionBodies(deploy, "run_migrations");
+  const dryRunExit = mainBody.indexOf('ops_info "Dry-run complete');
+
+  for (const token of [
+    "ops_create_postgres_backup",
+    "init_state_manifest",
+    "build_images",
+    "run_migrations",
+    "restart_app_only",
+  ]) {
+    const idx = mainBody.indexOf(token);
+    if (idx >= 0) {
+      assert.ok(dryRunExit >= 0 && dryRunExit < idx, `dry-run must exit before ${token}`);
+    }
+  }
+
+  assert.match(migrationsBody, /OPS_DRY_RUN/);
+  assert.doesNotMatch(migrationsBody, /ops_classify_prisma_migrate_output/);
+}
+
 function assertCommonHelpers(): void {
   const common = stripBashComments(readFile("scripts/ops/lib/staging-ops-common.sh"));
   assert.match(common, /ops_compose_preflight/);
@@ -297,12 +431,23 @@ function assertCommonHelpers(): void {
   assert.match(common, /ops_classify_prisma_migrate_output/);
   assert.match(common, /classify-migrate-status-cli\.ts/);
   assert.match(common, /STAGING_APP_IMAGE_REF/);
+  assert.match(common, /STAGING_MIGRATOR_TSX/);
+  assert.doesNotMatch(common, /\becho\b[^;\n]*ops_compose[^;\n]*\bconfig\b/);
 }
 
 function run(): void {
   assertPrismaMigrateStatusClassifier();
   assertShellBasics();
   assertForbiddenPatterns();
+  assertNoHostNodePrerequisites();
+  assertHostNodeNotInHelpOrErrors();
+  assertClassifierRunsInMigrator();
+  assertMigratorImageContainsClassifier();
+  assertMigratorUsesLocalBinariesOnly();
+  assertClassifierCliReadsStdin();
+  assertRollbackRestoreSkipClassifier();
+  assertMigrationFlowSemantics();
+  assertDryRunSkipsMigratorAndClassifier();
   assertDeployScript();
   assertRollbackScript();
   assertRestoreScript();

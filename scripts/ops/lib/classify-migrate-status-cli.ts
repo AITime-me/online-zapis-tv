@@ -5,13 +5,12 @@ import {
 } from "./prisma-migrate-status";
 
 const exitCode = Number(process.argv[2]);
-const outputFile = process.argv[3];
 
-if (!Number.isInteger(exitCode) || !outputFile) {
-  console.error("usage: classify-migrate-status-cli.ts <exitCode> <outputFile>");
+if (!Number.isInteger(exitCode)) {
+  console.error("usage: classify-migrate-status-cli.ts <exitCode>  (read prisma output from stdin)");
   process.exit(2);
 }
 
-const output = fs.readFileSync(outputFile, "utf8");
+const output = fs.readFileSync(0, "utf8");
 const result = classifyPrismaMigrateStatus(exitCode, output);
 process.stdout.write(formatMigrateStatusResult(result));

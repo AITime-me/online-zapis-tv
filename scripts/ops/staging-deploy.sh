@@ -68,7 +68,7 @@ Options:
 
 
 
-Requires: git, docker, flock, curl, npx; run as deploy user from repository root.
+Requires: git, docker, flock, curl; run as deploy user from repository root.
 
 EOF
 
@@ -152,7 +152,7 @@ parse_args() {
 
 check_prerequisites() {
 
-  ops_require_commands git docker flock curl npx
+  ops_require_commands git docker flock curl
 
   ops_check_docker_daemon
 

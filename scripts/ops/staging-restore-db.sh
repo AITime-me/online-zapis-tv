@@ -153,7 +153,7 @@ main() {
   parse_args "$@"
   ops_setup_common_traps
   ops_cd_repo_root "$(pwd)"
-  ops_require_commands docker curl npx
+  ops_require_commands docker curl
   ops_check_docker_daemon
   ops_check_docker_compose
   ops_compose_preflight

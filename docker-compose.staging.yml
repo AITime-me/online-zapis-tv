@@ -91,7 +91,7 @@ services:
     networks:
       - staging_internal
     restart: "no"
-    entrypoint: ["npx", "prisma"]
+    entrypoint: ["/app/node_modules/.bin/prisma"]
 
 networks:
   staging_internal:
