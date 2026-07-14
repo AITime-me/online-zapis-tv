@@ -24,6 +24,12 @@ ENV DATABASE_URL=postgresql://build:build@localhost:5432/build
 RUN npx prisma generate
 RUN npm run build
 
+# Минимальный образ только для prisma migrate status/deploy (profile ops).
+# Без исходников приложения, без prisma generate, без runtime secrets.
+FROM deps AS migrator
+WORKDIR /app
+COPY prisma ./prisma
+
 FROM base AS runner
 WORKDIR /app
 

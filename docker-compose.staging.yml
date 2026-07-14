@@ -27,6 +27,7 @@ services:
       start_period: 10s
 
   app:
+    image: online-zapis-tv-staging-app:current
     build:
       context: .
       dockerfile: Dockerfile
@@ -72,6 +73,25 @@ services:
       timeout: 5s
       retries: 3
       start_period: 60s
+
+  # Одноразовый сервис миграций — только через profile ops:
+  #   docker compose -f docker-compose.staging.yml --env-file .env.staging --profile ops run --rm migrator ...
+  migrator:
+    profiles:
+      - ops
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrator
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    networks:
+      - staging_internal
+    restart: "no"
+    entrypoint: ["npx", "prisma"]
 
 networks:
   staging_internal:

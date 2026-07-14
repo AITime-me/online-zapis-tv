@@ -46,6 +46,7 @@ yarn-error.log*
 !/exports/emergency/.gitkeep
 
 # database dumps and backups
+/backups/
 *.sql
 !prisma/migrations/**/*.sql
 *.dump
