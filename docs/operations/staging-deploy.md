@@ -100,6 +100,48 @@ bash scripts/ops/staging-deploy.sh --dry-run
 
 Выполняются только безопасные проверки и вывод плана. Не выполняются: `git pull`, backup, сборка, миграции, перезапуск, запись manifest.
 
+### Dry-run redeploy-current
+
+```bash
+bash scripts/ops/staging-deploy.sh --dry-run --redeploy-current
+```
+
+Проверяет Git (HEAD == origin/main), env, Compose, определяет текущий container image id и показывает план повторного развёртывания без изменений Docker/Git/backup.
+
+## Повторное развёртывание текущего commit (`--redeploy-current`)
+
+### Почему обычный deploy отказывается без новых commits
+
+Deploy по умолчанию делает **fast-forward** `main` → `origin/main` и разворачивает **новые** commits. Если `HEAD` уже равен `origin/main`, обычный deploy — no-op: он намеренно завершается с ошибкой, чтобы не запускать backup, migrations и пересборку без явного намерения.
+
+**Не создавайте пустой commit** только ради запуска deploy — это засоряет историю Git.
+
+### Когда нужен `--redeploy-current`
+
+- код уже вручную подтянут (`git pull --ff-only`), но app-контейнер ещё на старом image;
+- предыдущий deploy прервался до сборки или перезапуска app;
+- нужно пересобрать и развернуть **тот же** commit без изменения Git.
+
+Это **не** force deploy: все проверки env, backup, migrations, rollback tag, health-check и подтверждение `DEPLOY` сохраняются. Git не меняется (`git merge` не вызывается).
+
+### Пример dry-run
+
+```bash
+cd /opt/online-zapis-tv
+bash scripts/ops/staging-deploy.sh --dry-run --redeploy-current
+```
+
+### Пример интерактивного redeploy
+
+```bash
+cd /opt/online-zapis-tv
+bash scripts/ops/staging-deploy.sh --redeploy-current
+```
+
+Скрипт покажет current/target SHA (одинаковые), текущий container image id (в том числе legacy reference вроде `online-zapis-tv-app`), compose image ref и попросит ввести `DEPLOY`.
+
+`--redeploy-current` **нельзя** использовать, если на `origin/main` есть commits, которых нет локально — в этом случае нужен обычный deploy.
+
 ### Обычный deploy
 
 ```bash
@@ -226,6 +268,7 @@ curl http://127.0.0.1:3000/api/health
 | Поле | Значение |
 | --- | --- |
 | `STATE_VERSION` | Версия формата manifest |
+| `DEPLOY_MODE` | `fast_forward` или `redeploy_current` |
 | `PREVIOUS_COMMIT_SHA` | Commit до deploy |
 | `TARGET_COMMIT_SHA` | Commit после fast-forward |
 | `BACKUP_PATH` | Путь к PostgreSQL dump |

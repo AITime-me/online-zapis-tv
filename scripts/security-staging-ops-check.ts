@@ -217,6 +217,60 @@ function assertForbiddenPatterns(): void {
   }
 }
 
+function assertRedeployCurrent(): void {
+  const source = readFile("scripts/ops/staging-deploy.sh");
+  const executable = stripBashComments(source);
+  const mainBody = extractFunctionBodies(source, "main") || executable;
+  const fetchBody = extractFunctionBodies(source, "fetch_and_plan_git");
+  const ffBody = extractFunctionBodies(source, "fast_forward_git");
+  const manifestBody = extractFunctionBodies(source, "persist_state_manifest");
+
+  assert.match(source, /--redeploy-current/);
+  assert.match(source, /DEPLOY_MODE/);
+  assert.match(manifestBody, /DEPLOY_MODE=/);
+  assert.match(fetchBody, /no new commits to deploy; refusing no-op deploy/);
+  assert.match(fetchBody, /--redeploy-current if you need to rebuild/);
+  assert.match(fetchBody, /DEPLOY_REDEPLOY_CURRENT/);
+  assert.match(fetchBody, /origin\/main has new commits; use normal deploy without --redeploy-current/);
+  assert.doesNotMatch(source, /--force\b/);
+
+  assert.match(executable, /collect_app_image_state/);
+  assert.match(executable, /ops_get_container_image_id/);
+  assert.match(executable, /ops_get_container_image_reference/);
+  assert.match(source, /legacy or stale image reference is expected/);
+  assert.match(ffBody, /DEPLOY_REDEPLOY_CURRENT/);
+  assert.doesNotMatch(mainBody, /git merge.*DEPLOY_REDEPLOY_CURRENT/);
+
+  const dryRunExit = mainBody.indexOf('ops_info "Dry-run complete');
+  for (const token of [
+    "ops_create_postgres_backup",
+    "init_state_manifest",
+    "build_images",
+    "run_migrations",
+    "restart_app_only",
+    "fast_forward_git",
+  ]) {
+    const idx = mainBody.indexOf(token);
+    if (idx >= 0 && dryRunExit >= 0) {
+      assert.ok(dryRunExit < idx, `dry-run must exit before ${token}`);
+    }
+  }
+
+  assert.match(mainBody, /DEPLOY_REDEPLOY_CURRENT.*collect_app_image_state|collect_app_image_state[\s\S]*Dry-run complete/s);
+
+  assert.match(executable, /ops_require_interactive_confirmation\s+"DEPLOY"/);
+  assert.doesNotMatch(
+    stripBashComments(readFile("scripts/ops/staging-rollback-app.sh")),
+    /redeploy-current|--redeploy-current/,
+  );
+  assert.doesNotMatch(
+    stripBashComments(readFile("scripts/ops/staging-restore-db.sh")),
+    /redeploy-current|--redeploy-current/,
+  );
+  assert.doesNotMatch(executable, /pg_restore|staging-restore-db/);
+  assert.doesNotMatch(executable, /compose\s+stop\s+postgres|restart\s+postgres/);
+}
+
 function assertDeployScript(): void {
   const source = readFile("scripts/ops/staging-deploy.sh");
   const executable = stripBashComments(source);
@@ -242,6 +296,7 @@ function assertDeployScript(): void {
   assert.match(executable, /ops_assert_container_image_matches/, "rollback must verify container image id");
   assert.match(executable, /persist_state_manifest/, "deploy must update manifest incrementally");
   assert.match(executable, /LAST_ERROR_SUMMARY/, "failed deploy must preserve error summary");
+  assert.match(executable, /ops_assert_container_image_matches/, "rollback must verify container image id after rollback");
 }
 
 function assertRollbackScript(): void {
@@ -391,6 +446,7 @@ function assertMigrationFlowSemantics(): void {
   assert.match(migrateStatusBody, /phase" == "post"/);
   assert.match(migrateStatusBody, /error:\*/);
   assert.match(migrationsBody, /migrate deploy/);
+  assert.match(migrationsBody, /OPS_LAST_MIGRATE_CLASSIFICATION" == "pending"/);
   assertIndexOrder(migrationsBody, 'ops_run_prisma_migrate_status "pre"', "migrate deploy", "deploy after pre-status");
   assertIndexOrder(migrationsBody, "migrate deploy", 'ops_run_prisma_migrate_status "post"', "post-status after deploy");
 
@@ -448,6 +504,7 @@ function run(): void {
   assertRollbackRestoreSkipClassifier();
   assertMigrationFlowSemantics();
   assertDryRunSkipsMigratorAndClassifier();
+  assertRedeployCurrent();
   assertDeployScript();
   assertRollbackScript();
   assertRestoreScript();

@@ -27,6 +27,7 @@ readonly STAGING_CLASSIFIER_CLI="/app/scripts/ops/lib/classify-migrate-status-cl
 OPS_REPO_ROOT=""
 OPS_DRY_RUN=0
 OPS_TEMP_FILES=()
+OPS_LAST_MIGRATE_CLASSIFICATION=""
 
 ops_die() {
   echo "error: $*" >&2
@@ -188,6 +189,7 @@ ops_run_prisma_migrate_status() {
   set -e
 
   classification="$(ops_classify_prisma_migrate_output "$exit_code" "$output_file")"
+  OPS_LAST_MIGRATE_CLASSIFICATION="$classification"
 
   case "$classification" in
     up_to_date)
@@ -532,6 +534,31 @@ ops_container_healthy() {
 
 ops_get_container_image_id() {
   docker inspect --format '{{.Image}}' "$1" 2>/dev/null || true
+}
+
+# Человекочитаемая ссылка на image контейнера (RepoTags или Config.Image).
+ops_get_container_image_reference() {
+  local container="$1"
+  local image_id tags config_image
+
+  image_id="$(ops_get_container_image_id "$container")"
+  if [[ -z "$image_id" ]]; then
+    return 1
+  fi
+
+  tags="$(docker image inspect --format '{{if .RepoTags}}{{join .RepoTags ","}}{{end}}' "$image_id" 2>/dev/null || true)"
+  if [[ -n "$tags" ]]; then
+    printf '%s' "$tags"
+    return 0
+  fi
+
+  config_image="$(docker inspect --format '{{.Config.Image}}' "$container" 2>/dev/null || true)"
+  if [[ -n "$config_image" ]]; then
+    printf '%s' "$config_image"
+    return 0
+  fi
+
+  printf '%s' "$image_id"
 }
 
 ops_wait_for_docker_health() {
