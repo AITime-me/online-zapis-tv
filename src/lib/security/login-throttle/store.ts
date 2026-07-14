@@ -22,6 +22,35 @@ function isSerializationFailure(error: unknown): boolean {
   );
 }
 
+function isLoginThrottleScopeKeyHashConflict(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
+    return false;
+  }
+
+  if (error.code !== "P2002") {
+    return false;
+  }
+
+  if (error.meta?.modelName === "LoginThrottleEntry") {
+    return true;
+  }
+
+  const target = error.meta?.target;
+  if (!target) {
+    return false;
+  }
+
+  const fields = (Array.isArray(target) ? target : [target]).map((value) =>
+    String(value).toLowerCase().replace(/_/g, ""),
+  );
+
+  return fields.includes("scope") && fields.some((field) => field.includes("keyhash"));
+}
+
+function isRetriableThrottleConcurrencyError(error: unknown): boolean {
+  return isSerializationFailure(error) || isLoginThrottleScopeKeyHashConflict(error);
+}
+
 function isWindowExpired(windowStartedAt: Date, now: Date, windowMs: number): boolean {
   return now.getTime() - windowStartedAt.getTime() >= windowMs;
 }
@@ -117,7 +146,7 @@ async function runSerializable<T>(
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       });
     } catch (error) {
-      if (isSerializationFailure(error) && attempt < SERIALIZABLE_RETRIES - 1) {
+      if (isRetriableThrottleConcurrencyError(error) && attempt < SERIALIZABLE_RETRIES - 1) {
         continue;
       }
       throw error;

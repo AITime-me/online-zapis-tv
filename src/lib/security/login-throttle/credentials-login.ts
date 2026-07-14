@@ -12,6 +12,7 @@ import {
   buildIpLoginThrottleKeyHash,
   normalizeLoginEmail,
 } from "./hash-key";
+import { LoginThrottleUnavailableError } from "./hmac-secret";
 import {
   clearAccountThrottleIfNotBlocked,
   defaultAccountThrottleConfig,
@@ -154,7 +155,16 @@ export async function verifyCredentialsLogin(
     options?.db ??
     ((await import("@/lib/db")).prisma as unknown as CredentialsLoginPrisma);
 
-  const scopeConfigs = buildScopeConfigs(normalizedEmail, headers);
+  let scopeConfigs: LoginThrottleScopeConfig[];
+  try {
+    scopeConfigs = buildScopeConfigs(normalizedEmail, headers);
+  } catch (error) {
+    if (error instanceof LoginThrottleUnavailableError) {
+      console.error("[login-throttle] identity protection unavailable");
+      return null;
+    }
+    throw error;
+  }
 
   void maybeCleanupLoginThrottleEntries(db, now);
 

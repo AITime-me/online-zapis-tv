@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import bcrypt from "bcryptjs";
+import { Prisma } from "@prisma/client";
 import type { LoginThrottleScope, UserRole } from "@prisma/client";
 import {
   buildAccountLoginThrottleKeyHash,
@@ -11,8 +12,11 @@ import {
   CREDENTIALS_LOGIN_NEUTRAL_ERROR,
   defaultAccountThrottleConfig,
   defaultIpThrottleConfig,
+  hashLoginThrottleIdentity,
   isLoginThrottleBlocked,
   isLoginThrottleEntryBlocked,
+  isStrictLoginThrottleRuntime,
+  LoginThrottleUnavailableError,
   LOGIN_ACCOUNT_MAX_FAILURES,
   LOGIN_DUMMY_BCRYPT_HASH,
   LOGIN_IP_MAX_FAILURES,
@@ -20,12 +24,12 @@ import {
   normalizeLoginEmail,
   recordLoginThrottleFailure,
   resetLoginThrottleCleanupClockForTests,
+  resolveLoginThrottleHmacSecret,
   verifyCredentialsLogin,
   type CredentialsLoginPrisma,
   type LoginThrottlePrisma,
   type LoginThrottleRow,
 } from "../src/lib/security/login-throttle";
-import { hashRateLimitIdentity } from "../src/lib/security/rate-limit/hash-key";
 import { isTrustedProxyEnabled, resolveTrustedClientIp } from "../src/lib/security/login-throttle/trusted-client-ip";
 
 const TEST_PASSWORD = "WrongPass1234";
@@ -40,6 +44,54 @@ type UserRow = {
   isActive: boolean;
   passwordHash: string;
 };
+
+const ENV_SNAPSHOT_KEYS = [
+  "AUTH_SECRET",
+  "NEXTAUTH_SECRET",
+  "APP_ENV",
+  "NODE_ENV",
+  "NEXT_PHASE",
+] as const;
+
+function snapshotEnv(): Record<string, string | undefined> {
+  return Object.fromEntries(ENV_SNAPSHOT_KEYS.map((key) => [key, process.env[key]]));
+}
+
+function restoreEnv(snapshot: Record<string, string | undefined>): void {
+  for (const key of ENV_SNAPSHOT_KEYS) {
+    const value = snapshot[key];
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+}
+
+function makeLoginThrottleP2002Error(): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError(
+    "Unique constraint failed on the fields: (`scope`,`key_hash`)",
+    {
+      code: "P2002",
+      clientVersion: "6.19.0",
+      meta: { modelName: "LoginThrottleEntry", target: ["scope", "key_hash"] },
+    },
+  );
+}
+
+function makeSerializationP2034Error(): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError("Serialization failure", {
+    code: "P2034",
+    clientVersion: "6.19.0",
+  });
+}
+
+function ensureTestHmacEnv(): void {
+  process.env.AUTH_SECRET = "test-auth-secret-32-characters-minimum";
+  delete process.env.APP_ENV;
+  delete process.env.NEXTAUTH_SECRET;
+  process.env.NODE_ENV = "test";
+}
 
 function readSource(relPath: string): string {
   return fs.readFileSync(path.join(process.cwd(), relPath), "utf8");
@@ -128,6 +180,8 @@ function createCredentialsMock(options: {
   failClear?: boolean;
   failRecord?: boolean;
 }) {
+  ensureTestHmacEnv();
+
   const db: CredentialsLoginPrisma = {
     ...options.throttleDb,
     user: {
@@ -188,12 +242,14 @@ function testEmailNormalizationAndHmac(): void {
   const keyHash = buildAccountLoginThrottleKeyHash("user@studio.ru");
   assert.equal(keyHash.length, 64);
   assert.notEqual(keyHash, "user@studio.ru");
-  assert.notEqual(keyHash, hashRateLimitIdentity(["login-account", "user@studio.ru"]) ? "" : keyHash);
   assert.equal(keyHash, buildAccountLoginThrottleKeyHash("user@studio.ru"));
 
   const ipHash = buildIpLoginThrottleKeyHash("203.0.113.10");
   assert.equal(ipHash.length, 64);
   assert.doesNotMatch(ipHash, /203\.0\.113\.10/);
+
+  const loginHashSource = readSource("src/lib/security/login-throttle/hash-key.ts");
+  assert.doesNotMatch(loginHashSource, /rate-limit\/hash-key/);
 }
 
 function testPasswordNeverStored(): void {
@@ -279,6 +335,8 @@ async function testSuccessfulLoginClearsAccountThrottle(): Promise<void> {
 }
 
 async function testNonexistentEmailUsesSameThrottle(): Promise<void> {
+  ensureTestHmacEnv();
+
   const nowValue = Date.parse("2026-07-14T12:00:00.000Z");
   const now = () => new Date(nowValue);
   const { db } = createThrottleMock(now);
@@ -363,6 +421,7 @@ async function testInactiveUserDoesNotChangeState(): Promise<void> {
 }
 
 async function testParallelFailuresDoNotLoseCounter(): Promise<void> {
+  // Этот mock сериализует транзакции через txChain — проверяет update-race, не initial-create race.
   const nowValue = Date.parse("2026-07-14T12:00:00.000Z");
   const now = () => new Date(nowValue);
 
@@ -461,6 +520,7 @@ function testNoSensitiveLogging(): void {
     "src/lib/security/login-throttle/credentials-login.ts",
     "src/lib/security/login-throttle/store.ts",
     "src/lib/security/login-throttle/hash-key.ts",
+    "src/lib/security/login-throttle/hmac-secret.ts",
     "src/auth.ts",
   ];
 
@@ -854,11 +914,426 @@ function testTrustedProxyNotEnabledByPresenceAlone(): void {
   }
 }
 
+function createParallelCreateRaceMock(now: () => Date) {
+  const entries = new Map<string, LoginThrottleRow>();
+  let observedParallelFindUnique = false;
+  let inFlightFindUnique = 0;
+  const keyLocks = new Map<string, Promise<void>>();
+
+  const keyOf = (scope: LoginThrottleScope, keyHash: string) => `${scope}:${keyHash}`;
+
+  async function withKeyLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const previous = keyLocks.get(key) ?? Promise.resolve();
+    const run = previous.then(async () => fn());
+    keyLocks.set(
+      key,
+      run.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return run;
+  }
+
+  const db: LoginThrottlePrisma = {
+    loginThrottleEntry: {
+      async findUnique(args) {
+        inFlightFindUnique += 1;
+        if (inFlightFindUnique > 1) {
+          observedParallelFindUnique = true;
+        }
+        await Promise.resolve();
+        const key = keyOf(args.where.scope_keyHash.scope, args.where.scope_keyHash.keyHash);
+        const pending = keyLocks.get(key);
+        if (pending) {
+          await pending;
+        }
+        const result = entries.get(key) ?? null;
+        inFlightFindUnique -= 1;
+        return result;
+      },
+      async create(args) {
+        const key = keyOf(args.data.scope, args.data.keyHash);
+        if (entries.has(key)) {
+          throw makeLoginThrottleP2002Error();
+        }
+        await Promise.resolve();
+        await Promise.resolve();
+        if (entries.has(key)) {
+          throw makeLoginThrottleP2002Error();
+        }
+        return withKeyLock(key, async () => {
+          if (entries.has(key)) {
+            throw makeLoginThrottleP2002Error();
+          }
+          const row: LoginThrottleRow = {
+            id: `row-${entries.size + 1}`,
+            scope: args.data.scope,
+            keyHash: args.data.keyHash,
+            failedCount: args.data.failedCount,
+            windowStartedAt: args.data.windowStartedAt,
+            blockedUntil: args.data.blockedUntil,
+          };
+          entries.set(key, row);
+          return row;
+        });
+      },
+      async update(args) {
+        const row = [...entries.values()].find((entry) => entry.id === args.where.id);
+        if (!row) {
+          throw new Error("row not found");
+        }
+        const lockKey = keyOf(row.scope, row.keyHash);
+        return withKeyLock(lockKey, async () => {
+          const current = entries.get(lockKey);
+          if (!current) {
+            throw new Error("row not found");
+          }
+          if (
+            args.data.failedCount != null &&
+            args.data.windowStartedAt === undefined &&
+            args.data.failedCount <= current.failedCount
+          ) {
+            throw makeSerializationP2034Error();
+          }
+          const updated: LoginThrottleRow = {
+            ...current,
+            failedCount: args.data.failedCount ?? current.failedCount,
+            windowStartedAt: args.data.windowStartedAt ?? current.windowStartedAt,
+            blockedUntil:
+              args.data.blockedUntil === undefined ? current.blockedUntil : args.data.blockedUntil,
+          };
+          entries.set(lockKey, updated);
+          return updated;
+        });
+      },
+      async deleteMany() {
+        return { count: 0 };
+      },
+    },
+    async $transaction(fn) {
+      return fn(db);
+    },
+  };
+
+  return {
+    db,
+    entries,
+    now,
+    observedParallelFindUnique: () => observedParallelFindUnique,
+  };
+}
+
+function testStrictHmacSecretPolicy(): void {
+  const envSnapshot = snapshotEnv();
+  try {
+    delete process.env.AUTH_SECRET;
+    delete process.env.NEXTAUTH_SECRET;
+    process.env.APP_ENV = "staging";
+    process.env.NODE_ENV = "production";
+
+    assert.throws(() => resolveLoginThrottleHmacSecret(), LoginThrottleUnavailableError);
+    assert.throws(
+      () => buildAccountLoginThrottleKeyHash("user@studio.ru"),
+      LoginThrottleUnavailableError,
+    );
+
+    process.env.AUTH_SECRET = "short";
+    assert.throws(() => resolveLoginThrottleHmacSecret(), LoginThrottleUnavailableError);
+
+    process.env.APP_ENV = "production";
+    delete process.env.AUTH_SECRET;
+    assert.throws(() => resolveLoginThrottleHmacSecret(), LoginThrottleUnavailableError);
+
+    process.env.NODE_ENV = "development";
+    delete process.env.APP_ENV;
+    const devSecret = resolveLoginThrottleHmacSecret();
+    assert.equal(devSecret, "dev-login-throttle-hmac-local-only");
+
+    process.env.AUTH_SECRET = "test-auth-secret-32-characters-minimum";
+    const stable = hashLoginThrottleIdentity(["login-account", "user@studio.ru"]);
+    assert.equal(stable.length, 64);
+    assert.equal(stable, hashLoginThrottleIdentity(["login-account", "user@studio.ru"]));
+
+    process.env.AUTH_SECRET = "another-valid-secret-32-characters";
+    const other = hashLoginThrottleIdentity(["login-account", "user@studio.ru"]);
+    assert.notEqual(other, stable);
+
+    assert.doesNotMatch(stable, /user@studio\.ru/);
+    const ipHash = hashLoginThrottleIdentity(["login-ip", "203.0.113.10"]);
+    assert.doesNotMatch(ipHash, /203\.0\.113\.10/);
+  } finally {
+    restoreEnv(envSnapshot);
+    process.env.AUTH_SECRET = "test-auth-secret-32-characters-minimum";
+    delete process.env.APP_ENV;
+    process.env.NODE_ENV = "test";
+  }
+
+  const hmacSource = readSource("src/lib/security/login-throttle/hmac-secret.ts");
+  assert.doesNotMatch(hmacSource, /production-rate-limit-fallback/);
+  assert.match(hmacSource, /DEV_LOCAL_HMAC_FALLBACK/);
+  assert.match(hmacSource, /isStrictLoginThrottleRuntime/);
+  assert.match(hmacSource, /LoginThrottleUnavailableError/);
+}
+
+async function testLoginFailClosedWithoutStrictHmacSecret(): Promise<void> {
+  const envSnapshot = snapshotEnv();
+  const now = () => new Date("2026-07-14T12:00:00.000Z");
+  const { db } = createThrottleMock(now);
+
+  const user: UserRow = {
+    id: "hmac-user",
+    email: "hmac@studio.ru",
+    name: "Hmac",
+    role: "OWNER",
+    isActive: true,
+    passwordHash: REAL_HASH,
+  };
+
+  const client = createCredentialsMock({ user, throttleDb: db, now });
+  const logs: string[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => {
+    logs.push(args.map(String).join(" "));
+  };
+
+  try {
+    delete process.env.AUTH_SECRET;
+    delete process.env.NEXTAUTH_SECRET;
+    process.env.APP_ENV = "staging";
+    process.env.NODE_ENV = "production";
+
+    const wrong = await client.login(user.email, TEST_PASSWORD);
+    const correct = await client.login(user.email, VALID_PASSWORD);
+
+    assert.equal(wrong, null);
+    assert.equal(correct, null);
+    assert.match(logs.join("\n"), /identity protection unavailable/);
+    assert.doesNotMatch(logs.join("\n"), /AUTH_SECRET|NEXTAUTH_SECRET|short|staging/i);
+  } finally {
+    console.error = originalError;
+    restoreEnv(envSnapshot);
+    ensureTestHmacEnv();
+  }
+}
+
+function testDevFallbackCannotApplyInStrictRuntime(): void {
+  const envSnapshot = snapshotEnv();
+  try {
+    delete process.env.AUTH_SECRET;
+    delete process.env.NEXTAUTH_SECRET;
+    process.env.APP_ENV = "staging";
+    process.env.NODE_ENV = "development";
+
+    assert.equal(isStrictLoginThrottleRuntime(), true);
+    assert.throws(() => resolveLoginThrottleHmacSecret(), LoginThrottleUnavailableError);
+  } finally {
+    restoreEnv(envSnapshot);
+  }
+}
+
+async function testInitialCreateRaceRetriesP2002(): Promise<void> {
+  const now = () => new Date("2026-07-14T12:00:00.000Z");
+  const { db, entries, observedParallelFindUnique } = createParallelCreateRaceMock(now);
+  const keyHash = buildAccountLoginThrottleKeyHash("create-race@studio.ru");
+  const config = defaultAccountThrottleConfig(keyHash);
+
+  await Promise.all([
+    recordLoginThrottleFailure(db, config, now()),
+    recordLoginThrottleFailure(db, config, now()),
+  ]);
+
+  assert.equal(
+    observedParallelFindUnique(),
+    true,
+    "create-race mock должен фиксировать параллельные findUnique",
+  );
+  const row = entries.get(`ACCOUNT:${keyHash}`);
+  assert.ok(row);
+  assert.equal(row?.failedCount, 2, "P2002 retry должен учесть обе первые ошибки");
+}
+
+async function testFourConcurrentInitialFailures(): Promise<void> {
+  const now = () => new Date("2026-07-14T12:00:00.000Z");
+  const { db, entries, observedParallelFindUnique } = createParallelCreateRaceMock(now);
+  const keyHash = buildAccountLoginThrottleKeyHash("four-race@studio.ru");
+  const config = defaultAccountThrottleConfig(keyHash);
+
+  const results = await Promise.allSettled(
+    Array.from({ length: 4 }, () => recordLoginThrottleFailure(db, config, now())),
+  );
+
+  assert.equal(
+    results.filter((result) => result.status === "rejected").length,
+    0,
+    "все четыре параллельные ошибки должны быть учтены или retried",
+  );
+  assert.equal(
+    observedParallelFindUnique(),
+    true,
+    "четыре параллельных первых ошибки должны пересечься на findUnique",
+  );
+  assert.equal(entries.get(`ACCOUNT:${keyHash}`)?.failedCount, 4);
+}
+
+async function testConcurrentFifthAttemptSetsBlock(): Promise<void> {
+  const now = () => new Date("2026-07-14T12:00:00.000Z");
+  const { db, entries } = createParallelCreateRaceMock(now);
+  const keyHash = buildAccountLoginThrottleKeyHash("fifth-race@studio.ru");
+  const config = defaultAccountThrottleConfig(keyHash);
+
+  await Promise.all(
+    Array.from({ length: 4 }, () => recordLoginThrottleFailure(db, config, now())),
+  );
+
+  await Promise.all([
+    recordLoginThrottleFailure(db, config, now()),
+    recordLoginThrottleFailure(db, config, now()),
+  ]);
+
+  const row = entries.get(`ACCOUNT:${keyHash}`);
+  assert.ok(row);
+  assert.ok(row!.failedCount >= LOGIN_ACCOUNT_MAX_FAILURES);
+  assert.ok(row!.blockedUntil != null);
+  assert.equal(isLoginThrottleEntryBlocked(row, config, now()), true);
+}
+
+async function testP2002RetryExhaustionFailClosed(): Promise<void> {
+  const now = () => new Date("2026-07-14T12:00:00.000Z");
+  let attempts = 0;
+
+  const db: LoginThrottlePrisma = {
+    loginThrottleEntry: {
+      async findUnique() {
+        return null;
+      },
+      async create() {
+        attempts += 1;
+        throw makeLoginThrottleP2002Error();
+      },
+      async update() {
+        throw new Error("should not update");
+      },
+      async deleteMany() {
+        return { count: 0 };
+      },
+    },
+    async $transaction(fn) {
+      return fn(db);
+    },
+  };
+
+  const user: UserRow = {
+    id: "p2002-user",
+    email: "p2002@studio.ru",
+    name: "P2002",
+    role: "OWNER",
+    isActive: true,
+    passwordHash: REAL_HASH,
+  };
+
+  const client = createCredentialsMock({ user, throttleDb: db, now });
+  const result = await client.login(user.email, TEST_PASSWORD);
+  assert.equal(result, null);
+  assert.equal(attempts, 3, "должно быть 3 retry при P2002");
+}
+
+async function testP2034StillRetried(): Promise<void> {
+  const now = () => new Date("2026-07-14T12:00:00.000Z");
+  let attempts = 0;
+  const entries = new Map<string, LoginThrottleRow>();
+
+  const db: LoginThrottlePrisma = {
+    loginThrottleEntry: {
+      async findUnique() {
+        return null;
+      },
+      async create(args) {
+        entries.set("ACCOUNT:hash", {
+          id: "row-1",
+          scope: args.data.scope,
+          keyHash: args.data.keyHash,
+          failedCount: 1,
+          windowStartedAt: args.data.windowStartedAt,
+          blockedUntil: null,
+        });
+        return entries.get("ACCOUNT:hash")!;
+      },
+      async update() {
+        throw new Error("should not update");
+      },
+      async deleteMany() {
+        return { count: 0 };
+      },
+    },
+    async $transaction(fn) {
+      attempts += 1;
+      if (attempts < 2) {
+        throw makeSerializationP2034Error();
+      }
+      return fn(db);
+    },
+  };
+
+  const keyHash = buildAccountLoginThrottleKeyHash("p2034@studio.ru");
+  const config = defaultAccountThrottleConfig(keyHash);
+  await recordLoginThrottleFailure(db, config, now());
+  assert.equal(attempts, 2);
+  assert.equal(entries.size, 1);
+}
+
+async function testUnknownPrismaErrorNotRetried(): Promise<void> {
+  const now = () => new Date("2026-07-14T12:00:00.000Z");
+  let attempts = 0;
+
+  const db: LoginThrottlePrisma = {
+    loginThrottleEntry: {
+      async findUnique() {
+        return null;
+      },
+      async create() {
+        throw new Error("unknown db error");
+      },
+      async update() {
+        throw new Error("unknown db error");
+      },
+      async deleteMany() {
+        return { count: 0 };
+      },
+    },
+    async $transaction(fn) {
+      attempts += 1;
+      return fn(db);
+    },
+  };
+
+  const keyHash = buildAccountLoginThrottleKeyHash("unknown@studio.ru");
+  const config = defaultAccountThrottleConfig(keyHash);
+
+  await assert.rejects(
+    () => recordLoginThrottleFailure(db, config, now()),
+    /unknown db error/,
+  );
+  assert.equal(attempts, 1, "неизвестная ошибка не должна повторяться");
+}
+
+function testBcryptCostMatchesPasswordReset(): void {
+  const resetService = readSource("src/services/PasswordResetService.ts");
+  assert.match(resetService, /BCRYPT_COST\s*=\s*10/);
+  assert.match(readSource("src/lib/security/login-throttle/dummy-bcrypt.ts"), /\$2[aby]\$10\$/);
+}
+
 async function main(): Promise<void> {
   process.env.AUTH_SECRET = "test-auth-secret-32-characters-minimum";
+  delete process.env.APP_ENV;
+  delete process.env.NEXT_PHASE;
+  process.env.NODE_ENV = "test";
   resetLoginThrottleCleanupClockForTests();
 
   testEmailNormalizationAndHmac();
+  testStrictHmacSecretPolicy();
+  await testLoginFailClosedWithoutStrictHmacSecret();
+  testDevFallbackCannotApplyInStrictRuntime();
   testPasswordNeverStored();
   await testAccountThrottleBlocksAfterFiveFailures();
   await testThrottleExpiresAfterBlock();
@@ -869,6 +1344,12 @@ async function main(): Promise<void> {
   testNeutralLoginErrorOnPage();
   await testInactiveUserDoesNotChangeState();
   await testParallelFailuresDoNotLoseCounter();
+  await testInitialCreateRaceRetriesP2002();
+  await testFourConcurrentInitialFailures();
+  await testConcurrentFifthAttemptSetsBlock();
+  await testP2002RetryExhaustionFailClosed();
+  await testP2034StillRetried();
+  await testUnknownPrismaErrorNotRetried();
   await testBoundaryIsAtomic();
   testNoSensitiveLogging();
   testTrustedProxyPolicy();
@@ -886,6 +1367,7 @@ async function main(): Promise<void> {
   testPrismaModelPresent();
   testNoInMemoryLoginLimiterPath();
   testTrustedProxyNotEnabledByPresenceAlone();
+  testBcryptCostMatchesPasswordReset();
 
   console.log("security-login-throttle-check: OK");
 }

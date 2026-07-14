@@ -13,6 +13,13 @@ export {
 } from "./credentials-login";
 export { LOGIN_DUMMY_BCRYPT_HASH } from "./dummy-bcrypt";
 export {
+  hashLoginThrottleIdentity,
+  isStrictLoginThrottleRuntime,
+  LoginThrottleUnavailableError,
+  LOGIN_THROTTLE_HMAC_MIN_SECRET_LENGTH,
+  resolveLoginThrottleHmacSecret,
+} from "./hmac-secret";
+export {
   buildAccountLoginThrottleKeyHash,
   buildIpLoginThrottleKeyHash,
   normalizeLoginEmail,
