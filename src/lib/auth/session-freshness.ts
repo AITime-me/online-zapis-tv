@@ -10,6 +10,9 @@
  *   - пользователь неактивен;
  *   - JWT выдан раньше passwordChangedAt.
  *
+ * Актуальная роль всегда берётся из БД (не из JWT): смена роли применяется
+ * немедленно к старой сессии на уровне Node-guard (страницы и API).
+ *
  * Отказоустойчивость: любая ошибка (в т.ч. БД) → безопасный отказ (null),
  * а не разрешение доступа. В лог попадает только обобщённое сообщение —
  * без userId, email, JWT, cookie и секретов.
@@ -42,6 +45,7 @@ type SessionInput =
 
 type FreshnessUserState = {
   isActive: boolean;
+  role: UserRole;
   passwordChangedAt: Date | null;
 };
 
@@ -49,7 +53,7 @@ export type FreshnessPrisma = {
   user: {
     findUnique(args: {
       where: { id: string };
-      select: { isActive: true; passwordChangedAt: true };
+      select: { isActive: true; role: true; passwordChangedAt: true };
     }): Promise<FreshnessUserState | null>;
   };
 };
@@ -89,6 +93,8 @@ export async function verifySessionFreshness(
   db?: FreshnessPrisma,
 ): Promise<FreshSessionUser | null> {
   const user = session?.user;
+  // role в JWT используется только как маркер «сессия выглядит внутренней»;
+  // фактические полномочия определяются ролью из БД ниже.
   if (!user?.id || !user.role) {
     return null;
   }
@@ -99,7 +105,7 @@ export async function verifySessionFreshness(
 
     const state = await client.user.findUnique({
       where: { id: user.id },
-      select: { isActive: true, passwordChangedAt: true },
+      select: { isActive: true, role: true, passwordChangedAt: true },
     });
 
     if (!state || !state.isActive) {
@@ -112,7 +118,7 @@ export async function verifySessionFreshness(
 
     return {
       id: user.id,
-      role: user.role,
+      role: state.role,
       email: user.email ?? null,
       name: user.name ?? null,
     };

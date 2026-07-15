@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { requireApiRoles, WRITE_SCHEDULE_ROLES, requireProtectedMutatingApi, requireProtectedInternalMutatingApi } from "@/lib/auth/api-access";
+import {
+  WRITE_SCHEDULE_ROLES,
+  requireProtectedMutatingApi,
+} from "@/lib/auth/api-access";
 import {
   deleteManagerNote,
   ManagerNoteNotFoundError,

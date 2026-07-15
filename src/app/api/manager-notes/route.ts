@@ -1,6 +1,10 @@
 import { ManagerNoteType } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { requireApiRoles, requireInternalApiAuth, WRITE_SCHEDULE_ROLES, requireProtectedMutatingApi, requireProtectedInternalMutatingApi } from "@/lib/auth/api-access";
+import {
+  WRITE_SCHEDULE_ROLES,
+  requireApiRoles,
+  requireProtectedMutatingApi,
+} from "@/lib/auth/api-access";
 import { isValidDateKey } from "@/lib/datetime/date-layer";
 import {
   createManagerNote,
@@ -17,7 +21,8 @@ function parseNoteType(value: string | null): ManagerNoteType | null {
 }
 
 export async function GET(request: Request) {
-  const authResult = await requireInternalApiAuth();
+  // Внутренние заметки — только OWNER/MANAGER (не MASTER).
+  const authResult = await requireApiRoles(WRITE_SCHEDULE_ROLES);
   if ("response" in authResult) {
     return authResult.response;
   }

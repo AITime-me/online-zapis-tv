@@ -256,6 +256,7 @@ export async function updateUserForAdmin(
   if (input.temporaryPassword !== undefined) {
     const password = validatePassword(input.temporaryPassword);
     data.passwordHash = await bcrypt.hash(password, 10);
+    data.passwordChangedAt = new Date();
   }
 
   const updated = await prisma.user.update({

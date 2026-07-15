@@ -7,7 +7,11 @@ import {
   verifySessionFreshness,
 } from "../src/lib/auth/session-freshness";
 
-type UserState = { isActive: boolean; passwordChangedAt: Date | null };
+type UserState = {
+  isActive: boolean;
+  role: UserRole;
+  passwordChangedAt: Date | null;
+};
 
 function createMockDb(state: UserState | null, behavior: "ok" | "throw" = "ok") {
   const calls: unknown[] = [];
@@ -105,30 +109,47 @@ async function testScenarios(): Promise<void> {
 
   // passwordChangedAt = null → действительна
   {
-    const { db, calls } = createMockDb({ isActive: true, passwordChangedAt: null });
+    const { db, calls } = createMockDb({
+      isActive: true,
+      role: OWNER,
+      passwordChangedAt: null,
+    });
     const user = await verifySessionFreshness(session(changedSec), db);
     assert.ok(user, "null passwordChangedAt → сессия действительна");
     assert.equal(user?.id, "user-xyz");
+    assert.equal(user?.role, OWNER);
     assert.equal(calls.length, 1);
   }
 
   // выдан после смены → действительна
   {
-    const { db } = createMockDb({ isActive: true, passwordChangedAt: changed });
+    const { db } = createMockDb({
+      isActive: true,
+      role: OWNER,
+      passwordChangedAt: changed,
+    });
     const user = await verifySessionFreshness(session(changedSec + 100), db);
     assert.ok(user, "JWT после passwordChangedAt → действителен");
   }
 
   // выдан до смены → отклонён
   {
-    const { db } = createMockDb({ isActive: true, passwordChangedAt: changed });
+    const { db } = createMockDb({
+      isActive: true,
+      role: OWNER,
+      passwordChangedAt: changed,
+    });
     const user = await verifySessionFreshness(session(changedSec - 100), db);
     assert.equal(user, null, "JWT до passwordChangedAt → отклонён");
   }
 
   // неактивный пользователь → отклонён
   {
-    const { db } = createMockDb({ isActive: false, passwordChangedAt: null });
+    const { db } = createMockDb({
+      isActive: false,
+      role: OWNER,
+      passwordChangedAt: null,
+    });
     const user = await verifySessionFreshness(session(changedSec), db);
     assert.equal(user, null, "неактивный пользователь → отклонён");
   }
@@ -140,9 +161,25 @@ async function testScenarios(): Promise<void> {
     assert.equal(user, null, "отсутствующий пользователь → отклонён");
   }
 
+  // роль из БД перекрывает устаревшую роль в JWT
+  {
+    const { db } = createMockDb({
+      isActive: true,
+      role: "MANAGER",
+      passwordChangedAt: null,
+    });
+    const user = await verifySessionFreshness(session(changedSec), db);
+    assert.ok(user, "сессия действительна после смены роли");
+    assert.equal(user?.role, "MANAGER", "роль берётся из БД, не из JWT");
+  }
+
   // публичный/аноним → БД не трогается
   {
-    const { db, calls } = createMockDb({ isActive: true, passwordChangedAt: null });
+    const { db, calls } = createMockDb({
+      isActive: true,
+      role: OWNER,
+      passwordChangedAt: null,
+    });
     const user = await verifySessionFreshness(null, db);
     assert.equal(user, null, "нет сессии → null");
     assert.equal(calls.length, 0, "публичный путь не обращается к БД");
@@ -151,7 +188,10 @@ async function testScenarios(): Promise<void> {
 
 // --- ошибка БД → безопасный отказ, без PII в логах ---
 async function testDbErrorFailsClosed(): Promise<void> {
-  const { db, calls } = createMockDb({ isActive: true, passwordChangedAt: null }, "throw");
+  const { db, calls } = createMockDb(
+    { isActive: true, role: OWNER, passwordChangedAt: null },
+    "throw",
+  );
   const originalError = console.error;
   const logged: string[] = [];
   console.error = (...args: unknown[]) => {

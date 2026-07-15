@@ -21,6 +21,7 @@ import { listActiveBookingRequestsForRange } from "@/services/BookingRequestServ
 import {
   resolveAppointmentVisibility,
   resolveBookingRequestVisibility,
+  resolveIncludeOperationalNotes,
   SCHEDULE_LOAD_INTERNAL,
   type ScheduleLoadOptions,
 } from "@/lib/schedule/schedule-load-options";
@@ -77,6 +78,7 @@ export async function getScheduleMonthData(
   const { days, monthStart, monthEnd } =
     getStudioMonthRangeFromMonthKey(normalizedMonthKey);
   const includeManagerColumn = options.includeManagerColumn ?? true;
+  const includeOperationalNotes = resolveIncludeOperationalNotes(options);
   const bookingRequestVisibility = resolveBookingRequestVisibility(options);
   const appointmentVisibility = resolveAppointmentVisibility(options);
   const stripBlockInternalReason = options.stripBlockInternalReason ?? false;
@@ -94,7 +96,7 @@ export async function getScheduleMonthData(
           publicName: true,
         },
       }),
-      includeManagerColumn
+      includeOperationalNotes
         ? prisma.managerNote.findMany({
             where: {
               noteDate: {
@@ -104,16 +106,7 @@ export async function getScheduleMonthData(
             },
             orderBy: [{ noteDate: "asc" }, { createdAt: "asc" }],
           })
-        : prisma.managerNote.findMany({
-            where: {
-              noteDate: {
-                gte: monthStart,
-                lte: monthEnd,
-              },
-              noteType: ManagerNoteType.OWNER,
-            },
-            orderBy: [{ noteDate: "asc" }, { createdAt: "asc" }],
-          }),
+        : Promise.resolve([]),
       prisma.appointment.findMany({
         where: {
           startsAt: { gte: monthStart, lte: monthEnd },

@@ -39,6 +39,7 @@ export const MANAGER_ADMIN_PATH_PREFIXES = [
 export const OWNER_ONLY_ADMIN_PATH_PREFIXES = [
   "/admin/promotions",
   "/admin/game",
+  "/admin/games",
   "/admin/users",
   "/admin/settings",
   "/admin/bot",
