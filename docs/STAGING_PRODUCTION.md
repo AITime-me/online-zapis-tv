@@ -120,12 +120,18 @@ curl http://127.0.0.1:3000/api/health
 
 ### 10. Импортировать реальный каталог услуг
 
-Отдельно, после подтверждения данных:
+Отдельно, после создания пяти канонических мастеров и backup staging.
+Полный runbook: [`docs/operations/staging-catalog-import.md`](./operations/staging-catalog-import.md).
+
+Кратко (локально / ops-контейнер, `APP_ENV=staging`):
 
 ```bash
-npm run import:services          # dry-run
-npm run import:services:apply      # запись в БД
+npm run import:services
+# запись только staging + явное подтверждение:
+npm run import:services -- --apply --confirm-staging
 ```
+
+Production apply запрещён. Seed каталог не наполняет.
 
 ## Docker-образ
 
