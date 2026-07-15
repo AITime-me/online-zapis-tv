@@ -454,6 +454,14 @@ export async function updateAppointment(
     throw new AppointmentValidationError("Запись не найдена");
   }
 
+  // Защита от гонки: отложенный PATCH после мягкой отмены не должен
+  // восстанавливать CANCELLED запись в активный статус.
+  if (existing.status === "CANCELLED") {
+    throw new AppointmentValidationError(
+      "Запись уже отменена и не может быть изменена",
+    );
+  }
+
   const merged: AppointmentWriteInput = {
     masterId: input.masterId ?? existing.masterId,
     dateKey: input.dateKey ?? formatDateKeyInStudio(existing.startsAt),
@@ -515,6 +523,19 @@ export async function updateAppointment(
 }
 
 export async function cancelAppointment(id: string): Promise<AppointmentDto> {
+  const existing = await prisma.appointment.findUnique({
+    where: { id },
+    include: { service: true },
+  });
+
+  if (!existing) {
+    throw new AppointmentValidationError("Запись не найдена");
+  }
+
+  if (existing.status === "CANCELLED") {
+    return mapAppointment(existing);
+  }
+
   const appointment = await prisma.appointment.update({
     where: { id },
     data: {

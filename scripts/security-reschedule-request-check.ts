@@ -17,7 +17,9 @@ import {
   type FullScheduleBookingRequestDto,
 } from "../src/lib/schedule/booking-request-schedule";
 import {
+  HIDDEN_FROM_ACTIVE_SCHEDULE_STATUSES,
   isBlockingAppointmentStatus,
+  isHiddenFromActiveSchedule,
   NON_BLOCKING_APPOINTMENT_STATUSES,
 } from "../src/lib/schedule/non-blocking-appointment-statuses";
 import {
@@ -43,6 +45,10 @@ function assertRescheduledFreesSlot(): void {
   assert.equal(isBlockingAppointmentStatus("SCHEDULED"), true);
   assert.equal(isBlockingAppointmentStatus("CONFIRMED"), true);
   assert.equal(isBlockingAppointmentStatus("CANCELLED"), false);
+  // RESCHEDULED освобождает слот, но остаётся видимым в активной сетке.
+  assert.equal(isHiddenFromActiveSchedule("RESCHEDULED"), false);
+  assert.equal(isHiddenFromActiveSchedule("CANCELLED"), true);
+  assert.ok(!HIDDEN_FROM_ACTIVE_SCHEDULE_STATUSES.includes("RESCHEDULED"));
 }
 
 function assertLabels(): void {

@@ -12,6 +12,7 @@ import {
   SCHEDULE_LOAD_INTERNAL,
   type ScheduleLoadOptions,
 } from "@/lib/schedule/schedule-load-options";
+import { activeScheduleAppointmentWhere } from "@/lib/schedule/non-blocking-appointment-statuses";
 
 export async function getScheduleDayData(
   dateKey: string,
@@ -34,6 +35,7 @@ export async function getScheduleDayData(
         appointments: {
           where: {
             startsAt: { gte: dayStart, lte: dayEnd },
+            ...activeScheduleAppointmentWhere(),
           },
           include: { service: true },
           orderBy: { startsAt: "asc" },

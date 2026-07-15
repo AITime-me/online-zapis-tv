@@ -25,6 +25,7 @@ import {
   SCHEDULE_LOAD_INTERNAL,
   type ScheduleLoadOptions,
 } from "@/lib/schedule/schedule-load-options";
+import { activeScheduleAppointmentWhere } from "@/lib/schedule/non-blocking-appointment-statuses";
 
 function mapAppointment(
   appointment: Awaited<
@@ -110,6 +111,7 @@ export async function getScheduleMonthData(
       prisma.appointment.findMany({
         where: {
           startsAt: { gte: monthStart, lte: monthEnd },
+          ...activeScheduleAppointmentWhere(),
         },
         include: { service: true },
         orderBy: { startsAt: "asc" },

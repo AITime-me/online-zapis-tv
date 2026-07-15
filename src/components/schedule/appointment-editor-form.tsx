@@ -154,9 +154,22 @@ export function AppointmentEditorForm({
     toFormState(appointment),
   );
   const [error, setError] = useState<string | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isCancellingRef = useRef(false);
+  const cancelledRef = useRef(false);
+  const saveAbortRef = useRef<AbortController | null>(null);
   const formRef = useRef(form);
   formRef.current = form;
+
+  const clearPendingSave = useCallback(() => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+    saveAbortRef.current?.abort();
+    saveAbortRef.current = null;
+  }, []);
 
   const serviceOptions = useMemo(
     () => buildServiceOptions(options.services, appointment, dateKey),
@@ -169,6 +182,12 @@ export function AppointmentEditorForm({
   useEffect(() => {
     setForm(toFormState(appointment));
   }, [appointment]);
+
+  useEffect(() => {
+    return () => {
+      clearPendingSave();
+    };
+  }, [clearPendingSave]);
 
   const selectedService = serviceOptions.find(
     (service) => service.id === form.serviceId,
@@ -185,9 +204,13 @@ export function AppointmentEditorForm({
     actualMinutes < selectedService.durationMinutes;
 
   const save = useCallback(async () => {
-    if (!canEdit) {
+    if (!canEdit || isCancellingRef.current || cancelledRef.current) {
       return;
     }
+
+    clearPendingSave();
+    const abortController = new AbortController();
+    saveAbortRef.current = abortController;
 
     onSaveStatus("saving");
     setError(null);
@@ -196,6 +219,7 @@ export function AppointmentEditorForm({
       const response = await fetch(`/api/appointments/${appointment.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
+        signal: abortController.signal,
         body: JSON.stringify({
           masterId,
           dateKey,
@@ -212,23 +236,49 @@ export function AppointmentEditorForm({
         }),
       });
 
+      if (
+        abortController.signal.aborted ||
+        isCancellingRef.current ||
+        cancelledRef.current
+      ) {
+        return;
+      }
+
       const payload = await response.json();
       if (!response.ok) {
         throw new Error(payload.error ?? "Ошибка сохранения");
+      }
+
+      if (isCancellingRef.current || cancelledRef.current) {
+        return;
       }
 
       onSaveStatus("saved");
       clientDebugLog("schedule.appointment.saved", { action: "patch" });
       await onSaved();
     } catch (saveError) {
+      if (
+        abortController.signal.aborted ||
+        isCancellingRef.current ||
+        cancelledRef.current ||
+        (saveError instanceof DOMException && saveError.name === "AbortError") ||
+        (saveError instanceof Error && saveError.name === "AbortError")
+      ) {
+        return;
+      }
       const message =
         saveError instanceof Error ? saveError.message : "Ошибка сохранения";
       setError(message);
       onSaveStatus("error", message);
+    } finally {
+      if (saveAbortRef.current === abortController) {
+        saveAbortRef.current = null;
+      }
     }
   }, [
     appointment.id,
     canEdit,
+    clearPendingSave,
     dateKey,
     masterId,
     onSaved,
@@ -236,13 +286,20 @@ export function AppointmentEditorForm({
   ]);
 
   const scheduleSave = useCallback(() => {
+    if (!canEdit || isCancellingRef.current || cancelledRef.current) {
+      return;
+    }
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
     }
     debounceRef.current = setTimeout(() => {
+      debounceRef.current = null;
+      if (isCancellingRef.current || cancelledRef.current) {
+        return;
+      }
       void save();
     }, 500);
-  }, [save]);
+  }, [canEdit, save]);
 
   const applyServiceTiming = (
     state: AppointmentFormState,
@@ -266,6 +323,10 @@ export function AppointmentEditorForm({
     key: K,
     value: AppointmentFormState[K],
   ) => {
+    if (isCancellingRef.current || cancelledRef.current) {
+      return;
+    }
+
     setForm((current) => {
       let next = { ...current, [key]: value };
 
@@ -289,17 +350,29 @@ export function AppointmentEditorForm({
   };
 
   const handleBlur = () => {
+    if (isCancellingRef.current || cancelledRef.current) {
+      return;
+    }
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
+      debounceRef.current = null;
     }
     void save();
   };
 
   const handleCancel = async () => {
-    if (!canEdit || !confirm("Отменить запись?")) {
+    if (
+      !canEdit ||
+      isCancellingRef.current ||
+      cancelledRef.current ||
+      !confirm("Отменить запись?")
+    ) {
       return;
     }
 
+    isCancellingRef.current = true;
+    setIsCancelling(true);
+    clearPendingSave();
     onSaveStatus("saving");
     setError(null);
 
@@ -311,9 +384,12 @@ export function AppointmentEditorForm({
       if (!response.ok) {
         throw new Error(payload.error ?? "Ошибка отмены");
       }
+      cancelledRef.current = true;
       onSaveStatus("saved");
       await onCancelled();
     } catch (cancelError) {
+      isCancellingRef.current = false;
+      setIsCancelling(false);
       const message =
         cancelError instanceof Error ? cancelError.message : "Ошибка отмены";
       setError(message);
@@ -560,9 +636,10 @@ export function AppointmentEditorForm({
       <button
         type="button"
         onClick={() => void handleCancel()}
-        className="mt-2 text-[10px] text-red-600 hover:underline"
+        disabled={isCancelling}
+        className="mt-2 text-[10px] text-red-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
       >
-        Отменить запись
+        {isCancelling ? "Отмена…" : "Отменить запись"}
       </button>
     </article>
   );

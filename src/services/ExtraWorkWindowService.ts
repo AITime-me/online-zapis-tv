@@ -1,4 +1,4 @@
-import { NON_BLOCKING_APPOINTMENT_STATUSES } from "@/lib/schedule/non-blocking-appointment-statuses";
+import { activeScheduleAppointmentWhere } from "@/lib/schedule/non-blocking-appointment-statuses";
 import { mapScheduleDayAppointmentOperational } from "@/lib/schedule/map-schedule-appointment";
 import { prisma } from "@/lib/db";
 import {
@@ -94,7 +94,7 @@ export async function getCellEditorData(
       where: {
         masterId,
         startsAt: { gte: dayStart, lte: dayEnd },
-        status: { notIn: [...NON_BLOCKING_APPOINTMENT_STATUSES] },
+        ...activeScheduleAppointmentWhere(),
       },
       include: { service: true },
       orderBy: { startsAt: "asc" },
