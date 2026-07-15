@@ -617,7 +617,7 @@ function testStaticGuarantees(): void {
   assert.doesNotMatch(core + cli, /console\.(log|error|info).*DATABASE_URL/);
   void createPrismaCatalogImportRepository;
 
-  assert.ok(IMPORT_SERVICES.length >= 1);
+  assert.equal(IMPORT_SERVICES.length, 101);
   assert.equal(detectImportDuplicates(IMPORT_SERVICES).length, 0);
 }
 
