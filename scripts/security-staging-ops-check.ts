@@ -689,6 +689,237 @@ function assertRollbackRestoreSkipClassifier(): void {
   }
 }
 
+function assertOptionalImageLookupBehavior(): void {
+  const bash = resolveBashExecutable();
+  const commonPath = OPS_COMMON_SH.replace(/\\/g, "/");
+
+  const missing = spawnSync(
+    bash,
+    [
+      "-c",
+      `
+      set -Eeuo pipefail
+      source ${JSON.stringify(commonPath)}
+      INSPECT_EXISTS=0
+      docker() {
+        if [[ "$1" != "image" || "$2" != "inspect" ]]; then
+          return 0
+        fi
+        if [[ "$INSPECT_EXISTS" == "0" ]]; then
+          return 1
+        fi
+        if [[ "$*" == *"--format"* ]]; then
+          echo "sha256:${SAMPLE_IMAGE_ID}"
+        fi
+        return 0
+      }
+      result="$(ops_get_image_id_from_ref_optional "missing-ref")"
+      printf 'RESULT=%s\\n' "$result"
+    `,
+    ],
+    { cwd: ROOT, encoding: "utf8" },
+  );
+  assert.equal(missing.status, 0, `missing optional lookup failed: ${missing.stderr}`);
+  assert.match(missing.stdout ?? "", /^RESULT=$/m);
+  assert.doesNotMatch(`${missing.stdout ?? ""}${missing.stderr ?? ""}`, /empty image id/);
+
+  const existing = spawnSync(
+    bash,
+    [
+      "-c",
+      `
+      set -Eeuo pipefail
+      source ${JSON.stringify(commonPath)}
+      INSPECT_EXISTS=1
+      docker() {
+        if [[ "$1" != "image" || "$2" != "inspect" ]]; then
+          return 0
+        fi
+        if [[ "$INSPECT_EXISTS" == "0" ]]; then
+          return 1
+        fi
+        if [[ "$*" == *"--format"* ]]; then
+          echo "sha256:${SAMPLE_IMAGE_ID}"
+        fi
+        return 0
+      }
+      result="$(ops_get_image_id_from_ref_optional "present-ref")"
+      printf 'RESULT=%s\\n' "$result"
+    `,
+    ],
+    { cwd: ROOT, encoding: "utf8" },
+  );
+  assert.equal(existing.status, 0, `existing optional lookup failed: ${existing.stderr}`);
+  assert.match(existing.stdout ?? "", new RegExp(`RESULT=${SAMPLE_IMAGE_ID}`));
+
+  const requiredMissing = spawnSync(
+    bash,
+    [
+      "-c",
+      `
+      set -Eeuo pipefail
+      source ${JSON.stringify(commonPath)}
+      docker() {
+        if [[ "$1" == "image" && "$2" == "inspect" ]]; then
+          return 1
+        fi
+        return 0
+      }
+      set +e
+      ops_get_image_id_from_ref "required-missing" >/dev/null
+      printf '%s' "$?"
+    `,
+    ],
+    { cwd: ROOT, encoding: "utf8" },
+  );
+  assert.notEqual(requiredMissing.stdout?.trim(), "0", "required lookup must fail when image is missing");
+
+  const deploy = readFile("scripts/ops/staging-deploy.sh");
+  assert.match(deploy, /ops_get_image_id_from_ref_optional/);
+  assert.match(deploy, /not present locally until build/);
+}
+
+function assertMigrationResultStatus(): void {
+  const deploy = readFile("scripts/ops/staging-deploy.sh");
+  const migrationsBody = extractFunctionBodies(deploy, "run_migrations") || stripBashComments(deploy);
+
+  assert.match(migrationsBody, /migration_action="up_to_date"/);
+  assert.match(migrationsBody, /migration_action="applied"/);
+  assert.match(migrationsBody, /MIGRATION_STATUS="\$migration_action"/);
+  assert.match(migrationsBody, /OPS_LAST_MIGRATE_CLASSIFICATION" == "pending"/);
+  assert.doesNotMatch(
+    migrationsBody,
+    /MIGRATION_STATUS="applied"\s*\n\s*DEPLOY_STATUS="migrations_applied"/,
+    "applied must not be unconditional final status",
+  );
+  assert.match(migrationsBody, /MIGRATION_STATUS="failed"/);
+  assert.match(migrationsBody, /MIGRATION_STATUS="dry_run_skipped"/);
+  assert.match(deploy, /migration: \$\{MIGRATION_STATUS\}/);
+  assert.match(deploy, /"MIGRATION_STATUS=\$\(ops_escape_manifest_value "\$MIGRATION_STATUS"\)"/);
+}
+
+function runRestoreDbMock(config: {
+  pgRestoreStatus?: number;
+  psqlFail?: boolean;
+}): { status: number | null; log: string[]; hostBackupExists: boolean } {
+  const bash = resolveBashExecutable();
+  const commonPath = OPS_COMMON_SH.replace(/\\/g, "/");
+  const restoreFn = extractFunctionBodies(readFile("scripts/ops/staging-restore-db.sh"), "restore_database_in_container");
+  assert.ok(restoreFn.length > 0, "restore_database_in_container must exist for mock test");
+
+  const pgRestoreStatus = config.pgRestoreStatus ?? 0;
+  const psqlFail = config.psqlFail ? 1 : 0;
+  const script = `
+    set -Eeuo pipefail
+    source ${JSON.stringify(commonPath)}
+    RESTORE_PG_USER=testuser
+    RESTORE_PG_PASSWORD=testpass
+    RESTORE_PG_DB=testdb
+    PSQL_FAIL=${psqlFail}
+    PG_RESTORE_STATUS=${pgRestoreStatus}
+    declare -a DOCKER_LOG=()
+    docker() {
+      DOCKER_LOG+=("$*")
+      if [[ "$1" == "cp" ]]; then
+        return 0
+      fi
+      if [[ "$1" != "exec" ]]; then
+        return 0
+      fi
+      if [[ "$*" == *"pg_restore --exit-on-error"* ]]; then
+        return "$PG_RESTORE_STATUS"
+      fi
+      if [[ "$*" == *" rm -f -- "* ]]; then
+        return 0
+      fi
+      if [[ "$PSQL_FAIL" == "1" && "$*" == *"psql"* ]]; then
+        return 1
+      fi
+      return 0
+    }
+    ${restoreFn}
+    HOST_BACKUP="$(mktemp)"
+    printf 'host-backup' >"$HOST_BACKUP"
+    set +e
+    restore_database_in_container "$HOST_BACKUP"
+    restore_status=$?
+    set +e
+    host_backup_exists=0
+    [[ -f "$HOST_BACKUP" ]] && host_backup_exists=1
+    printf 'RESTORE_STATUS=%s\\n' "$restore_status"
+    printf 'HOST_BACKUP_EXISTS=%s\\n' "$host_backup_exists"
+    for entry in "\${DOCKER_LOG[@]}"; do
+      printf 'DOCKER_LOG=%s\\n' "$entry"
+    done
+    rm -f "$HOST_BACKUP"
+  `;
+  const result = spawnSync(bash, ["-c", script], { cwd: ROOT, encoding: "utf8" });
+  const log: string[] = [];
+  let status: number | null = result.status;
+  let hostBackupExists = false;
+  for (const line of (result.stdout ?? "").split("\n")) {
+    if (line.startsWith("RESTORE_STATUS=")) {
+      status = Number(line.slice("RESTORE_STATUS=".length));
+    } else if (line.startsWith("HOST_BACKUP_EXISTS=")) {
+      hostBackupExists = line.slice("HOST_BACKUP_EXISTS=".length) === "1";
+    } else if (line.startsWith("DOCKER_LOG=")) {
+      log.push(line.slice("DOCKER_LOG=".length));
+    }
+  }
+  return { status, log, hostBackupExists };
+}
+
+function assertRestoreDbCleanupBehavior(): void {
+  const restoreSource = readFile("scripts/ops/staging-restore-db.sh");
+  const restoreFn = extractFunctionBodies(restoreSource, "restore_database_in_container");
+  const restoreMain = extractFunctionBodies(restoreSource, "main") || stripBashComments(restoreSource);
+
+  assert.ok(restoreFn.length > 0);
+  assert.doesNotMatch(restoreFn, /trap\s+cleanup_remote\s+RETURN/);
+  assert.doesNotMatch(restoreFn, /trap\s+\w+\s+RETURN/);
+  assert.match(restoreFn, /ops_restore_remove_remote/);
+  assert.match(restoreFn, /pg_restore --exit-on-error/);
+  assert.doesNotMatch(restoreFn, /pg_restore[^\n]*\|\|\s*true/);
+  assert.match(restoreMain, /if ! restore_database_in_container/);
+  assert.ok(
+    restoreMain.indexOf("ops_compose up -d") > restoreMain.indexOf("restore_database_in_container"),
+    "app must start only after successful restore",
+  );
+
+  const success = runRestoreDbMock({ pgRestoreStatus: 0 });
+  assert.equal(success.status, 0);
+  assert.equal(success.hostBackupExists, true);
+  assert.ok(success.log.some((entry) => entry.includes("rm -f -- /tmp/ops-restore-")));
+  assert.ok(success.log.some((entry) => entry.includes("pg_restore --exit-on-error")));
+
+  const failure = runRestoreDbMock({ pgRestoreStatus: 3 });
+  assert.equal(failure.status, 3);
+  assert.equal(failure.hostBackupExists, true);
+  assert.ok(failure.log.some((entry) => entry.includes("rm -f -- /tmp/ops-restore-")));
+
+  const psqlFailure = runRestoreDbMock({ psqlFail: true });
+  assert.notEqual(psqlFailure.status, 0);
+  assert.ok(psqlFailure.log.some((entry) => entry.includes("rm -f -- /tmp/ops-restore-")));
+
+  const restoreLog = success.log.find((entry) => entry.includes("pg_restore --exit-on-error")) ?? "";
+  const rmLog = success.log.find((entry) => entry.includes("rm -f --")) ?? "";
+  const remotePath = restoreLog.match(/pg_restore --exit-on-error[^\n]* (\S+)$/)?.[1] ?? "";
+  if (remotePath.length > 0) {
+    assert.match(rmLog, new RegExp(`rm -f -- ${remotePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`));
+  }
+}
+
+function assertTrapAudit(): void {
+  for (const rel of OPS_SHELL_FILES) {
+    const source = readFile(rel);
+    assert.doesNotMatch(
+      source,
+      /trap\s+\w+\s+RETURN/,
+      `${rel}: RETURN cleanup traps are forbidden`,
+    );
+  }
+}
+
 function assertMigrationFlowSemantics(): void {
   const common = readFile("scripts/ops/lib/staging-ops-common.sh");
   const commonExecutable = stripBashComments(common);
@@ -740,6 +971,7 @@ function assertCommonHelpers(): void {
   assert.match(common, /ops_classify_prisma_migrate_output/);
   assert.match(common, /classify-migrate-status-cli\.ts/);
   assert.match(common, /STAGING_APP_IMAGE_REF/);
+  assert.match(common, /ops_get_image_id_from_ref_optional/);
   assert.match(common, /STAGING_MIGRATOR_TSX/);
   assert.doesNotMatch(common, /\becho\b[^;\n]*ops_compose[^;\n]*\bconfig\b/);
 }
@@ -747,6 +979,7 @@ function assertCommonHelpers(): void {
 function run(): void {
   assertPrismaMigrateStatusClassifier();
   assertNormalizeImageIdBehavior();
+  assertOptionalImageLookupBehavior();
   assertVerifyPgDumpFileBehavior();
   assertShellBasics();
   assertForbiddenPatterns();
@@ -758,8 +991,11 @@ function run(): void {
   assertClassifierCliReadsStdin();
   assertRollbackRestoreSkipClassifier();
   assertMigrationFlowSemantics();
+  assertMigrationResultStatus();
   assertDryRunSkipsMigratorAndClassifier();
   assertRedeployCurrent();
+  assertRestoreDbCleanupBehavior();
+  assertTrapAudit();
   assertDeployScript();
   assertRollbackScript();
   assertRestoreScript();

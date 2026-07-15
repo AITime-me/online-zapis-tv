@@ -178,7 +178,7 @@ collect_app_image_state() {
     CURRENT_CONTAINER_IMAGE_REF="(image id ${CURRENT_CONTAINER_IMAGE_ID})"
   fi
 
-  COMPOSE_APP_IMAGE_ID="$(ops_get_image_id_from_ref "$STAGING_APP_IMAGE_REF" || true)"
+  COMPOSE_APP_IMAGE_ID="$(ops_get_image_id_from_ref_optional "$STAGING_APP_IMAGE_REF")"
 }
 
 fast_forward_git() {
@@ -281,6 +281,8 @@ build_images() {
 }
 
 run_migrations() {
+  local migration_action=""
+
   if ! ops_container_healthy "$STAGING_POSTGRES_CONTAINER"; then
     ops_die "postgres must be healthy before migrations"
   fi
@@ -305,8 +307,10 @@ run_migrations() {
       persist_state_manifest
       return 1
     fi
+    migration_action="applied"
   else
     ops_info "No pending migrations; skipping migrate deploy"
+    migration_action="up_to_date"
   fi
 
   ops_info "Checking migration status (post-deploy)..."
@@ -317,7 +321,7 @@ run_migrations() {
     return 1
   fi
 
-  MIGRATION_STATUS="applied"
+  MIGRATION_STATUS="$migration_action"
   DEPLOY_STATUS="migrations_applied"
   persist_state_manifest
   return 0

@@ -254,7 +254,23 @@ ops_normalize_image_id() {
 
 ops_get_image_id_from_ref() {
   local ref="$1"
-  docker image inspect --format '{{.Id}}' "$ref" 2>/dev/null | ops_normalize_image_id
+  local raw_id
+
+  raw_id="$(docker image inspect --format '{{.Id}}' "$ref")"
+  ops_normalize_image_id "$raw_id"
+}
+
+# Необязательный lookup: отсутствующий image — пустой stdout и exit 0 без stderr.
+ops_get_image_id_from_ref_optional() {
+  local ref="$1"
+  local raw_id
+
+  if ! docker image inspect "$ref" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  raw_id="$(docker image inspect --format '{{.Id}}' "$ref")"
+  ops_normalize_image_id "$raw_id"
 }
 
 ops_assert_container_image_matches() {

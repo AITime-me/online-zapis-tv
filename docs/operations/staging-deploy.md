@@ -174,6 +174,13 @@ bash scripts/ops/staging-deploy.sh --yes
 5. При `pending` — `migrator migrate deploy`; при connection/failed/diverged/unknown — deploy останавливается.
 6. Повторный `migrate status` + классификация; post-deploy принимает только `up_to_date`.
 
+`MIGRATION_STATUS` в manifest и итоговом summary:
+
+- `up_to_date` — pending migrations не было, `migrate deploy` не запускался;
+- `applied` — были pending migrations и `migrate deploy` успешно выполнен;
+- `dry_run_skipped` — dry-run без миграций;
+- `precheck_failed`, `postcheck_failed`, `failed` — ошибки проверки или deploy migrations.
+
 Запрещено в deploy-скрипте: `migrate reset`, `db push`, `migrate dev`, ручное удаление `_prisma_migrations`.
 
 ### При ошибке migration
@@ -273,7 +280,7 @@ curl http://127.0.0.1:3000/api/health
 | `TARGET_COMMIT_SHA` | Commit после fast-forward |
 | `BACKUP_PATH` | Путь к PostgreSQL dump |
 | `ROLLBACK_IMAGE_TAG` | Docker tag для отката app |
-| `MIGRATION_STATUS` | `applied`, `failed`, … |
+| `MIGRATION_STATUS` | `up_to_date`, `applied`, `dry_run_skipped`, `precheck_failed`, `postcheck_failed`, `failed` |
 | `DEPLOY_STATUS` | `success`, `failed_migration`, `failed_health` |
 | `APP_ROLLBACK_STATUS` | Результат автоматического отката app |
 | `DOCKER_HEALTH_STATUS` / `HTTP_HEALTH_STATUS` | Результаты проверок |

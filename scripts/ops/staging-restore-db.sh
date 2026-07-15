@@ -100,36 +100,64 @@ restore_database_in_container() {
   local backup_path="$1"
   local remote_dump="/tmp/ops-restore-$$.dump"
   local copied=0
+  local status=0
   local quoted_db quoted_user
 
   quoted_db="\"${RESTORE_PG_DB}\""
   quoted_user="\"${RESTORE_PG_USER}\""
 
-  cleanup_remote() {
+  ops_restore_remove_remote() {
     if (( copied )); then
       docker exec "$STAGING_POSTGRES_CONTAINER" rm -f -- "$remote_dump" >/dev/null 2>&1 || true
+      copied=0
     fi
   }
-  trap cleanup_remote RETURN
 
-  docker cp "$backup_path" "${STAGING_POSTGRES_CONTAINER}:${remote_dump}"
+  ops_restore_on_signal() {
+    ops_restore_remove_remote
+    trap - INT TERM
+    exit "$1"
+  }
+
+  trap 'ops_restore_on_signal 130' INT
+  trap 'ops_restore_on_signal 143' TERM
+
+  if ! docker cp "$backup_path" "${STAGING_POSTGRES_CONTAINER}:${remote_dump}"; then
+    trap - INT TERM
+    return 1
+  fi
   copied=1
 
-  docker exec -e PGPASSWORD="$RESTORE_PG_PASSWORD" "$STAGING_POSTGRES_CONTAINER" \
+  if ! docker exec -e PGPASSWORD="$RESTORE_PG_PASSWORD" "$STAGING_POSTGRES_CONTAINER" \
     psql -v ON_ERROR_STOP=1 -U "$RESTORE_PG_USER" -d postgres -c \
-    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${RESTORE_PG_DB}' AND pid <> pg_backend_pid();"
+    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${RESTORE_PG_DB}' AND pid <> pg_backend_pid();"; then
+    ops_restore_remove_remote
+    trap - INT TERM
+    set +e
+    return 1
+  fi
 
-  docker exec -e PGPASSWORD="$RESTORE_PG_PASSWORD" "$STAGING_POSTGRES_CONTAINER" \
+  if ! docker exec -e PGPASSWORD="$RESTORE_PG_PASSWORD" "$STAGING_POSTGRES_CONTAINER" \
     psql -v ON_ERROR_STOP=1 -U "$RESTORE_PG_USER" -d postgres \
     -c "DROP DATABASE IF EXISTS ${quoted_db};" \
-    -c "CREATE DATABASE ${quoted_db} OWNER ${quoted_user};"
+    -c "CREATE DATABASE ${quoted_db} OWNER ${quoted_user};"; then
+    ops_restore_remove_remote
+    trap - INT TERM
+    set +e
+    return 1
+  fi
 
+  set +e
   docker exec -e PGPASSWORD="$RESTORE_PG_PASSWORD" "$STAGING_POSTGRES_CONTAINER" \
     pg_restore --exit-on-error -U "$RESTORE_PG_USER" -d "$RESTORE_PG_DB" "$remote_dump"
+  status=$?
+  set -e
 
-  docker exec "$STAGING_POSTGRES_CONTAINER" rm -f -- "$remote_dump"
-  copied=0
-  trap - RETURN
+  ops_restore_remove_remote
+  trap - INT TERM
+
+  set +e
+  return "$status"
 }
 
 write_restore_manifest() {
