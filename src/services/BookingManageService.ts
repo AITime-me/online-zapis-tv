@@ -49,7 +49,11 @@ function resolvePublicStatus(
   appointment: Appointment,
   now: Date = getStudioNow(),
 ): PublicManageAppointmentStatus {
-  if (appointment.status === "CANCELLED" || appointment.status === "RESCHEDULED") {
+  if (appointment.status === "CANCELLED") {
+    return "cancelled";
+  }
+
+  if (appointment.status === "RESCHEDULED") {
     return "cancelled";
   }
 
@@ -60,7 +64,14 @@ function resolvePublicStatus(
   return "active";
 }
 
-function resolveStatusLabel(status: PublicManageAppointmentStatus): string {
+function resolveStatusLabel(
+  appointment: Appointment,
+  status: PublicManageAppointmentStatus,
+): string {
+  if (appointment.status === "RESCHEDULED") {
+    return "Запрос на перенос отправлен";
+  }
+
   switch (status) {
     case "cancelled":
       return "Запись отменена";
@@ -82,6 +93,10 @@ function resolveConfirmationNote(
   appointment: Appointment,
   publicStatus: PublicManageAppointmentStatus,
 ): string | null {
+  if (appointment.status === "RESCHEDULED") {
+    return "Менеджер студии свяжется с вами по запросу на перенос.";
+  }
+
   if (publicStatus !== "active") {
     return null;
   }
@@ -93,7 +108,7 @@ function resolveConfirmationNote(
   return null;
 }
 
-function canManageActiveAppointment(
+function canCancelAppointment(
   appointment: Appointment,
   publicStatus: PublicManageAppointmentStatus,
 ): boolean {
@@ -104,9 +119,27 @@ function canManageActiveAppointment(
   return appointment.status === "SCHEDULED" || appointment.status === "CONFIRMED";
 }
 
+function canRequestReschedule(
+  appointment: Appointment,
+  now: Date = getStudioNow(),
+): boolean {
+  if (appointment.status === "CANCELLED") {
+    return false;
+  }
+
+  if (appointment.status === "RESCHEDULED") {
+    return true;
+  }
+
+  if (appointment.endsAt < now) {
+    return false;
+  }
+
+  return appointment.status === "SCHEDULED" || appointment.status === "CONFIRMED";
+}
+
 function mapPublicManageView(appointment: AppointmentWithRelations): PublicManageAppointmentView {
   const publicStatus = resolvePublicStatus(appointment);
-  const canManage = canManageActiveAppointment(appointment, publicStatus);
   const durationMinutes =
     appointment.serviceDurationMinutes ??
     appointment.service?.durationMinutes ??
@@ -119,11 +152,11 @@ function mapPublicManageView(appointment: AppointmentWithRelations): PublicManag
     timeLabel: formatStudioTimeInput(appointment.startsAt),
     durationMinutes,
     status: publicStatus,
-    statusLabel: resolveStatusLabel(publicStatus),
+    statusLabel: resolveStatusLabel(appointment, publicStatus),
     sourceLabel: resolveSourceLabel(appointment.source),
     confirmationNote: resolveConfirmationNote(appointment, publicStatus),
-    canCancel: canManage,
-    canRequestReschedule: canManage,
+    canCancel: canCancelAppointment(appointment, publicStatus),
+    canRequestReschedule: canRequestReschedule(appointment),
     rescheduleRequested: Boolean(appointment.rescheduleRequestedAt),
   };
 }
@@ -211,25 +244,67 @@ export async function requestRescheduleByManageToken(
     throw new BookingManageError("Запись не найдена");
   }
 
-  if (appointment.status === "CANCELLED" || appointment.status === "RESCHEDULED") {
+  if (appointment.status === "CANCELLED") {
     throw new BookingManageError("Запись отменена, перенос недоступен");
   }
 
-  const publicStatus = resolvePublicStatus(appointment);
-  if (publicStatus === "completed") {
+  if (!canRequestReschedule(appointment)) {
     throw new BookingManageError("Запись уже прошла, перенос недоступен");
   }
 
-  const updated = await prisma.appointment.update({
-    where: { id: appointment.id },
-    data: {
-      rescheduleRequestText: trimmedMessage,
-      rescheduleRequestedAt: getStudioNow(),
-    },
-    include: {
-      master: { select: { publicName: true } },
-      service: { select: { publicName: true, durationMinutes: true } },
-    },
+  const now = getStudioNow();
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const nextAppointment = await tx.appointment.update({
+      where: { id: appointment.id },
+      data: {
+        status: "RESCHEDULED",
+        rescheduleRequestText: trimmedMessage,
+        rescheduleRequestedAt: now,
+      },
+      include: {
+        master: { select: { publicName: true } },
+        service: { select: { publicName: true, durationMinutes: true } },
+      },
+    });
+
+    const existingRequest = await tx.bookingRequest.findFirst({
+      where: {
+        appointmentId: appointment.id,
+        type: "RESCHEDULE_REQUEST",
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    if (existingRequest) {
+      await tx.bookingRequest.update({
+        where: { id: existingRequest.id },
+        data: {
+          comment: trimmedMessage,
+          clientName: appointment.clientName,
+          clientPhone: appointment.clientPhone,
+          masterId: appointment.masterId,
+          clientId: appointment.clientId,
+          status: existingRequest.status === "CLOSED" ? "NEW" : existingRequest.status,
+        },
+      });
+    } else {
+      await tx.bookingRequest.create({
+        data: {
+          type: "RESCHEDULE_REQUEST",
+          source: "ONLINE",
+          status: "NEW",
+          clientName: appointment.clientName,
+          clientPhone: appointment.clientPhone,
+          comment: trimmedMessage,
+          masterId: appointment.masterId,
+          clientId: appointment.clientId,
+          appointmentId: appointment.id,
+        },
+      });
+    }
+
+    return nextAppointment;
   });
 
   return mapPublicManageView(updated);

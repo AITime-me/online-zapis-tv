@@ -33,6 +33,46 @@ function formatRequestDateTime(value: string): string {
   }).format(date);
 }
 
+function BookingRequestAppointmentContext({
+  request,
+}: {
+  request: ScheduleDayBookingRequest;
+}) {
+  if (request.type !== "RESCHEDULE_REQUEST") {
+    return null;
+  }
+
+  const when = request.appointmentStartsAt
+    ? formatRequestDateTime(request.appointmentStartsAt)
+    : null;
+
+  return (
+    <div className="space-y-2 rounded border border-amber-200 bg-amber-50/70 px-3 py-2">
+      <div className="text-xs font-semibold text-amber-900">Перенос записи</div>
+      {request.appointmentServiceName ? (
+        <div>
+          <div className="text-xs text-zinc-500">Услуга</div>
+          <div className="text-zinc-900">{request.appointmentServiceName}</div>
+        </div>
+      ) : null}
+      {when ? (
+        <div>
+          <div className="text-xs text-zinc-500">Прежние дата и время</div>
+          <div className="tabular-nums text-zinc-900">{when}</div>
+        </div>
+      ) : null}
+      {request.appointmentScheduleHref ? (
+        <Link
+          href={request.appointmentScheduleHref}
+          className="inline-block text-sm font-medium text-[#1a73e8] hover:underline"
+        >
+          Открыть исходный день в расписании
+        </Link>
+      ) : null}
+    </div>
+  );
+}
+
 export function ScheduleBookingRequestSafeDetailModal({
   request,
   onClose,
@@ -59,7 +99,8 @@ export function ScheduleBookingRequestSafeDetailModal({
               id="booking-request-safe-detail-title"
               className="text-base font-semibold text-[#124032]"
             >
-              Заявка · {formatStudioTime(request.createdAt)}
+              {getScheduleBookingRequestSourceLabel(request)} ·{" "}
+              {formatStudioTime(request.createdAt)}
             </h2>
             <p className="mt-1 text-xs text-zinc-500">
               {formatRequestDateTime(request.createdAt)}
@@ -90,6 +131,8 @@ export function ScheduleBookingRequestSafeDetailModal({
               {request.masterName ? ` · ${request.masterName}` : ""}
             </div>
           </div>
+
+          <BookingRequestAppointmentContext request={request} />
 
           <div>
             <div className="text-xs text-zinc-500">Статус</div>
@@ -194,7 +237,8 @@ export function ScheduleBookingRequestDetailModal({
               id="booking-request-detail-title"
               className="text-base font-semibold text-[#124032]"
             >
-              Заявка · {formatStudioTime(request.createdAt)}
+              {getScheduleBookingRequestSourceLabel(request)} ·{" "}
+              {formatStudioTime(request.createdAt)}
             </h2>
             <p className="mt-1 text-xs text-zinc-500">
               {formatRequestDateTime(request.createdAt)}
@@ -228,6 +272,8 @@ export function ScheduleBookingRequestDetailModal({
             </div>
           </div>
 
+          <BookingRequestAppointmentContext request={request} />
+
           <div>
             <div className="text-xs text-zinc-500">Статус</div>
             {canEditStatus ? (
@@ -254,7 +300,11 @@ export function ScheduleBookingRequestDetailModal({
 
           {request.comment ? (
             <div>
-              <div className="text-xs text-zinc-500">Комментарий</div>
+              <div className="text-xs text-zinc-500">
+                {request.type === "RESCHEDULE_REQUEST"
+                  ? "Текст клиента"
+                  : "Комментарий"}
+              </div>
               <div className="mt-1 max-h-56 overflow-y-auto whitespace-pre-line rounded border border-[#e8eaed] bg-[#f8faf9] px-3 py-2 text-sm text-zinc-800">
                 {request.comment}
               </div>
@@ -349,10 +399,14 @@ function ScheduleBookingRequestMonthCard({
       <div className="text-[9px] leading-[1.15] text-[#124032]">
         <div className="truncate font-semibold">
           <span className="tabular-nums">{formatStudioTime(request.createdAt)}</span>
-          <span className="ml-1">· Заявка</span>
+          <span className="ml-1">· {shortSource}</span>
         </div>
         <div className="truncate">{request.clientName}</div>
-        <div className="truncate">{shortSource}</div>
+        {request.type === "RESCHEDULE_REQUEST" && request.appointmentServiceName ? (
+          <div className="truncate text-[#2a5648]">{request.appointmentServiceName}</div>
+        ) : (
+          <div className="truncate">{shortSource}</div>
+        )}
         {giftLine ? (
           <div className="truncate text-[#2a5648]">{giftLine}</div>
         ) : null}
@@ -392,10 +446,16 @@ function ScheduleBookingRequestDayCard({
       <div className="text-xs leading-snug text-[#124032]">
         <div className="font-semibold">
           <span className="tabular-nums">{formatStudioTime(request.createdAt)}</span>
-          <span className="ml-1.5">· Заявка</span>
+          <span className="ml-1.5">· {sourceLabel}</span>
         </div>
         <div className="mt-0.5 truncate">{request.clientName}</div>
-        <div className="mt-0.5 truncate">{sourceLabel}</div>
+        {request.type === "RESCHEDULE_REQUEST" && request.appointmentServiceName ? (
+          <div className="mt-0.5 truncate text-[#2a5648]">
+            {request.appointmentServiceName}
+          </div>
+        ) : (
+          <div className="mt-0.5 truncate">{sourceLabel}</div>
+        )}
         {giftLine ? (
           <div className="mt-0.5 truncate text-[#2a5648]">{giftLine}</div>
         ) : null}

@@ -49,6 +49,49 @@ function formatCreatedAt(value: string): string {
   }).format(normalizeDate(value) ?? getStudioNow());
 }
 
+function formatAppointmentDateTime(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  return formatCreatedAt(value);
+}
+
+function RescheduleContextCell({ request }: { request: BookingRequestDto }) {
+  if (request.type !== "RESCHEDULE_REQUEST") {
+    return <span className="text-zinc-400">—</span>;
+  }
+
+  const when = formatAppointmentDateTime(request.appointmentStartsAt);
+
+  return (
+    <div className="space-y-1 text-xs text-zinc-700">
+      {request.appointmentServiceName ? (
+        <div>
+          <span className="text-zinc-500">Услуга: </span>
+          {request.appointmentServiceName}
+        </div>
+      ) : null}
+      {when ? (
+        <div>
+          <span className="text-zinc-500">Было: </span>
+          <span className="whitespace-nowrap tabular-nums">{when}</span>
+        </div>
+      ) : null}
+      {request.appointmentScheduleHref ? (
+        <Link
+          href={request.appointmentScheduleHref}
+          className="font-medium text-[#1a73e8] hover:underline"
+        >
+          Открыть день в расписании
+        </Link>
+      ) : null}
+      {!request.appointmentServiceName && !when && !request.appointmentScheduleHref ? (
+        <span className="text-zinc-400">Запись не найдена</span>
+      ) : null}
+    </div>
+  );
+}
+
 function patchRequestInList(
   requests: BookingRequestDto[],
   updated: BookingRequestDto,
@@ -290,6 +333,7 @@ function RequestTable({
             <th className="px-3 py-2 font-medium">Телефон</th>
             <th className="px-3 py-2 font-medium">Мастер</th>
             <th className="px-3 py-2 font-medium">Тип</th>
+            <th className="px-3 py-2 font-medium">Исходная запись</th>
             <th className="px-3 py-2 font-medium">Клиент CRM</th>
             <th className="px-3 py-2 font-medium">Комментарий</th>
             <th className="px-3 py-2 font-medium">Статус</th>
@@ -310,6 +354,9 @@ function RequestTable({
               </td>
               <td className="px-3 py-2 whitespace-nowrap">
                 {getBookingRequestTypeLabel(request.type)}
+              </td>
+              <td className="px-3 py-2">
+                <RescheduleContextCell request={request} />
               </td>
               <td className="px-3 py-2">
                 <ClientLinkCell

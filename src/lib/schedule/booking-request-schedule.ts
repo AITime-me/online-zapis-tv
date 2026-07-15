@@ -8,6 +8,10 @@ export type MasterScheduleBookingRequestDto = {
   type: BookingRequestType;
   isFromGame: boolean;
   masterName: string | null;
+  appointmentId: string | null;
+  appointmentStartsAt: string | null;
+  appointmentServiceName: string | null;
+  appointmentScheduleHref: string | null;
 };
 
 export type FullScheduleBookingRequestDto = MasterScheduleBookingRequestDto & {
@@ -36,6 +40,10 @@ export function toMasterScheduleBookingRequest(
     type: request.type,
     isFromGame: request.isFromGame,
     masterName: request.masterName,
+    appointmentId: request.appointmentId,
+    appointmentStartsAt: request.appointmentStartsAt,
+    appointmentServiceName: request.appointmentServiceName,
+    appointmentScheduleHref: request.appointmentScheduleHref,
   };
 }
 
@@ -51,6 +59,9 @@ export function getScheduleBookingRequestSourceLabel(
   if (request.type === "MANAGER_REQUEST") {
     return "Онлайн-запись";
   }
+  if (request.type === "RESCHEDULE_REQUEST") {
+    return "Перенос записи";
+  }
   return "Заявка";
 }
 
@@ -65,6 +76,9 @@ export function getScheduleBookingRequestShortSourceLabel(
   }
   if (request.type === "MANAGER_REQUEST") {
     return "Онлайн-заявка";
+  }
+  if (request.type === "RESCHEDULE_REQUEST") {
+    return "Перенос";
   }
   return "Заявка";
 }

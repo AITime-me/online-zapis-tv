@@ -299,6 +299,10 @@ function testMasterDtoAndScheduleOptions(): void {
     type: "MANAGER_REQUEST",
     isFromGame: false,
     masterName: "Мастер",
+    appointmentId: null,
+    appointmentStartsAt: null,
+    appointmentServiceName: null,
+    appointmentScheduleHref: null,
   };
   const sanitized = toMasterScheduleBookingRequest(fullRequest);
   assert.equal("clientPhone" in sanitized, false);
@@ -306,6 +310,22 @@ function testMasterDtoAndScheduleOptions(): void {
   assert.equal("email" in sanitized, false);
   assert.equal("normalizedPhone" in sanitized, false);
   assert.equal(sanitized.clientName, "Клиент");
+  assert.equal(sanitized.appointmentId, null);
+
+  const rescheduleRequest: FullScheduleBookingRequestDto = {
+    ...fullRequest,
+    id: "r2",
+    type: "RESCHEDULE_REQUEST",
+    appointmentId: "a1",
+    appointmentStartsAt: "2026-07-20T10:00:00.000Z",
+    appointmentServiceName: "Массаж",
+    appointmentScheduleHref: "/schedule?view=day&date=2026-07-20",
+  };
+  const sanitizedReschedule = toMasterScheduleBookingRequest(rescheduleRequest);
+  assert.equal("clientPhone" in sanitizedReschedule, false);
+  assert.equal("comment" in sanitizedReschedule, false);
+  assert.equal(sanitizedReschedule.appointmentServiceName, "Массаж");
+  assert.equal(sanitizedReschedule.appointmentScheduleHref, "/schedule?view=day&date=2026-07-20");
 }
 
 // --- 11–14. Role constants for export / merge / users / bot ---

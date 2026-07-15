@@ -75,6 +75,7 @@ enum BookingRequestStatus {
 enum BookingRequestType {
   MANAGER_REQUEST
   CONSULTATION_REQUEST
+  RESCHEDULE_REQUEST
 }
 
 enum BookingRequestSource {
@@ -353,6 +354,7 @@ model Appointment {
   service       Service? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
   createdByUser User?    @relation("AppointmentCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   client        Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  rescheduleRequests BookingRequest[]
 
   @@index([masterId, startsAt, endsAt])
   @@index([startsAt])
@@ -446,6 +448,7 @@ model BookingRequest {
   source      BookingRequestSource @default(ONLINE)
   type        BookingRequestType
   clientId    String?              @map("client_id") @db.Uuid
+  appointmentId String?            @map("appointment_id") @db.Uuid
   createdAt   DateTime             @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime             @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -454,11 +457,13 @@ model BookingRequest {
 
   master       Master?       @relation(fields: [masterId], references: [id], onDelete: SetNull)
   client       Client?       @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  appointment  Appointment?  @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
   botEventLogs BotEventLog[]
   gamePlay     GamePlay?     @relation("GamePlayLead")
 
   @@index([status, createdAt(sort: Desc)])
   @@index([clientId])
+  @@index([appointmentId])
   @@map("booking_requests")
 }
 

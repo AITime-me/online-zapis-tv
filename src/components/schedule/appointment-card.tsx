@@ -9,6 +9,7 @@ import {
   isMasterScheduleAppointment,
   isOperationalScheduleAppointment,
 } from "@/lib/schedule/appointment-contract";
+import { CLIENT_RESCHEDULE_APPOINTMENT_NOTICE } from "@/lib/schedule/client-reschedule-notice";
 import type { ScheduleDayAppointment } from "@/types/schedule";
 
 export function AppointmentCard({
@@ -19,6 +20,7 @@ export function AppointmentCard({
   const isBold = isScheduleAppointmentBold(appointment);
   const operational = isOperationalScheduleAppointment(appointment);
   const master = isMasterScheduleAppointment(appointment);
+  const showRescheduleNotice = appointment.statusCode === "RESCHEDULED";
 
   return (
     <article
@@ -27,6 +29,12 @@ export function AppointmentCard({
       }`}
     >
       <AppointmentScheduleSummary appointment={appointment} />
+
+      {showRescheduleNotice ? (
+        <div className="mt-0.5 rounded bg-amber-50 px-1.5 py-1 text-[10px] font-semibold leading-snug text-amber-900">
+          {CLIENT_RESCHEDULE_APPOINTMENT_NOTICE}
+        </div>
+      ) : null}
 
       {operational ? (
         <AppointmentPromoBadges

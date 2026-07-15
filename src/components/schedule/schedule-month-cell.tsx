@@ -74,6 +74,11 @@ export function ScheduleMonthCell({
                     {line.subtitle}
                   </div>
                 ) : null}
+                {line.rescheduleNotice ? (
+                  <div className="mt-px rounded bg-amber-50 px-1 py-0.5 text-[9px] font-semibold leading-snug text-amber-900">
+                    {line.rescheduleNotice}
+                  </div>
+                ) : null}
                 {item.kind === "appointment" &&
                 line.hasPromotionLabels &&
                 isOperationalScheduleAppointment(item) ? (

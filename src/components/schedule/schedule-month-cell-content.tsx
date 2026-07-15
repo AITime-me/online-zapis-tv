@@ -10,6 +10,7 @@ import {
   isScheduleAppointmentBold,
 } from "@/lib/schedule/appointment-display";
 import { formatMonthAppointmentClientLine } from "@/components/schedule/appointment-detail-summary";
+import { CLIENT_RESCHEDULE_APPOINTMENT_NOTICE } from "@/lib/schedule/client-reschedule-notice";
 
 export function formatMonthCellLine(item: ScheduleMonthCellItem): {
   title: string;
@@ -22,6 +23,7 @@ export function formatMonthCellLine(item: ScheduleMonthCellItem): {
   hasPromotionLabels: boolean;
   promotionLabels: string[];
   masterNote: string | null;
+  rescheduleNotice: string | null;
 } {
   if (item.kind === "appointment") {
     const display = buildScheduleAppointmentDisplay(item);
@@ -51,6 +53,8 @@ export function formatMonthCellLine(item: ScheduleMonthCellItem): {
         : master
           ? item.masterNote
           : null,
+      rescheduleNotice:
+        item.statusCode === "RESCHEDULED" ? CLIENT_RESCHEDULE_APPOINTMENT_NOTICE : null,
     };
   }
 
@@ -67,6 +71,7 @@ export function formatMonthCellLine(item: ScheduleMonthCellItem): {
         hasPromotionLabels: false,
         promotionLabels: [],
         masterNote: null,
+        rescheduleNotice: null,
       };
     }
 
@@ -83,6 +88,7 @@ export function formatMonthCellLine(item: ScheduleMonthCellItem): {
       hasPromotionLabels: false,
       promotionLabels: [],
       masterNote: null,
+      rescheduleNotice: null,
     };
   }
 
@@ -101,6 +107,7 @@ export function formatMonthCellLine(item: ScheduleMonthCellItem): {
     hasPromotionLabels: false,
     promotionLabels: [],
     masterNote: null,
+    rescheduleNotice: null,
   };
 }
 

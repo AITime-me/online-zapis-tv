@@ -10,6 +10,7 @@ import {
   validateClientData,
 } from "@/lib/booking/client-validation";
 import { prisma } from "@/lib/db";
+import { formatDateKeyInStudio } from "@/lib/datetime/date-layer";
 import type { ScheduleDayBookingRequest } from "@/lib/schedule/booking-request-schedule";
 import {
   toMasterScheduleBookingRequest,
@@ -107,6 +108,13 @@ const bookingRequestInclude = {
       createdAt: true,
     },
   },
+  appointment: {
+    select: {
+      id: true,
+      startsAt: true,
+      service: { select: { publicName: true } },
+    },
+  },
 } as const;
 
 type BookingRequestRow = Awaited<
@@ -122,6 +130,11 @@ type BookingRequestRow = Awaited<
     status: ClientStatus;
     isArchived: boolean;
     createdAt: Date;
+  } | null;
+  appointment: {
+    id: string;
+    startsAt: Date;
+    service: { publicName: string } | null;
   } | null;
 };
 
@@ -219,6 +232,11 @@ async function mapBookingRequest(
       ? await loadPossibleDuplicateClients(request.comment)
       : [];
 
+  const appointmentStartsAt = request.appointment?.startsAt ?? null;
+  const appointmentDateKey = appointmentStartsAt
+    ? formatDateKeyInStudio(appointmentStartsAt)
+    : null;
+
   return {
     id: request.id,
     clientName: request.clientName,
@@ -236,6 +254,12 @@ async function mapBookingRequest(
     hasPossibleClientDuplicates: possibleDuplicateClients.length > 0,
     possibleDuplicateClients,
     duplicateReason: resolveDuplicateReason(request.comment),
+    appointmentId: request.appointment?.id ?? request.appointmentId ?? null,
+    appointmentServiceName: request.appointment?.service?.publicName ?? null,
+    appointmentStartsAt: appointmentStartsAt?.toISOString() ?? null,
+    appointmentScheduleHref: appointmentDateKey
+      ? `/schedule?view=day&date=${encodeURIComponent(appointmentDateKey)}`
+      : null,
   };
 }
 
@@ -872,6 +896,13 @@ export async function listActiveBookingRequestsForRange(
     },
     include: {
       master: { select: { publicName: true } },
+      appointment: {
+        select: {
+          id: true,
+          startsAt: true,
+          service: { select: { publicName: true } },
+        },
+      },
     },
     orderBy: { createdAt: "asc" },
   });
@@ -892,17 +923,29 @@ export async function listActiveBookingRequestsForRange(
       .filter((leadId): leadId is string => Boolean(leadId)),
   );
 
-  const fullRequests: FullScheduleBookingRequestDto[] = requests.map((request) => ({
-    id: request.id,
-    createdAt: request.createdAt.toISOString(),
-    clientName: request.clientName,
-    clientPhone: request.clientPhone,
-    comment: request.comment,
-    status: request.status,
-    type: request.type,
-    isFromGame: gameLeadIds.has(request.id),
-    masterName: request.master?.publicName ?? null,
-  }));
+  const fullRequests: FullScheduleBookingRequestDto[] = requests.map((request) => {
+    const appointmentDateKey = request.appointment
+      ? formatDateKeyInStudio(request.appointment.startsAt)
+      : null;
+
+    return {
+      id: request.id,
+      createdAt: request.createdAt.toISOString(),
+      clientName: request.clientName,
+      clientPhone: request.clientPhone,
+      comment: request.comment,
+      status: request.status,
+      type: request.type,
+      isFromGame: gameLeadIds.has(request.id),
+      masterName: request.master?.publicName ?? null,
+      appointmentId: request.appointment?.id ?? null,
+      appointmentStartsAt: request.appointment?.startsAt.toISOString() ?? null,
+      appointmentServiceName: request.appointment?.service?.publicName ?? null,
+      appointmentScheduleHref: appointmentDateKey
+        ? `/schedule?view=day&date=${encodeURIComponent(appointmentDateKey)}`
+        : null,
+    };
+  });
 
   if (visibility === "sanitized") {
     return fullRequests.map(toMasterScheduleBookingRequest);

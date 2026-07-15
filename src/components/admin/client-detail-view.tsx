@@ -12,6 +12,7 @@ import type { BookingRequestType } from "@prisma/client";
 const REQUEST_TYPE_LABELS: Record<BookingRequestType, string> = {
   MANAGER_REQUEST: "Заявка через менеджера",
   CONSULTATION_REQUEST: "Консультация",
+  RESCHEDULE_REQUEST: "Перенос записи",
 };
 
 const REQUEST_SOURCE_LABELS = {

@@ -39,6 +39,10 @@ export type BookingRequestDto = {
   hasPossibleClientDuplicates: boolean;
   possibleDuplicateClients: BookingRequestClientSummary[];
   duplicateReason: string | null;
+  appointmentId: string | null;
+  appointmentServiceName: string | null;
+  appointmentStartsAt: string | null;
+  appointmentScheduleHref: string | null;
 };
 
 export type BookingRequestListApiPayload = {
@@ -55,6 +59,7 @@ export type BookingRequestListApiPayload = {
 const REQUEST_TYPE_LABELS: Record<BookingRequestType, string> = {
   MANAGER_REQUEST: "Заявка через менеджера",
   CONSULTATION_REQUEST: "Консультация",
+  RESCHEDULE_REQUEST: "Перенос записи",
 };
 
 const REQUEST_STATUS_LABELS: Record<BookingRequestStatus, string> = {

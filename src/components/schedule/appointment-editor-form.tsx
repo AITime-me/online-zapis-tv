@@ -23,6 +23,7 @@ import {
   AppointmentPromotionLabelBadges,
 } from "@/components/schedule/appointment-master-display";
 import { isMasterScheduleAppointment } from "@/lib/schedule/appointment-contract";
+import { CLIENT_RESCHEDULE_APPOINTMENT_NOTICE } from "@/lib/schedule/client-reschedule-notice";
 
 export type { EditorOptions };
 
@@ -328,6 +329,11 @@ export function AppointmentEditorForm({
           masterName={masterName}
           dateKey={dateKey}
         />
+        {appointment.statusCode === "RESCHEDULED" ? (
+          <div className="mt-2 rounded bg-amber-50 px-1.5 py-1 text-[10px] font-semibold leading-snug text-amber-900">
+            {CLIENT_RESCHEDULE_APPOINTMENT_NOTICE}
+          </div>
+        ) : null}
         <div className="mt-2 tabular-nums text-[10px] text-zinc-500">
           {form.startTime}–{form.endTime}
         </div>
@@ -369,6 +375,11 @@ export function AppointmentEditorForm({
           masterName={masterName}
           dateKey={dateKey}
         />
+        {appointment.statusCode === "RESCHEDULED" ? (
+          <div className="mt-1.5 rounded bg-amber-50 px-1.5 py-1 text-[10px] font-semibold leading-snug text-amber-900">
+            {CLIENT_RESCHEDULE_APPOINTMENT_NOTICE}
+          </div>
+        ) : null}
       </div>
       <div className="grid grid-cols-2 gap-2">
         <EditorField field="startTime" htmlFor={fieldId("startTime")}>
