@@ -78,17 +78,15 @@ async function login(page: Page, credentials: E2EOwnerCredentials) {
   await expect(page.getByRole("heading", { name: "Расписание" })).toBeVisible();
 }
 
-function newAppointmentForm(page: Page) {
-  return page
-    .locator("div.border")
-    .filter({ has: page.getByRole("button", { name: "Добавить" }) });
+function getQuickDayEditorDialog(page: Page): Locator {
+  return page.getByRole("dialog", { name: "Быстрый редактор дня" });
 }
 
 async function findAppointmentArticle(
-  page: Page,
+  editorDialog: Locator,
   clientName: string,
 ): Promise<Locator> {
-  const articles = page.getByRole("dialog").locator("article");
+  const articles = editorDialog.locator("article");
   const count = await articles.count();
 
   for (let index = 0; index < count; index += 1) {
@@ -107,7 +105,7 @@ async function findAppointmentArticle(
 
 async function getMasterId(page: Page, masterName: string): Promise<string> {
   const masterId = await page
-    .locator("thead th")
+    .getByRole("columnheader")
     .filter({ hasText: masterName })
     .getAttribute("data-master-id");
 
@@ -132,12 +130,16 @@ async function cleanupCurrentTestAppointment(
   }
 
   await cell.click();
-  await expect(page.getByRole("dialog")).toBeVisible();
+  const editorDialog = getQuickDayEditorDialog(page);
+  await expect(editorDialog).toBeVisible();
   page.once("dialog", (dialog) => dialog.accept());
-  const article = await findAppointmentArticle(page, clientName);
-  await article.getByRole("button", { name: "Отменить запись" }).click();
+  const article = await findAppointmentArticle(editorDialog, clientName);
+  await article
+    .getByRole("button", { name: "Отменить запись", exact: true })
+    .click();
   await expect(page.getByText("Сохранено")).toBeVisible({ timeout: 15_000 });
-  await page.getByRole("button", { name: "Закрыть", exact: true }).click();
+  await editorDialog.getByRole("button", { name: "Закрыть", exact: true }).click();
+  await expect(editorDialog).toHaveCount(0);
   await expect(cell).not.toContainText(clientName, { timeout: 15_000 });
 }
 
@@ -192,32 +194,54 @@ test("отмена записи побеждает отложенный PATCH и
   await cleanupCurrentTestAppointment(page, cell, testClientName);
 
   await cell.click();
-  await expect(page.getByRole("dialog")).toBeVisible();
-  await page.getByRole("button", { name: "+ Запись" }).click();
-  await expect(page.getByText("Новая запись")).toBeVisible();
+  const editorDialog = getQuickDayEditorDialog(page);
+  await expect(editorDialog).toBeVisible();
 
-  const createForm = newAppointmentForm(page);
-  await createForm.locator('label:has-text("Начало") input').fill(CREATE_START);
-  await createForm.locator('label:has-text("Услуга") select').selectOption({
-    index: 1,
-  });
-  await createForm.locator('label:has-text("Клиент") input').fill(testClientName);
+  await editorDialog
+    .getByRole("button", { name: "+ Запись", exact: true })
+    .click();
+  await expect(editorDialog.getByText("Новая запись", { exact: true })).toBeVisible();
+
+  // Поля формы новой записи — в секции с заголовком «Новая запись»
+  // (доступные имена через htmlFor; область ограничена, чтобы не трогать другие карточки).
+  const newAppointmentForm = editorDialog
+    .getByText("Новая запись", { exact: true })
+    .locator("..");
+
+  await newAppointmentForm
+    .getByRole("textbox", { name: "Начало" })
+    .fill(CREATE_START);
+  await newAppointmentForm
+    .getByRole("combobox", { name: "Услуга" })
+    .selectOption({ index: 1 });
+  await newAppointmentForm
+    .getByRole("textbox", { name: "Клиент" })
+    .fill(testClientName);
 
   const createMonthRefresh = waitForMonthRefresh(page, MONTH);
-  await page.getByRole("button", { name: "Добавить" }).click();
+  await newAppointmentForm
+    .getByRole("button", { name: "Добавить", exact: true })
+    .click();
   await expect(page.getByText("Сохранено")).toBeVisible({ timeout: 15_000 });
   await createMonthRefresh;
   await expect(cell).toContainText(testClientName, { timeout: 15_000 });
 
-  const appointmentArticle = await findAppointmentArticle(page, testClientName);
-  const statusSelect = appointmentArticle.locator('label:has-text("Статус") select');
+  const appointmentArticle = await findAppointmentArticle(
+    editorDialog,
+    testClientName,
+  );
+  const statusSelect = appointmentArticle.getByRole("combobox", {
+    name: "Статус",
+  });
   await expect(statusSelect).toBeVisible();
 
   // Меняем статус — запускается debounce 500ms. Сразу отменяем до PATCH.
   await statusSelect.selectOption("COMPLETED");
   page.once("dialog", (dialog) => dialog.accept());
   const cancelMonthRefresh = waitForMonthRefresh(page, MONTH);
-  await appointmentArticle.getByRole("button", { name: "Отменить запись" }).click();
+  await appointmentArticle
+    .getByRole("button", { name: "Отменить запись", exact: true })
+    .click();
   await expect(page.getByText("Сохранено")).toBeVisible({ timeout: 15_000 });
   await cancelMonthRefresh;
 
@@ -232,14 +256,16 @@ test("отмена записи побеждает отложенный PATCH и
     ).not.toBe(200);
   }
 
-  await page.getByRole("button", { name: "Закрыть", exact: true }).click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await editorDialog.getByRole("button", { name: "Закрыть", exact: true }).click();
+  await expect(editorDialog).toHaveCount(0);
   await expect(cell).not.toContainText(testClientName, { timeout: 15_000 });
 
   // Перезагрузка: CANCELLED не должен вернуться в активную сетку; слот свободен.
   await page.reload();
   await expect(page.getByRole("heading", { name: "Расписание" })).toBeVisible();
-  const cellAfterReload = page.getByTestId(`schedule-cell-${DATE_KEY}-${masterId}`);
+  const cellAfterReload = page.getByTestId(
+    `schedule-cell-${DATE_KEY}-${masterId}`,
+  );
   await expect(cellAfterReload).not.toContainText(testClientName, {
     timeout: 15_000,
   });
