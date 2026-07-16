@@ -3,21 +3,44 @@
 import { useEffect, useState } from "react";
 import { readApiJsonResponse } from "@/lib/api/read-json-response";
 import {
+  BOT_CAN_DO,
   BOT_FOUNDATION_CAPABILITIES,
   BOT_MODE_DESCRIPTIONS,
   BOT_MODE_LABELS,
+  BOT_MUST_HANDOFF,
   BOT_PROVIDER_LABELS,
-  BOT_RESPONSE_MODE_DESCRIPTIONS,
-  BOT_RESPONSE_MODE_LABELS,
   type BotChannels,
   type BotMode,
   type BotProvider,
-  type BotResponseMode,
 } from "@/lib/bot-settings/defaults";
+import {
+  BOT_CONNECTION_PHASES,
+  BOT_CONTROL_PLANE_ROLE,
+  BOT_CURRENT_PROJECT_PHASE,
+  BOT_FSM_PIPELINE,
+} from "@/lib/bot-settings/architecture";
+import {
+  BOT_CAMPAIGN_ENGINE_GAPS,
+  BOT_DISCOUNT_CALCULATION_POLICY,
+  BOT_GAME_FLOW_POLICY,
+  BOT_RESCHEDULE_OWNERSHIP_GAP,
+  BOT_SLOT_STRATEGY_GAPS,
+} from "@/lib/bot-settings/campaign-engine";
+import {
+  BOT_CRM_INTEGRATIONS,
+  BOT_INTEGRATION_ARCHITECTURE_NOTES,
+  BOT_MESSAGING_CHANNELS,
+} from "@/lib/bot-settings/integrations";
+import { getBotAiProviderFoundationStatus } from "@/lib/bot-settings/provider-plan";
+import {
+  BOT_PII_BOUNDARIES,
+  BOT_TONE_OF_VOICE,
+} from "@/lib/bot-settings/tone-of-voice";
 import {
   BOT_LOG_CAN_STORE,
   BOT_LOG_MUST_NOT_STORE,
 } from "@/lib/bot-settings/event-log";
+import type { BotKnowledgeFoundationSummary } from "@/lib/bot-knowledge/types";
 import type { BotSettingsDto, BotSettingsWriteInput } from "@/types/bot-settings";
 import { BotEventLogsSection } from "@/components/admin/bot-event-logs-section";
 
@@ -33,6 +56,8 @@ const fieldClass =
   "w-full rounded border border-zinc-300 px-2 py-1.5 text-sm text-zinc-900 disabled:bg-zinc-100 disabled:text-zinc-500";
 const labelClass = "text-xs font-medium text-zinc-700";
 const sectionClass = "space-y-4 rounded border border-zinc-200 bg-white p-4";
+
+const aiStatus = getBotAiProviderFoundationStatus();
 
 function formatDateTime(value: string | null): string {
   if (!value) {
@@ -54,7 +79,6 @@ function toFormState(settings: BotSettingsDto) {
     isEnabled: settings.isEnabled,
     mode: settings.mode,
     provider: settings.provider,
-    responseMode: settings.responseMode,
     channels: settings.channels,
     mainInstruction: settings.mainInstruction ?? "",
     knowledgeBaseNote: settings.knowledgeBaseNote ?? "",
@@ -71,9 +95,11 @@ function toFormState(settings: BotSettingsDto) {
 
 export function BotSettingsPanel({
   initialSettings,
+  knowledgeSummary,
   canEdit,
 }: {
   initialSettings: BotSettingsDto;
+  knowledgeSummary: BotKnowledgeFoundationSummary;
   canEdit: boolean;
 }) {
   const [settings, setSettings] = useState(initialSettings);
@@ -95,11 +121,8 @@ export function BotSettingsPanel({
           ? `Ошибка${message ? `: ${message}` : ""}`
           : null;
 
-  const showIntegrationWarning =
-    form.mode !== "OFF" || form.isEnabled || form.responseMode === "AUTO_LATER";
-
-  const showNoOutboundWarning =
-    form.mode === "TEST" || form.mode === "ENABLED_LATER" || form.isEnabled;
+  const readiness = settings.readiness;
+  const autoBlocked = !readiness.canEnableAuto;
 
   const applySettings = (next: BotSettingsDto) => {
     setSettings(next);
@@ -110,7 +133,6 @@ export function BotSettingsPanel({
     isEnabled: form.isEnabled,
     mode: form.mode,
     provider: form.provider,
-    responseMode: form.responseMode,
     channels: form.channels,
     mainInstruction: form.mainInstruction,
     knowledgeBaseNote: form.knowledgeBaseNote,
@@ -185,6 +207,9 @@ export function BotSettingsPanel({
   };
 
   const updateChannel = (key: keyof BotChannels, value: boolean) => {
+    if (key === "whatsapp") {
+      return;
+    }
     setForm((current) => ({
       ...current,
       channels: {
@@ -197,11 +222,17 @@ export function BotSettingsPanel({
   return (
     <div className="flex flex-col gap-6">
       <section className="rounded border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-        <p className="font-medium">Foundation-раздел</p>
+        <p className="font-medium">Control plane · Bot Core не развёрнут</p>
         <p className="mt-1">
-          Сейчас это foundation-раздел. Бот не подключён к AI-провайдеру, не
-          подключён к каналам и не отправляет сообщения клиентам.
+          {BOT_CURRENT_PROJECT_PHASE.label}. {BOT_CURRENT_PROJECT_PHASE.nextStep}.
+          Выбор провайдера или канала в этой форме ничего не подключает и не
+          отправляет сообщения клиентам.
         </p>
+        <ul className="mt-2 list-disc space-y-1 pl-4 text-xs">
+          {BOT_CONTROL_PLANE_ROLE.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
       </section>
 
       {!canEdit ? (
@@ -211,25 +242,54 @@ export function BotSettingsPanel({
       ) : null}
 
       <section className={sectionClass}>
-        <h2 className="text-sm font-semibold text-zinc-900">Статус</h2>
+        <h2 className="text-sm font-semibold text-zinc-900">
+          Канонический порядок подключения
+        </h2>
+        <ol className="space-y-2 text-sm text-zinc-700">
+          {BOT_CONNECTION_PHASES.map((phase) => (
+            <li
+              key={phase.id}
+              className="rounded border border-zinc-100 bg-zinc-50 px-3 py-2"
+            >
+              <span className="font-medium text-zinc-900">
+                Этап {phase.phase}. {phase.label}
+              </span>
+              <span className="mt-0.5 block text-xs text-zinc-500">
+                {phase.summary}
+              </span>
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      <section className={sectionClass}>
+        <h2 className="text-sm font-semibold text-zinc-900">Состояние</h2>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="rounded border border-zinc-100 bg-zinc-50 px-3 py-2">
-            <p className="text-xs text-zinc-500">Бот</p>
+            <p className="text-xs text-zinc-500">Режим конфигурации</p>
             <p className="text-sm font-medium text-zinc-900">
               {BOT_MODE_LABELS[settings.mode]}
-              {settings.isEnabled ? " · включён в конфиге" : " · выключен"}
+            </p>
+            <p className="text-xs text-zinc-500">
+              {settings.isEnabled
+                ? "Флаг конфига: активен (не = live)"
+                : "Флаг конфига: выключен"}
             </p>
           </div>
           <div className="rounded border border-zinc-100 bg-zinc-50 px-3 py-2">
-            <p className="text-xs text-zinc-500">Провайдер</p>
+            <p className="text-xs text-zinc-500">Провайдер в конфиге</p>
             <p className="text-sm font-medium text-zinc-900">
               {BOT_PROVIDER_LABELS[settings.provider]}
             </p>
           </div>
           <div className="rounded border border-zinc-100 bg-zinc-50 px-3 py-2">
-            <p className="text-xs text-zinc-500">Режим ответа</p>
+            <p className="text-xs text-zinc-500">AUTO readiness</p>
             <p className="text-sm font-medium text-zinc-900">
-              {BOT_RESPONSE_MODE_LABELS[settings.responseMode]}
+              {readiness.canEnableAuto ? "Готов" : "Заблокирован"}
+            </p>
+            <p className="text-xs text-zinc-500">
+              {readiness.checks.filter((c) => c.ready).length}/
+              {readiness.checks.length} checks
             </p>
           </div>
           <div className="rounded border border-zinc-100 bg-zinc-50 px-3 py-2">
@@ -242,31 +302,74 @@ export function BotSettingsPanel({
             ) : null}
           </div>
         </div>
-
-        {showIntegrationWarning ? (
-          <p className="rounded border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-            Интеграции с каналами ещё не подключены. Бот не отправляет сообщения
-            клиентам.
-          </p>
-        ) : null}
-        {showNoOutboundWarning ? (
-          <p className="rounded border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-            Даже при выбранном тестовом режиме или статусе «Готов к подключению»
-            бот на текущем этапе не отправляет сообщения клиентам.
-          </p>
-        ) : null}
+        <p className="rounded border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          {readiness.summary}
+        </p>
+        <p className="text-xs text-zinc-500">FSM: {BOT_FSM_PIPELINE}</p>
       </section>
 
       <section className={sectionClass}>
-        <h2 className="text-sm font-semibold text-zinc-900">Настройки</h2>
+        <h2 className="text-sm font-semibold text-zinc-900">
+          Готовность AUTO по группам
+        </h2>
+        <p className="text-xs text-zinc-500">
+          Любой красный обязательный check блокирует AUTO. Tone post-filter пока
+          не реализован.
+        </p>
+        <div className="space-y-3">
+          {readiness.groups.map((group) => (
+            <div
+              key={group.id}
+              className="rounded border border-zinc-100 bg-zinc-50 px-3 py-2"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-medium text-zinc-900">{group.label}</p>
+                <p className="text-xs text-zinc-500">
+                  {group.readyCount}/{group.totalCount}
+                  {group.ready ? " · OK" : " · не готово"}
+                </p>
+              </div>
+              <ul className="mt-2 space-y-1">
+                {group.checks.map((check) => (
+                  <li key={check.id} className="flex gap-2 text-xs text-zinc-600">
+                    <span
+                      className={`shrink-0 font-semibold ${
+                        check.ready ? "text-emerald-700" : "text-amber-800"
+                      }`}
+                    >
+                      {check.ready ? "OK" : "Нет"}
+                    </span>
+                    <span>
+                      <span className="font-medium text-zinc-800">
+                        {check.label}:{" "}
+                      </span>
+                      {check.detail}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className={sectionClass}>
+        <h2 className="text-sm font-semibold text-zinc-900">Режим работы</h2>
         <div className="grid gap-4 lg:grid-cols-2">
-          <label className="flex flex-col gap-1">
-            <span className={labelClass}>Статус бота</span>
+          <label className="flex flex-col gap-1 lg:col-span-2">
+            <span className={labelClass}>Режим конфигурации</span>
             <select
               value={form.mode}
               disabled={!canEdit}
               onChange={(event) => {
                 const mode = event.target.value as BotMode;
+                if (mode === "AUTO" && autoBlocked) {
+                  setMessage(
+                    "AUTO нельзя выбрать: не пройдены readiness checks.",
+                  );
+                  setStatus("error");
+                  return;
+                }
                 setForm((current) => ({
                   ...current,
                   mode,
@@ -276,17 +379,27 @@ export function BotSettingsPanel({
               className={fieldClass}
             >
               {(Object.keys(BOT_MODE_LABELS) as BotMode[]).map((mode) => (
-                <option key={mode} value={mode}>
+                <option
+                  key={mode}
+                  value={mode}
+                  disabled={mode === "AUTO" && autoBlocked}
+                >
                   {BOT_MODE_LABELS[mode]}
+                  {mode === "AUTO" && autoBlocked ? " (заблокирован)" : ""}
                 </option>
               ))}
             </select>
             <p className="text-xs text-zinc-500">{BOT_MODE_DESCRIPTIONS[form.mode]}</p>
+            <p className="text-xs text-zinc-500">
+              Целевой продуктовый режим — AUTO. HINTS — дополнительный безопасный
+              режим, не конечная цель.
+            </p>
           </label>
 
-          <label className="flex items-center gap-2 pt-5 text-sm text-zinc-700">
+          <label className="flex items-start gap-2 text-sm text-zinc-700">
             <input
               type="checkbox"
+              className="mt-1"
               checked={form.isEnabled}
               disabled={!canEdit || form.mode === "OFF"}
               onChange={(event) =>
@@ -296,11 +409,16 @@ export function BotSettingsPanel({
                 }))
               }
             />
-            Включить бота в конфигурации
+            <span>
+              Пометить конфигурацию активной
+              <span className="mt-1 block text-xs text-zinc-500">
+                Не включает ответы клиентам и не обходит readiness.
+              </span>
+            </span>
           </label>
 
           <label className="flex flex-col gap-1">
-            <span className={labelClass}>Провайдер</span>
+            <span className={labelClass}>AI-провайдер (конфиг)</span>
             <select
               value={form.provider}
               disabled={!canEdit}
@@ -312,42 +430,14 @@ export function BotSettingsPanel({
               }
               className={fieldClass}
             >
-              {(Object.keys(BOT_PROVIDER_LABELS) as BotProvider[]).map((provider) => (
-                <option key={provider} value={provider}>
-                  {BOT_PROVIDER_LABELS[provider]}
-                </option>
-              ))}
-            </select>
-            <p className="text-xs text-zinc-500">
-              Провайдер выбран заранее для будущего подключения. Сейчас запросы к
-              AI не выполняются.
-            </p>
-          </label>
-
-          <label className="flex flex-col gap-1 lg:col-span-2">
-            <span className={labelClass}>Режим ответа</span>
-            <select
-              value={form.responseMode}
-              disabled={!canEdit}
-              onChange={(event) =>
-                setForm((current) => ({
-                  ...current,
-                  responseMode: event.target.value as BotResponseMode,
-                }))
-              }
-              className={fieldClass}
-            >
-              {(Object.keys(BOT_RESPONSE_MODE_LABELS) as BotResponseMode[]).map(
-                (responseMode) => (
-                  <option key={responseMode} value={responseMode}>
-                    {BOT_RESPONSE_MODE_LABELS[responseMode]}
+              {(Object.keys(BOT_PROVIDER_LABELS) as BotProvider[]).map(
+                (provider) => (
+                  <option key={provider} value={provider}>
+                    {BOT_PROVIDER_LABELS[provider]}
                   </option>
                 ),
               )}
             </select>
-            <p className="text-xs text-zinc-500">
-              {BOT_RESPONSE_MODE_DESCRIPTIONS[form.responseMode]}
-            </p>
           </label>
 
           <label className="flex flex-col gap-1">
@@ -387,31 +477,293 @@ export function BotSettingsPanel({
       </section>
 
       <section className={sectionClass}>
-        <h2 className="text-sm font-semibold text-zinc-900">Каналы</h2>
+        <h2 className="text-sm font-semibold text-zinc-900">
+          Целевой AI-провайдер (Bot Core)
+        </h2>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <div className="rounded border border-zinc-100 bg-zinc-50 px-3 py-2 text-sm">
+            <p className="text-xs text-zinc-500">Планируемый провайдер</p>
+            <p className="font-medium text-zinc-900">
+              {aiStatus.targetProvider.label}
+            </p>
+          </div>
+          <div className="rounded border border-zinc-100 bg-zinc-50 px-3 py-2 text-sm">
+            <p className="text-xs text-zinc-500">Резерв</p>
+            <p className="font-medium text-zinc-900">
+              {aiStatus.reserveProvider.label}
+            </p>
+            <p className="text-xs text-zinc-500">
+              {aiStatus.reserveProvider.detail}
+            </p>
+          </div>
+          <div className="rounded border border-zinc-100 bg-zinc-50 px-3 py-2 text-sm">
+            <p className="text-xs text-zinc-500">{aiStatus.classifier.label}</p>
+            <p className="font-medium text-zinc-900">Не настроен</p>
+          </div>
+          <div className="rounded border border-zinc-100 bg-zinc-50 px-3 py-2 text-sm">
+            <p className="text-xs text-zinc-500">{aiStatus.dialogue.label}</p>
+            <p className="font-medium text-zinc-900">Не настроена</p>
+          </div>
+          <div className="rounded border border-zinc-100 bg-zinc-50 px-3 py-2 text-sm">
+            <p className="text-xs text-zinc-500">Server credentials</p>
+            <p className="font-medium text-zinc-900">Отсутствуют</p>
+          </div>
+          <div className="rounded border border-zinc-100 bg-zinc-50 px-3 py-2 text-sm">
+            <p className="text-xs text-zinc-500">Provider health</p>
+            <p className="font-medium text-zinc-900">Не проверен</p>
+          </div>
+        </div>
+        <ul className="list-disc space-y-1 pl-4 text-xs text-zinc-600">
+          {aiStatus.notes.map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+        </ul>
+      </section>
+
+      <section className={sectionClass}>
+        <h2 className="text-sm font-semibold text-zinc-900">
+          Каналы общения с клиентом
+        </h2>
         <p className="text-xs text-zinc-500">
-          Каналы сохраняются как будущая конфигурация. Подключение VK, MAX,
-          Telegram и сайта будет реализовано отдельными этапами.
+          Фаза подключения показана явно. Отметить канал ≠ подключить.
         </p>
         <div className="grid gap-2 sm:grid-cols-2">
+          {BOT_MESSAGING_CHANNELS.map((channel) => {
+            const key = channel.settingsKey;
+            const checked =
+              key && key !== "whatsapp" ? form.channels[key] : false;
+            const disabled =
+              !canEdit || channel.status === "deferred" || key === "whatsapp";
+
+            return (
+              <label
+                key={channel.id}
+                className="flex items-start gap-2 rounded border border-zinc-100 bg-zinc-50 px-3 py-2 text-sm text-zinc-700"
+              >
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={Boolean(checked)}
+                  disabled={disabled}
+                  onChange={(event) => {
+                    if (key && key !== "whatsapp") {
+                      updateChannel(key, event.target.checked);
+                    }
+                  }}
+                />
+                <span>
+                  <span className="font-medium text-zinc-900">
+                    Этап {channel.phase}. {channel.label}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-zinc-500">
+                    {channel.detail}
+                  </span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className={sectionClass}>
+        <h2 className="text-sm font-semibold text-zinc-900">
+          CRM integration · amoCRM
+        </h2>
+        {BOT_CRM_INTEGRATIONS.map((crm) => (
+          <div key={crm.id} className="space-y-3 text-sm text-zinc-700">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="font-medium text-zinc-900">
+                Этап {crm.phase}. {crm.label}
+              </p>
+              <span className="rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-900">
+                Не подключён
+              </span>
+            </div>
+            <p className="text-xs text-zinc-600">{crm.detail}</p>
+            <div className="grid gap-3 lg:grid-cols-2">
+              <div>
+                <p className="text-xs font-medium text-zinc-700">Бот сможет</p>
+                <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-zinc-600">
+                  {crm.botMay.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-zinc-700">Бот не должен</p>
+                <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-zinc-600">
+                  {crm.botMustNot.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+            <ul className="space-y-1">
+              {crm.readinessItems.map((item) => (
+                <li
+                  key={item.id}
+                  className="flex gap-2 rounded border border-zinc-100 bg-zinc-50 px-3 py-2 text-xs"
+                >
+                  <span className="font-semibold text-amber-800">Нет</span>
+                  <span>
+                    <span className="font-medium text-zinc-800">
+                      {item.label}:{" "}
+                    </span>
+                    {item.detail}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+        <ul className="list-disc space-y-1 pl-4 text-xs text-zinc-600">
+          {BOT_INTEGRATION_ARCHITECTURE_NOTES.map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+        </ul>
+      </section>
+
+      <section className={sectionClass}>
+        <h2 className="text-sm font-semibold text-zinc-900">
+          Knowledge sources
+        </h2>
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
           {(
             [
-              ["siteWidget", "Сайт"],
-              ["vk", "VK"],
-              ["max", "MAX"],
-              ["telegram", "Telegram"],
+              ["Категории", knowledgeSummary.counts.categories],
+              ["Услуги", knowledgeSummary.counts.services],
+              ["Мастера", knowledgeSummary.counts.masters],
+              ["Акции", knowledgeSummary.counts.promotions],
+              ["Игровые подарки", knowledgeSummary.counts.gameGifts],
             ] as const
-          ).map(([key, label]) => (
-            <label key={key} className="flex items-center gap-2 text-sm text-zinc-700">
-              <input
-                type="checkbox"
-                checked={form.channels[key]}
-                disabled={!canEdit}
-                onChange={(event) => updateChannel(key, event.target.checked)}
-              />
-              {label}
-            </label>
+          ).map(([label, count]) => (
+            <div
+              key={label}
+              className="rounded border border-zinc-100 bg-zinc-50 px-3 py-2"
+            >
+              <p className="text-xs text-zinc-500">{label}</p>
+              <p className="text-sm font-medium text-zinc-900">{count}</p>
+            </div>
           ))}
         </div>
+        <ul className="mt-3 space-y-1">
+          {knowledgeSummary.sources.map((source) => (
+            <li
+              key={source.id}
+              className="rounded border border-zinc-100 bg-zinc-50 px-3 py-2 text-xs text-zinc-600"
+            >
+              <span className="font-medium text-zinc-900">{source.label}</span>
+              <span className="text-zinc-500"> · {source.truthSource}</span>
+              <span className="text-amber-800"> · {source.status}</span>
+              {source.publicEntityCount != null ? (
+                <span className="text-zinc-500">
+                  {" "}
+                  · {source.publicEntityCount}
+                </span>
+              ) : null}
+              <span className="mt-0.5 block text-zinc-600">{source.detail}</span>
+            </li>
+          ))}
+        </ul>
+        <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-zinc-600">
+          {knowledgeSummary.notes.map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+        </ul>
+      </section>
+
+      <section className={sectionClass}>
+        <h2 className="text-sm font-semibold text-zinc-900">
+          Capabilities и поведение
+        </h2>
+        <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {BOT_FOUNDATION_CAPABILITIES.map((item) => (
+            <li
+              key={item.id}
+              className="rounded border border-zinc-100 bg-zinc-50 px-3 py-2 text-sm text-zinc-700"
+            >
+              <p className="font-medium text-zinc-900">{item.label}</p>
+              <p className="mt-0.5 text-xs text-zinc-500">{item.detail}</p>
+            </li>
+          ))}
+        </ul>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div>
+            <p className="text-xs font-medium text-zinc-700">Бот сможет сам</p>
+            <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-zinc-600">
+              {BOT_CAN_DO.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <p className="text-xs font-medium text-zinc-700">
+              Обязательный handoff
+            </p>
+            <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-zinc-600">
+              {BOT_MUST_HANDOFF.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section className={sectionClass}>
+        <h2 className="text-sm font-semibold text-zinc-900">
+          Tone of Voice и ПДн
+        </h2>
+        <p className="text-xs text-zinc-600">
+          Стиль: {BOT_TONE_OF_VOICE.style.join(", ")}. Обращение на «
+          {BOT_TONE_OF_VOICE.addressForm}». Post-filter для AUTO:{" "}
+          {BOT_TONE_OF_VOICE.postFilterImplemented
+            ? "реализован"
+            : "не реализован (AUTO красный)"}.
+        </p>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <ul className="list-disc space-y-1 pl-4 text-xs text-zinc-600">
+            {BOT_TONE_OF_VOICE.rules.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+            {BOT_TONE_OF_VOICE.medicalForbidden.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+            <li>Запрещённая фраза: «{BOT_TONE_OF_VOICE.bannedPhrases[0]}»</li>
+          </ul>
+          <ul className="list-disc space-y-1 pl-4 text-xs text-zinc-600">
+            {BOT_PII_BOUNDARIES.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      </section>
+
+      <section className={sectionClass}>
+        <h2 className="text-sm font-semibold text-zinc-900">
+          Зафиксированные gaps
+        </h2>
+        <ul className="space-y-2 text-xs text-zinc-600">
+          {BOT_CAMPAIGN_ENGINE_GAPS.map((gap) => (
+            <li key={gap.id}>
+              Campaign: {gap.label} — {gap.status}
+            </li>
+          ))}
+          {BOT_SLOT_STRATEGY_GAPS.map((gap) => (
+            <li key={gap.id}>
+              Slots: {gap.label} — {gap.status}
+            </li>
+          ))}
+          <li>
+            Reschedule ownership ({BOT_RESCHEDULE_OWNERSHIP_GAP.owners.join(" | ")})
+            — {BOT_RESCHEDULE_OWNERSHIP_GAP.status}
+          </li>
+          <li>
+            Discount: только {BOT_DISCOUNT_CALCULATION_POLICY.engine}; DB
+            promotion = {BOT_DISCOUNT_CALCULATION_POLICY.dbPromotionRole}
+          </li>
+          <li>{BOT_GAME_FLOW_POLICY.outdatedExampleNote}</li>
+          <li>{BOT_GAME_FLOW_POLICY.formulaSiyaniyaPolicy}</li>
+        </ul>
       </section>
 
       <section className={sectionClass}>
@@ -447,36 +799,8 @@ export function BotSettingsPanel({
 
       <section className={sectionClass}>
         <h2 className="text-sm font-semibold text-zinc-900">
-          Что бот уже сможет использовать позже
+          Политика хранения логов
         </h2>
-        <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {BOT_FOUNDATION_CAPABILITIES.map((item) => (
-            <li
-              key={item}
-              className="rounded border border-zinc-100 bg-zinc-50 px-3 py-2 text-sm text-zinc-700"
-            >
-              {item}
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <section className={sectionClass}>
-        <h2 className="text-sm font-semibold text-zinc-900">
-          Будущее хранение логов
-        </h2>
-        <p className="text-xs text-zinc-500">
-          Политика сохраняется в настройках. Реальная очистка логов появится
-          после подключения бота и таблицы событий.
-        </p>
-        <ul className="space-y-1 text-sm text-zinc-700">
-          <li>Обычные события: {form.logRetentionDays} дней</li>
-          <li>Ошибки: {form.errorLogRetentionDays} дней</li>
-          <li>
-            Показываются последние события, подробности раскрываются по клику
-          </li>
-          <li>Секреты, API-ключи и токены в логах не сохраняются</li>
-        </ul>
         <div className="grid gap-4 lg:grid-cols-3">
           <label className="flex flex-col gap-1">
             <span className={labelClass}>Обычные события, дней</span>
@@ -556,8 +880,9 @@ export function BotSettingsPanel({
       </section>
 
       <section className="rounded border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-700">
-        API-ключи OpenAI, Yandex, VK, MAX и Telegram не хранятся в базе данных.
-        На сервере они должны храниться только в переменных окружения.
+        API-ключи Yandex Cloud, OpenAI, VK, MAX, Telegram, WhatsApp и amoCRM не
+        хранятся в BotSettings и не отдаются в API. Только server secret store.
+        Внешние сетевые вызовы с этой страницы не выполняются.
       </section>
 
       {canEdit ? (

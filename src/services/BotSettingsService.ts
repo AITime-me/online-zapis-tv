@@ -1,18 +1,29 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import {
-  BOT_MODE_LABELS,
-  BOT_PROVIDER_LABELS,
-  BOT_RESPONSE_MODE_LABELS,
   BOT_SETTINGS_ID,
   DEFAULT_BOT_CHANNELS,
   DEFAULT_BOT_SETTINGS,
+  isBotMode,
+  isBotProvider,
+  isBotResponseMode,
+  normalizeBotMode,
+  normalizeBotProvider,
+  normalizeBotResponseMode,
+  resolveBotModeInput,
+  resolveBotProviderInput,
+  resolveBotResponseModeInput,
+  responseModeForBotMode,
   type BotChannels,
   type BotMode,
   type BotProvider,
   type BotResponseMode,
 } from "@/lib/bot-settings/defaults";
-import type { BotSettingsDto, BotSettingsWriteInput } from "@/types/bot-settings";
+import { evaluateFoundationBotReadiness } from "@/lib/bot-settings/readiness";
+import type {
+  BotSettingsDto,
+  BotSettingsWriteInput,
+} from "@/types/bot-settings";
 
 export class BotSettingsValidationError extends Error {}
 
@@ -48,18 +59,6 @@ type BotSettingsRow = Prisma.BotSettingsGetPayload<{
   select: typeof botSettingsSelect;
 }>;
 
-function isBotMode(value: string): value is BotMode {
-  return value in BOT_MODE_LABELS;
-}
-
-function isBotProvider(value: string): value is BotProvider {
-  return value in BOT_PROVIDER_LABELS;
-}
-
-function isBotResponseMode(value: string): value is BotResponseMode {
-  return value in BOT_RESPONSE_MODE_LABELS;
-}
-
 function parseChannels(value: Prisma.JsonValue): BotChannels {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { ...DEFAULT_BOT_CHANNELS };
@@ -71,19 +70,29 @@ function parseChannels(value: Prisma.JsonValue): BotChannels {
     vk: Boolean(record.vk),
     max: Boolean(record.max),
     telegram: Boolean(record.telegram),
+    whatsapp: Boolean(record.whatsapp),
   };
 }
 
 function mapSettings(row: BotSettingsRow): BotSettingsDto {
+  const mode = normalizeBotMode(row.mode);
+  const provider = normalizeBotProvider(row.provider);
+  const responseMode = normalizeBotResponseMode(row.responseMode);
+  const channels = parseChannels(row.channels);
+  const readiness = evaluateFoundationBotReadiness({
+    mode,
+    isEnabled: row.isEnabled,
+    provider,
+    channels,
+  });
+
   return {
     id: row.id,
     isEnabled: row.isEnabled,
-    mode: isBotMode(row.mode) ? row.mode : "OFF",
-    provider: isBotProvider(row.provider) ? row.provider : "YANDEX",
-    responseMode: isBotResponseMode(row.responseMode)
-      ? row.responseMode
-      : "HINTS_ONLY",
-    channels: parseChannels(row.channels),
+    mode,
+    provider,
+    responseMode,
+    channels,
     mainInstruction: row.mainInstruction,
     knowledgeBaseNote: row.knowledgeBaseNote,
     handoffRules: row.handoffRules,
@@ -98,6 +107,7 @@ function mapSettings(row: BotSettingsRow): BotSettingsDto {
     updatedByUserName: row.updatedByUser?.name ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+    readiness,
   };
 }
 
@@ -158,6 +168,25 @@ function normalizeOptionalText(value: string | null | undefined): string | null 
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function assertAutoAllowed(mode: BotMode, provider: BotProvider, channels: BotChannels, isEnabled: boolean) {
+  if (mode !== "AUTO") {
+    return;
+  }
+
+  const readiness = evaluateFoundationBotReadiness({
+    mode,
+    isEnabled,
+    provider,
+    channels,
+  });
+
+  if (!readiness.canEnableAuto) {
+    throw new BotSettingsValidationError(
+      "Режим «Автоответ клиенту» нельзя включить: не пройдены readiness checks. Бот пока не подключён к AI, каналам и runtime-защите.",
+    );
+  }
+}
+
 async function ensureBotSettings(): Promise<BotSettingsRow> {
   const existing = await prisma.botSettings.findUnique({
     where: { id: BOT_SETTINGS_ID },
@@ -187,44 +216,82 @@ export async function updateBotSettings(
   input: BotSettingsWriteInput,
   updatedByUserId: string,
 ): Promise<BotSettingsDto> {
-  await ensureBotSettings();
+  const current = await ensureBotSettings();
+  const currentMapped = mapSettings(current);
+
+  let nextMode: BotMode = currentMapped.mode;
+  let nextProvider: BotProvider = currentMapped.provider;
+  let nextChannels: BotChannels = currentMapped.channels;
+  let nextIsEnabled = currentMapped.isEnabled;
+  let nextResponseMode: BotResponseMode = currentMapped.responseMode;
 
   const data: Prisma.BotSettingsUpdateInput = {
     updatedByUser: { connect: { id: updatedByUserId } },
   };
 
-  if (input.isEnabled !== undefined) {
-    data.isEnabled = input.isEnabled;
-  }
   if (input.mode !== undefined) {
     if (!isBotMode(input.mode)) {
       throw new BotSettingsValidationError("Недопустимый режим бота");
     }
-    data.mode = input.mode;
-    if (input.mode === "OFF") {
+    nextMode = resolveBotModeInput(input.mode);
+    data.mode = nextMode;
+    nextResponseMode = responseModeForBotMode(nextMode);
+    data.responseMode = nextResponseMode;
+    if (nextMode === "OFF") {
+      nextIsEnabled = false;
       data.isEnabled = false;
     }
   }
-  if (input.provider !== undefined) {
-    if (!isBotProvider(input.provider)) {
-      throw new BotSettingsValidationError("Недопустимый провайдер");
-    }
-    data.provider = input.provider;
-  }
+
   if (input.responseMode !== undefined) {
     if (!isBotResponseMode(input.responseMode)) {
       throw new BotSettingsValidationError("Недопустимый режим ответа");
     }
-    data.responseMode = input.responseMode;
+    // Explicit responseMode only applies when mode is not being driven as primary;
+    // if mode was also sent, mode wins via sync above.
+    if (input.mode === undefined) {
+      nextResponseMode = resolveBotResponseModeInput(input.responseMode);
+      data.responseMode = nextResponseMode;
+      if (nextResponseMode === "AUTO") {
+        nextMode = "AUTO";
+        data.mode = "AUTO";
+      } else if (nextResponseMode === "HINTS" && nextMode === "OFF") {
+        // keep OFF; storing HINTS as aspirational response mirror is ok
+      } else if (nextResponseMode === "HINTS" || nextResponseMode === "DRAFT") {
+        if (nextMode === "AUTO") {
+          nextMode = nextResponseMode === "HINTS" ? "HINTS" : "DRAFT";
+          data.mode = nextMode;
+        }
+      }
+    }
   }
+
+  if (input.provider !== undefined) {
+    if (!isBotProvider(input.provider)) {
+      throw new BotSettingsValidationError("Недопустимый провайдер");
+    }
+    nextProvider = resolveBotProviderInput(input.provider);
+    data.provider = nextProvider;
+  }
+
   if (input.channels !== undefined) {
-    data.channels = {
+    nextChannels = {
       siteWidget: Boolean(input.channels.siteWidget),
       vk: Boolean(input.channels.vk),
       max: Boolean(input.channels.max),
       telegram: Boolean(input.channels.telegram),
+      whatsapp: Boolean(input.channels.whatsapp),
     };
+    data.channels = nextChannels;
   }
+
+  if (input.isEnabled !== undefined) {
+    nextIsEnabled = nextMode === "OFF" ? false : Boolean(input.isEnabled);
+    data.isEnabled = nextIsEnabled;
+  }
+
+  assertAutoAllowed(nextMode, nextProvider, nextChannels, nextIsEnabled);
+
   if (input.mainInstruction !== undefined) {
     data.mainInstruction = normalizeOptionalText(input.mainInstruction);
   }

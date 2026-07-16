@@ -4,6 +4,7 @@ import type {
   BotProvider,
   BotResponseMode,
 } from "@/lib/bot-settings/defaults";
+import type { BotReadinessReport } from "@/lib/bot-settings/readiness";
 
 export type BotSettingsDto = {
   id: string;
@@ -26,13 +27,14 @@ export type BotSettingsDto = {
   updatedByUserName: string | null;
   createdAt: string;
   updatedAt: string;
+  readiness: BotReadinessReport;
 };
 
 export type BotSettingsWriteInput = {
   isEnabled?: boolean;
-  mode?: BotMode;
-  provider?: BotProvider;
-  responseMode?: BotResponseMode;
+  mode?: BotMode | string;
+  provider?: BotProvider | string;
+  responseMode?: BotResponseMode | string;
   channels?: BotChannels;
   mainInstruction?: string | null;
   knowledgeBaseNote?: string | null;
