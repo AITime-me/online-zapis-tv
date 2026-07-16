@@ -181,7 +181,7 @@ main() {
   parse_args "$@"
   ops_setup_common_traps
   ops_cd_repo_root "$(pwd)"
-  ops_require_commands docker curl
+  ops_require_commands docker flock curl
   ops_check_docker_daemon
   ops_check_docker_compose
   ops_compose_preflight
@@ -206,6 +206,8 @@ main() {
     ops_info "Dry-run complete — no database or Docker changes were made."
     exit 0
   fi
+
+  ops_acquire_staging_ops_lock
 
   ops_require_interactive_confirmation "RESTORE STAGING DATABASE" \
     "Type RESTORE STAGING DATABASE to continue:"

@@ -33,9 +33,9 @@
 
 Deploy разрешён только с ветки `main` без локальных изменений. Это гарантирует, что на сервере выполняется ровно то, что есть в `origin/main`, без «забытых» правок на диске. Скрипт не использует `git reset --hard`, `git clean` или force-операции.
 
-## Блокировка deploy (flock)
+## Блокировка staging operations (flock)
 
-Файл `backups/deploy-state/.deploy.lock` используется только как lock-дескриптор. Он **не содержит секретов**. Второй одновременный deploy завершится с понятным сообщением. Lock снимается автоматически при завершении или ошибке процесса.
+Файл `backups/deploy-state/.deploy.lock` — общий lock-дескриптор для всех операций, затрагивающих staging-базу: **deploy** (включая pre-deploy backup и миграции), **restore**, **scheduled backup**. Он **не содержит секретов**. Вторая параллельная операция завершится с понятным сообщением. Lock снимается автоматически при завершении или ошибке процесса. `--dry-run` lock не берёт.
 
 ## `.env.staging`
 
@@ -299,7 +299,8 @@ curl http://127.0.0.1:3000/api/health
 ## Ограничения до полноценного CI/CD
 
 - Deploy по-прежнему запускается вручную (или через `--yes` без GitHub Actions).
-- Старые backups и rollback tags **не** удаляются автоматически.
+- Старые backups и rollback tags **не** удаляются автоматически deploy/restore.
+- Scheduled backup (`staging-backup-db.sh`) удаляет только файлы `*_scheduled.dump` старше retention; см. [staging-backup.md](./staging-backup.md).
 - Production deploy не входит в эту задачу.
 - Нет внешнего secret store — секреты только в `.env.staging` на сервере.
 - Ops CLI (owner reset, mail:test) по-прежнему может использовать `builder`-образ — отдельно от migrator.
@@ -311,6 +312,7 @@ curl http://127.0.0.1:3000/api/health
 | `scripts/ops/staging-deploy.sh` | Основной deploy |
 | `scripts/ops/staging-rollback-app.sh` | Откат app |
 | `scripts/ops/staging-restore-db.sh` | Ручной restore БД |
+| `scripts/ops/staging-backup-db.sh` | Ежедневный scheduled backup (см. [staging-backup.md](./staging-backup.md)) |
 | `scripts/ops/lib/staging-ops-common.sh` | Общие безопасные функции |
 | `docker-compose.staging.yml` | Сервисы app, postgres, migrator (profile ops) |
 | `Dockerfile` | Targets: deps, builder, **migrator**, runner |

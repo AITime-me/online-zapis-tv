@@ -1,0 +1,16 @@
+[Unit]
+Description=Daily PostgreSQL backup for online-zapis-tv staging
+Documentation=file:/opt/online-zapis-tv/docs/operations/staging-backup.md
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=deploy
+Group=deploy
+WorkingDirectory=/opt/online-zapis-tv
+UMask=0077
+ExecStart=/usr/bin/bash /opt/online-zapis-tv/scripts/ops/staging-backup-db.sh
+
+[Install]
+WantedBy=multi-user.target

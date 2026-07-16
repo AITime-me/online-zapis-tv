@@ -1,0 +1,13 @@
+[Unit]
+Description=Daily timer for online-zapis-tv staging PostgreSQL backup
+Documentation=file:/opt/online-zapis-tv/docs/operations/staging-backup.md
+
+[Timer]
+# Low-traffic window; adjust if server clock is not UTC (see staging-backup.md).
+OnCalendar=*-*-* 22:15:00
+Persistent=true
+RandomizedDelaySec=900
+Unit=online-zapis-tv-staging-backup.service
+
+[Install]
+WantedBy=timers.target

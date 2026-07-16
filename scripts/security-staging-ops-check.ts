@@ -266,7 +266,13 @@ const OPS_SHELL_FILES = [
   "scripts/ops/staging-deploy.sh",
   "scripts/ops/staging-rollback-app.sh",
   "scripts/ops/staging-restore-db.sh",
+  "scripts/ops/staging-backup-db.sh",
   "scripts/ops/lib/staging-ops-common.sh",
+] as const;
+
+const SYSTEMD_TEMPLATE_FILES = [
+  "deploy/systemd/staging/online-zapis-tv-staging-backup.service",
+  "deploy/systemd/staging/online-zapis-tv-staging-backup.timer",
 ] as const;
 
 const FORBIDDEN_PATTERNS: Array<{ name: string; pattern: RegExp; files?: readonly string[] }> = [
@@ -567,9 +573,12 @@ function assertRollbackScript(): void {
 function assertRestoreScript(): void {
   const source = readFile("scripts/ops/staging-restore-db.sh");
   const executable = stripBashComments(source);
+  const mainBody = extractFunctionBodies(source, "main") || executable;
   const restoreBody = extractFunctionBodies(source, "restore_database_in_container");
 
   assert.match(executable, /ops_validate_postgres_identifier/);
+  assert.match(executable, /ops_require_commands docker flock curl/);
+  assert.match(executable, /ops_acquire_staging_ops_lock/);
   assert.match(restoreBody, /-d postgres/);
   assert.match(restoreBody, /pg_terminate_backend/);
   assert.match(restoreBody, /DROP DATABASE IF EXISTS/);
@@ -577,6 +586,10 @@ function assertRestoreScript(): void {
   assert.match(restoreBody, /pg_restore --exit-on-error/);
   assert.match(executable, /ops_compose stop app/);
   assert.doesNotMatch(executable, /compose\s+down/);
+
+  const dryRunExit = mainBody.indexOf('ops_info "Dry-run complete');
+  const lockIdx = mainBody.indexOf("ops_acquire_staging_ops_lock");
+  assert.ok(dryRunExit >= 0 && lockIdx >= 0 && dryRunExit < lockIdx, "dry-run must exit before staging ops lock");
 }
 
 function assertManifestSafety(): void {
@@ -974,6 +987,128 @@ function assertCommonHelpers(): void {
   assert.match(common, /ops_get_image_id_from_ref_optional/);
   assert.match(common, /STAGING_MIGRATOR_TSX/);
   assert.doesNotMatch(common, /\becho\b[^;\n]*ops_compose[^;\n]*\bconfig\b/);
+  assert.match(common, /ops_acquire_staging_ops_lock/);
+  assert.match(common, /STAGING_LOCK_FILE="backups\/deploy-state\/\.deploy\.lock"/);
+  assert.doesNotMatch(common, /STAGING_BACKUP_LOCK_FILE/);
+  assert.doesNotMatch(common, /ops_acquire_backup_lock/);
+  assert.match(common, /ops_create_scheduled_postgres_backup/);
+  assert.match(common, /ops_purge_expired_scheduled_backups/);
+  assert.match(common, /ops_is_scheduled_backup_basename/);
+  assert.match(common, /ops_validate_retention_days/);
+}
+
+function assertScheduledBackupScript(): void {
+  const source = readFile("scripts/ops/staging-backup-db.sh");
+  const executable = stripBashComments(source);
+  const mainBody = extractFunctionBodies(source, "main") || executable;
+  const createBody = extractFunctionBodies(
+    readFile("scripts/ops/lib/staging-ops-common.sh"),
+    "ops_create_scheduled_postgres_backup",
+  );
+
+  assert.match(source, /--dry-run/);
+  assert.match(source, /--retention-days/);
+  assert.match(executable, /ops_assert_staging_app_env/);
+  assert.match(executable, /ops_acquire_staging_ops_lock/);
+  assert.match(executable, /ops_create_scheduled_postgres_backup/);
+  assert.match(executable, /ops_purge_expired_scheduled_backups/);
+  assert.match(executable, /ops_write_scheduled_backup_manifest/);
+  assert.match(executable, /_scheduled\.dump/);
+  assert.doesNotMatch(executable, /compose\s+stop\s+app/);
+  assert.doesNotMatch(executable, /pg_restore|DROP DATABASE/);
+
+  assert.match(createBody, /\.tmp\.\$\$/);
+  assert.match(createBody, /ops_verify_pg_dump_file/);
+  assert.match(createBody, /mv -f -- "\$tmp_path" "\$backup_path"/);
+  assert.match(createBody, /chmod 600 "\$tmp_path"/);
+
+  const purgeBody = extractFunctionBodies(
+    readFile("scripts/ops/lib/staging-ops-common.sh"),
+    "ops_purge_expired_scheduled_backups",
+  );
+  assert.match(purgeBody, /ops_is_scheduled_backup_basename/);
+  assert.doesNotMatch(purgeBody, /prerestore/);
+  assert.doesNotMatch(purgeBody, /\*\.dump/);
+
+  const dryRunExit = mainBody.indexOf('ops_info "Dry-run complete');
+  const lockIdx = mainBody.indexOf("ops_acquire_staging_ops_lock");
+  assert.ok(dryRunExit >= 0 && lockIdx >= 0 && dryRunExit < lockIdx, "dry-run must exit before staging ops lock");
+
+  for (const secret of ["POSTGRES_PASSWORD", "DATABASE_URL", "PGPASSWORD", "AUTH_SECRET"]) {
+    assert.doesNotMatch(executable, new RegExp(`\\becho\\b[^;\\n]*${secret}`, "i"));
+    assert.doesNotMatch(executable, new RegExp(`\\bprintf\\b[^;\\n]*${secret}`, "i"));
+  }
+}
+
+function assertStagingOpsLockConcurrency(): void {
+  const common = readFile("scripts/ops/lib/staging-ops-common.sh");
+  const deploy = readFile("scripts/ops/staging-deploy.sh");
+  const backup = readFile("scripts/ops/staging-backup-db.sh");
+  const restore = readFile("scripts/ops/staging-restore-db.sh");
+
+  const lockBody = extractFunctionBodies(common, "ops_acquire_staging_ops_lock");
+  assert.ok(lockBody.length > 0, "ops_acquire_staging_ops_lock must exist");
+  assert.match(lockBody, /flock -n 9/);
+  assert.match(lockBody, /STAGING_LOCK_FILE/);
+  assert.doesNotMatch(lockBody, /flock -n 8/, "must not use a second flock fd in the same process");
+  assert.doesNotMatch(common, /STAGING_BACKUP_LOCK_FILE/, "backup must not use a separate lock file");
+  assert.doesNotMatch(common, /ops_acquire_backup_lock/, "backup-specific lock must be removed");
+
+  assert.match(deploy, /ops_acquire_deploy_lock/);
+  const deployAlias = extractFunctionBodies(common, "ops_acquire_deploy_lock");
+  assert.match(deployAlias, /ops_acquire_staging_ops_lock/);
+
+  for (const [label, source, lockCall] of [
+    ["backup", backup, "ops_acquire_staging_ops_lock"],
+    ["restore", restore, "ops_acquire_staging_ops_lock"],
+  ] as const) {
+    const mainBody = extractFunctionBodies(source, "main") || stripBashComments(source);
+    assert.match(mainBody, new RegExp(lockCall), `${label} must acquire staging ops lock`);
+    const dryRunExit = mainBody.indexOf('ops_info "Dry-run complete');
+    const lockIdx = mainBody.indexOf(lockCall);
+    assert.ok(
+      dryRunExit >= 0 && lockIdx >= 0 && dryRunExit < lockIdx,
+      `${label} dry-run must exit before staging ops lock`,
+    );
+  }
+
+  const deployMain = extractFunctionBodies(deploy, "main") || stripBashComments(deploy);
+  assert.match(deployMain, /ops_acquire_deploy_lock/);
+  assert.match(
+    deployMain,
+    /\[\[\s*"\$OPS_DRY_RUN"\s*-eq\s*0\s*\]\][\s\S]*ops_acquire_deploy_lock/,
+    "deploy must acquire lock only when not in dry-run",
+  );
+}
+
+function assertSystemdBackupUnits(): void {
+  const service = readFile("deploy/systemd/staging/online-zapis-tv-staging-backup.service");
+  const timer = readFile("deploy/systemd/staging/online-zapis-tv-staging-backup.timer");
+
+  assert.match(service, /^Type=oneshot/m);
+  assert.match(service, /^User=deploy/m);
+  assert.match(service, /^Group=deploy/m);
+  assert.match(service, /^WorkingDirectory=\/opt\/online-zapis-tv/m);
+  assert.match(service, /^UMask=0077/m);
+  assert.match(service, /^ExecStart=\/usr\/bin\/bash /m);
+  assert.match(service, /staging-backup-db\.sh/);
+
+  assert.match(timer, /^Persistent=true/m);
+  assert.match(timer, /^RandomizedDelaySec=/m);
+  assert.match(timer, /^OnCalendar=/m);
+
+  for (const unit of [service, timer]) {
+    for (const secret of [
+      "POSTGRES_PASSWORD",
+      "DATABASE_URL",
+      "AUTH_SECRET",
+      "SMTP_PASSWORD",
+      "Environment=",
+      ".env.staging",
+    ]) {
+      assert.doesNotMatch(unit, new RegExp(secret, "i"), `systemd unit must not contain ${secret}`);
+    }
+  }
 }
 
 function run(): void {
@@ -999,6 +1134,9 @@ function run(): void {
   assertDeployScript();
   assertRollbackScript();
   assertRestoreScript();
+  assertStagingOpsLockConcurrency();
+  assertScheduledBackupScript();
+  assertSystemdBackupUnits();
   assertManifestSafety();
   assertComposeMigrator();
   assertCommonHelpers();

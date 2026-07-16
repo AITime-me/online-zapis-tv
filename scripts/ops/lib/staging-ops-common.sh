@@ -14,6 +14,8 @@ readonly STAGING_POSTGRES_CONTAINER="tvoe-vremya-staging-postgres"
 readonly STAGING_BACKUPS_POSTGRES_DIR="backups/postgres"
 readonly STAGING_DEPLOY_STATE_DIR="backups/deploy-state"
 readonly STAGING_LOCK_FILE="backups/deploy-state/.deploy.lock"
+readonly STAGING_SCHEDULED_BACKUP_DEFAULT_RETENTION_DAYS=14
+readonly STAGING_SCHEDULED_BACKUP_NAME_RE='^[0-9]{8}T[0-9]{6}Z_scheduled\.dump$'
 readonly STAGING_HEALTH_URL="http://127.0.0.1:3000/api/health"
 readonly STAGING_STATE_VERSION="1"
 readonly STAGING_DOCKER_HEALTH_TIMEOUT_SEC=180
@@ -888,12 +890,161 @@ ops_create_postgres_backup() {
   printf '%s' "$backup_path"
 }
 
-ops_acquire_deploy_lock() {
+ops_acquire_staging_ops_lock() {
   ops_ensure_private_dir "$STAGING_DEPLOY_STATE_DIR"
   exec 9>"$STAGING_LOCK_FILE"
   if ! flock -n 9; then
-    ops_die "another staging deploy is already in progress (lock: ${STAGING_LOCK_FILE})"
+    ops_die "another staging database operation is already in progress (lock: ${STAGING_LOCK_FILE})"
   fi
+}
+
+# Backward-compatible alias (deploy script and docs).
+ops_acquire_deploy_lock() {
+  ops_acquire_staging_ops_lock
+}
+
+ops_validate_retention_days() {
+  local value="$1"
+  if [[ -z "$value" || ! "$value" =~ ^[1-9][0-9]*$ ]]; then
+    ops_die "--retention-days must be a positive integer"
+  fi
+  if (( value > 3650 )); then
+    ops_die "--retention-days exceeds safe maximum (3650)"
+  fi
+}
+
+ops_is_scheduled_backup_basename() {
+  local name="$1"
+  [[ "$name" =~ $STAGING_SCHEDULED_BACKUP_NAME_RE ]]
+}
+
+ops_scheduled_backup_epoch() {
+  local basename="$1"
+  local ts="${basename%%_scheduled.dump}"
+  if [[ ! "$ts" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
+    return 1
+  fi
+  date -u -d \
+    "${ts:0:4}-${ts:4:2}-${ts:6:2} ${ts:9:2}:${ts:11:2}:${ts:13:2}" \
+    +%s 2>/dev/null
+}
+
+ops_assert_staging_app_env() {
+  local app_env
+  app_env="$(ops_read_env_value APP_ENV "$STAGING_ENV_FILE" || true)"
+  if [[ "$app_env" != "staging" ]]; then
+    ops_die "operation is allowed only when APP_ENV=staging"
+  fi
+}
+
+ops_create_scheduled_postgres_backup() {
+  local timestamp_utc backup_name backup_path tmp_path pg_user pg_db
+
+  timestamp_utc="$(date -u +%Y%m%dT%H%M%SZ)"
+  backup_name="${timestamp_utc}_scheduled.dump"
+  backup_path="${STAGING_BACKUPS_POSTGRES_DIR}/${backup_name}"
+  tmp_path="${backup_path}.tmp.$$"
+
+  ops_ensure_private_dir "$STAGING_BACKUPS_POSTGRES_DIR"
+
+  if [[ -e "$backup_path" ]]; then
+    ops_die "backup already exists: ${backup_path}"
+  fi
+
+  if [[ "$OPS_DRY_RUN" -eq 1 ]]; then
+    printf '%s' "$backup_path"
+    return 0
+  fi
+
+  if ! ops_container_exists "$STAGING_POSTGRES_CONTAINER"; then
+    ops_die "postgres container does not exist"
+  fi
+  if ! ops_container_running "$STAGING_POSTGRES_CONTAINER"; then
+    ops_die "postgres container is not running"
+  fi
+  if ! ops_container_healthy "$STAGING_POSTGRES_CONTAINER"; then
+    ops_die "postgres container is not healthy"
+  fi
+
+  pg_user="$(ops_read_env_value POSTGRES_USER "$STAGING_ENV_FILE")"
+  pg_db="$(ops_read_env_value POSTGRES_DB "$STAGING_ENV_FILE")"
+
+  ops_register_temp_file "$tmp_path"
+
+  docker exec "$STAGING_POSTGRES_CONTAINER" \
+    pg_dump -U "$pg_user" -d "$pg_db" -Fc \
+    >"$tmp_path"
+
+  chmod 600 "$tmp_path"
+  if [[ ! -f "$tmp_path" ]] || [[ -L "$tmp_path" ]]; then
+    ops_die "backup temp file was not created correctly"
+  fi
+  if [[ ! -s "$tmp_path" ]]; then
+    ops_die "backup file is empty"
+  fi
+
+  if ! ops_verify_pg_dump_file "$tmp_path"; then
+    ops_die "backup verification failed"
+  fi
+
+  mv -f -- "$tmp_path" "$backup_path"
+  printf '%s' "$backup_path"
+}
+
+ops_purge_expired_scheduled_backups() {
+  local retention_days="$1"
+  local dir="${OPS_REPO_ROOT}/${STAGING_BACKUPS_POSTGRES_DIR}"
+  local cutoff_epoch file_epoch purged=0 basename file
+
+  ops_validate_retention_days "$retention_days"
+  cutoff_epoch="$(date -u -d "${retention_days} days ago" +%s)"
+
+  shopt -s nullglob
+  for file in "${dir}"/*_scheduled.dump; do
+    basename="$(basename "$file")"
+    if ! ops_is_scheduled_backup_basename "$basename"; then
+      continue
+    fi
+    file_epoch="$(ops_scheduled_backup_epoch "$basename" || true)"
+    if [[ -z "$file_epoch" ]]; then
+      ops_warn "skipping scheduled backup with unparseable timestamp: ${basename}"
+      continue
+    fi
+    if (( file_epoch >= cutoff_epoch )); then
+      continue
+    fi
+    if [[ "$OPS_DRY_RUN" -eq 1 ]]; then
+      ops_info "  retention: would remove ${basename}"
+    else
+      rm -f -- "$file"
+    fi
+    purged=$((purged + 1))
+  done
+  shopt -u nullglob
+
+  printf '%s' "$purged"
+}
+
+ops_write_scheduled_backup_manifest() {
+  local backup_path="$1"
+  local retention_days="$2"
+  local purged_count="$3"
+  local status="$4"
+  local ts manifest_path
+
+  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+  manifest_path="${STAGING_DEPLOY_STATE_DIR}/${ts}_scheduled_backup.env"
+
+  ops_write_manifest_file "$manifest_path" \
+    "STATE_VERSION=${STAGING_STATE_VERSION}" \
+    "TIMESTAMP_UTC=${ts}" \
+    "BACKUP_KIND=scheduled" \
+    "BACKUP_PATH=$(ops_escape_manifest_value "$backup_path")" \
+    "BACKUP_STATUS=$(ops_escape_manifest_value "$status")" \
+    "RETENTION_DAYS=${retention_days}" \
+    "PURGED_COUNT=${purged_count}"
+
+  printf '%s' "$manifest_path"
 }
 
 ops_get_compose_app_image_ref() {
