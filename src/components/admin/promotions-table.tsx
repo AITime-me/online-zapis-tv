@@ -67,11 +67,6 @@ export function PromotionsTable({ rules }: { rules: PromotionAdminRule[] }) {
             <tr key={rule.id} className="border-b border-[#e8eaed] last:border-b-0">
               <td className="px-3 py-2 align-top font-medium text-zinc-900">
                 {rule.name}
-                {rule.source === "planned" ? (
-                  <div className="mt-1 text-[10px] font-normal text-zinc-400">
-                    Запланировано
-                  </div>
-                ) : null}
               </td>
               <td className="px-3 py-2 align-top">
                 <KindBadge kind={rule.kind} />
@@ -136,9 +131,7 @@ export function PromotionsDetailsList({ rules }: { rules: PromotionAdminRule[] }
               <dd className="mt-0.5">
                 {rule.source === "promo-engine"
                   ? "Встроенное правило расчёта (promo-engine)"
-                  : rule.source === "gift-engine"
-                    ? "Встроенное правило подарка (gift-engine)"
-                    : "Заготовка (ещё не подключена)"}
+                  : "Встроенное правило подарка (gift-engine)"}
               </dd>
             </div>
           </dl>

@@ -244,12 +244,49 @@ function assertBuiltInVsDbSeparation(): void {
   const rules = listPromotionRulesForAdmin();
   assert.ok(rules.some((rule) => rule.id === "cold-plasma-first-visit-30"));
   assert.ok(!rules.some((rule) => rule.id === SHOWCASE_DISCOUNT_PROMOTION_ID));
+  assert.ok(
+    rules.every(
+      (rule) => rule.source === "promo-engine" || rule.source === "gift-engine",
+    ),
+  );
+  assert.ok(!rules.some((rule) => rule.id.startsWith("planned-")));
+  assert.ok(!rules.some((rule) => /правило в разработке/i.test(rule.clientText)));
+  assert.ok(
+    !rules.some((rule) =>
+      /Подарок:\s*уход для рук|Подарок:\s*лазерная биоревитализация/i.test(
+        rule.name,
+      ),
+    ),
+  );
 
   assert.ok(PROMO_RULES.some((rule) => rule.id === "cold-plasma-first-visit-30"));
   assert.ok(!PROMO_RULES.some((rule) => rule.id === SHOWCASE_DISCOUNT_PROMOTION_ID));
 
+  const adminService = read("src/services/PromotionAdminService.ts");
+  assert.doesNotMatch(adminService, /PLANNED_GIFT_RULES/);
+  assert.doesNotMatch(adminService, /PlannedGiftRule/);
+  assert.doesNotMatch(adminService, /mapPlannedGiftRule/);
+  assert.doesNotMatch(adminService, /plannedGifts/);
+  assert.doesNotMatch(adminService, /source:\s*"planned"/);
+  assert.doesNotMatch(adminService, /правило в разработке/);
+
+  const table = read("src/components/admin/promotions-table.tsx");
+  assert.doesNotMatch(table, /Запланировано/);
+  assert.doesNotMatch(table, /source === "planned"/);
+  assert.doesNotMatch(table, /Заготовка/);
+
   const engine = read("src/lib/promo/promo-engine.ts");
   assert.doesNotMatch(engine, /prisma|listHomepagePromotions|PromotionCrud/);
+
+  const giftEngine = read("src/lib/promo/gift-engine.ts");
+  assert.match(giftEngine, /export const GIFT_RULES:\s*GiftRule\[\]\s*=\s*\[\]/);
+
+  // Empty GIFT_RULES must not break the admin list (promo rules still present).
+  assert.ok(rules.length >= 1);
+  assert.equal(
+    rules.filter((rule) => rule.source === "gift-engine").length,
+    0,
+  );
 
   const page = read("src/app/admin/promotions/page.tsx");
   assert.match(page, /listPromotionRulesForAdmin/);

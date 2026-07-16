@@ -32,40 +32,8 @@ export type PromotionAdminRule = {
   startDate: string | null;
   endDate: string | null;
   updatedAt: string | null;
-  source: "promo-engine" | "gift-engine" | "planned";
+  source: "promo-engine" | "gift-engine";
 };
-
-type PlannedGiftRule = {
-  id: string;
-  name: string;
-  giftName: string;
-  conditionLabel: string;
-  appliesTo: string;
-  clientText: string;
-  scheduleText: string;
-};
-
-/** Заготовки подарков — пока не подключены в gift-engine. */
-const PLANNED_GIFT_RULES: PlannedGiftRule[] = [
-  {
-    id: "planned-hand-care-gift",
-    name: "Подарок: уход для рук",
-    giftName: "Уход для рук",
-    conditionLabel: "Ручная акция",
-    appliesTo: "—",
-    clientText: "Подарок при записи на выбранные услуги (правило в разработке).",
-    scheduleText: "Акция: Подарок — уход для рук",
-  },
-  {
-    id: "planned-laser-biorev-gift",
-    name: "Подарок: лазерная биоревитализация",
-    giftName: "Лазерная биоревитализация",
-    conditionLabel: "Ручная акция",
-    appliesTo: "—",
-    clientText: "Подарок при записи на выбранные услуги (правило в разработке).",
-    scheduleText: "Акция: Подарок — лазерная биоревитализация",
-  },
-];
 
 function dash(value: string | null | undefined): string {
   const trimmed = value?.trim();
@@ -193,35 +161,12 @@ function mapGiftRule(rule: GiftRule): PromotionAdminRule {
   };
 }
 
-function mapPlannedGiftRule(rule: PlannedGiftRule): PromotionAdminRule {
-  return {
-    id: rule.id,
-    name: rule.name,
-    kind: "GIFT",
-    status: "inactive",
-    condition: "manual",
-    conditionLabel: rule.conditionLabel,
-    appliesTo: rule.appliesTo,
-    clientText: rule.clientText,
-    scheduleText: rule.scheduleText,
-    valueLabel: rule.giftName,
-    startDate: null,
-    endDate: null,
-    updatedAt: null,
-    source: "planned",
-  };
-}
-
-/** Список правил для админки — read-only адаптер над promo-engine и gift-engine. */
+/**
+ * Список правил для админки — только реально работающие правила
+ * из promo-engine и gift-engine (без заглушек).
+ */
 export function listPromotionRulesForAdmin(): PromotionAdminRule[] {
-  const promoRules = PROMO_RULES.map(mapPromoRule);
-  const giftRules = GIFT_RULES.map(mapGiftRule);
-  const existingGiftIds = new Set(giftRules.map((rule) => rule.id));
-  const plannedGifts = PLANNED_GIFT_RULES.filter(
-    (rule) => !existingGiftIds.has(rule.id),
-  ).map(mapPlannedGiftRule);
-
-  return [...promoRules, ...giftRules, ...plannedGifts];
+  return [...PROMO_RULES.map(mapPromoRule), ...GIFT_RULES.map(mapGiftRule)];
 }
 
 export function getPromotionAdminSummary(rules: PromotionAdminRule[]) {
