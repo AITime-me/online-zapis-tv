@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type { CommSendMode } from "@prisma/client";
 import {
   COMMUNICATIONS_ADMIN_ROLES,
   requireApiRoles,
@@ -30,11 +31,13 @@ export async function GET() {
 
 type CreateBody = {
   name?: string;
-  slug?: string;
   segmentId?: string | null;
   messageText?: string;
-  imageUrl?: string | null;
-  attributionWindowHours?: number;
+  mediaAssetId?: string | null;
+  sendMode?: CommSendMode;
+  scheduleDate?: string | null;
+  scheduleTime?: string | null;
+  attributionDays?: number;
   buttons?: CommCampaignButtonInput[];
 };
 
@@ -60,11 +63,13 @@ export async function POST(request: Request) {
   try {
     const campaign = await createCampaign({
       name: body.name ?? "",
-      slug: body.slug,
       segmentId: body.segmentId,
       messageText: body.messageText,
-      imageUrl: body.imageUrl,
-      attributionWindowHours: body.attributionWindowHours,
+      mediaAssetId: body.mediaAssetId,
+      sendMode: body.sendMode,
+      scheduleDate: body.scheduleDate,
+      scheduleTime: body.scheduleTime,
+      attributionDays: body.attributionDays,
       buttons: body.buttons,
       userId: authResult.user.id,
     });

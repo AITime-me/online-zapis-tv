@@ -11,7 +11,7 @@ export default async function CommunicationsAdminPage() {
     <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 p-4 md:p-6">
       <AdminPageHeader
         title="Коммуникации"
-        description="Аудитория переписки VK и черновики рассылок. Control plane без реальной отправки сообщений."
+        description="Аудитория переписки VK и черновики рассылок. Реальная отправка пока недоступна."
         current="communications"
         role={user.role}
       />

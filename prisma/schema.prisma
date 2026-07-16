@@ -985,15 +985,48 @@ enum CommImportJobStatus {
   FAILED
 }
 
+enum CommSendMode {
+  UNSPECIFIED
+  NOW
+  SCHEDULED
+}
+
+model CommunicationMediaAsset {
+  /**
+   * Оптимизированное изображение рассылки в PostgreSQL (MVP).
+   * Жёсткий лимит размера; без EXIF; не для неограниченного роста.
+   */
+  id              String   @id @default(uuid()) @db.Uuid
+  mimeType        String   @map("mime_type")
+  width           Int
+  height          Int
+  byteSize        Int      @map("byte_size")
+  checksumSha256  String   @map("checksum_sha256") @db.VarChar(64)
+  data            Bytes
+  originalFileName String? @map("original_file_name")
+  createdByUserId String?  @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  campaigns CommunicationCampaign[]
+
+  @@index([createdAt])
+  @@map("communication_media_assets")
+}
+
 model CommunicationSettings {
   /**
-   * Singleton control plane: VK connector readiness без токенов.
+   * Singleton: VK connector readiness без токенов.
    */
   id                 String   @id @default("default")
   vkConnectorReady   Boolean  @default(false) @map("vk_connector_ready")
+  workerReady        Boolean  @default(false) @map("worker_ready")
   defaultCommunityId String?  @map("default_community_id")
+  testContactId      String?  @map("test_contact_id") @db.Uuid
   createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  testContact CommunicationContact? @relation("CommunicationTestContact", fields: [testContactId], references: [id], onDelete: SetNull)
 
   @@map("communication_settings")
 }
@@ -1025,6 +1058,8 @@ model CommunicationContact {
   events     CommunicationEvent[]
   recipients CommunicationCampaignRecipient[]
   redirects  CommunicationRedirectToken[]
+  testForSettings CommunicationSettings[] @relation("CommunicationTestContact")
+  deliveryAttempts CommunicationDeliveryAttempt[]
 
   @@unique([channel, communityId, channelUserId])
   @@index([source])
@@ -1073,27 +1108,35 @@ model CommunicationCampaign {
   segmentId              String?            @map("segment_id") @db.Uuid
   messageText            String             @default("") @map("message_text") @db.Text
   imageUrl               String?            @map("image_url")
+  mediaAssetId           String?            @map("media_asset_id") @db.Uuid
+  sendMode               CommSendMode       @default(UNSPECIFIED) @map("send_mode")
   scheduledAt            DateTime?          @map("scheduled_at") @db.Timestamptz
-  attributionWindowHours Int                @default(72) @map("attribution_window_hours")
+  scheduleTimezone       String             @default("Asia/Yekaterinburg") @map("schedule_timezone")
+  attributionWindowHours Int                @default(168) @map("attribution_window_hours")
   utmSource              String             @default("vk") @map("utm_source")
   utmMedium              String             @default("messenger") @map("utm_medium")
   utmCampaign            String?            @map("utm_campaign")
   stats                  Json?
+  recipientSnapshotAt    DateTime?          @map("recipient_snapshot_at") @db.Timestamptz
+  contentLockedAt        DateTime?          @map("content_locked_at") @db.Timestamptz
   createdByUserId        String?            @map("created_by_user_id") @db.Uuid
   updatedByUserId        String?            @map("updated_by_user_id") @db.Uuid
   createdAt              DateTime           @default(now()) @map("created_at") @db.Timestamptz
   updatedAt              DateTime           @updatedAt @map("updated_at") @db.Timestamptz
 
   segment     CommunicationSegment?            @relation(fields: [segmentId], references: [id], onDelete: SetNull)
+  mediaAsset  CommunicationMediaAsset?         @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
   createdBy   User?                            @relation("CommunicationCampaignCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   updatedBy   User?                            @relation("CommunicationCampaignUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
   buttons     CommunicationCampaignButton[]
   recipients  CommunicationCampaignRecipient[]
   events      CommunicationEvent[]
   redirects   CommunicationRedirectToken[]
+  deliveryAttempts CommunicationDeliveryAttempt[]
 
   @@index([status])
   @@index([segmentId])
+  @@index([mediaAssetId])
   @@map("communication_campaigns")
 }
 
@@ -1191,4 +1234,26 @@ model CommunicationRedirectToken {
   @@index([campaignId, buttonKey])
   @@index([expiresAt])
   @@map("communication_redirect_tokens")
+}
+
+/**
+ * Журнал попыток доставки (включая тестовые). Без содержимого сообщения и PII в логах.
+ */
+model CommunicationDeliveryAttempt {
+  id                String   @id @default(uuid()) @db.Uuid
+  campaignId        String?  @map("campaign_id") @db.Uuid
+  contactId         String?  @map("contact_id") @db.Uuid
+  isTest            Boolean  @default(false) @map("is_test")
+  status            String
+  provider          String
+  errorCode         String?  @map("error_code")
+  externalMessageId String?  @map("external_message_id")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  campaign CommunicationCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  contact  CommunicationContact?  @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  @@index([campaignId, isTest, createdAt(sort: Desc)])
+  @@index([isTest, createdAt(sort: Desc)])
+  @@map("communication_delivery_attempts")
 }

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import type { CommCampaignStatus } from "@prisma/client";
+import type { CommCampaignStatus, CommSendMode } from "@prisma/client";
 import {
   COMMUNICATIONS_ADMIN_ROLES,
   requireApiRoles,
@@ -49,13 +49,16 @@ export async function GET(_request: Request, context: RouteContext) {
 
 type PatchBody = {
   name?: string;
-  slug?: string;
   status?: CommCampaignStatus;
   segmentId?: string | null;
   messageText?: string;
-  imageUrl?: string | null;
+  mediaAssetId?: string | null;
+  clearMedia?: boolean;
+  sendMode?: CommSendMode;
+  scheduleDate?: string | null;
+  scheduleTime?: string | null;
   scheduledAt?: string | null;
-  attributionWindowHours?: number;
+  attributionDays?: number;
   buttons?: CommCampaignButtonInput[];
 };
 

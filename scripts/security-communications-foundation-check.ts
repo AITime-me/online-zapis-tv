@@ -306,7 +306,8 @@ function assertButtonsAndReadSemantics(): void {
   const panel = read("src/components/admin/communications-panel.tsx");
   assert.match(panel, /Принято VK|Статус прочтения не подтверждён|Ответили/);
   assert.match(panel, /COMMUNICATIONS_VK_NOT_CONNECTED_MESSAGE/);
-  assert.match(panel, /VK не подключён|Реальная отправка сообщений недоступна/);
+  const composer = read("src/components/admin/communications-composer.tsx");
+  assert.match(composer, /VK не подключён|Реальная отправка сообщений недоступна|COMMUNICATIONS_VK_NOT_CONNECTED|bannerMessage/);
 }
 
 function assertNoRealDataInSeedAndTests(): void {

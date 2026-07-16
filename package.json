@@ -48,6 +48,7 @@
     "test:security:admin-promotions": "tsx scripts/security-admin-promotions-check.ts",
     "test:security:bot-foundation": "tsx scripts/security-bot-foundation-check.ts",
     "test:security:communications-foundation": "tsx scripts/security-communications-foundation-check.ts",
+    "test:security:communications-composer": "tsx scripts/security-communications-composer-check.ts",
     "test:security:legal-consent": "tsx scripts/security-legal-consent-check.ts",
     "test:security:mail": "tsx scripts/security-mail-check.ts",
     "test:e2e": "playwright test"
@@ -65,6 +66,7 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "server-only": "^0.0.1",
+    "sharp": "^0.35.3",
     "zod": "^4.1.5"
   },
   "devDependencies": {
@@ -77,7 +79,6 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
     "prisma": "^6.19.0",
-    "sharp": "^0.35.3",
     "tailwindcss": "^4",
     "tsx": "^4.20.5",
     "typescript": "^5"

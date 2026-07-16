@@ -86,7 +86,8 @@ export type CommSegmentDto = {
 export type CommCampaignButtonInput = {
   text: string;
   type: CommButtonType;
-  buttonKey: string;
+  /** Опционально: сервер сгенерирует и сохранит стабильно. */
+  buttonKey?: string;
   action?: string | null;
   url?: string | null;
   promotionId?: string | null;
@@ -94,10 +95,16 @@ export type CommCampaignButtonInput = {
   style?: CommButtonStyle;
 };
 
-export type CommCampaignButtonDto = CommCampaignButtonInput & {
+export type CommCampaignButtonDto = {
   id: string;
-  style: CommButtonStyle;
+  text: string;
+  type: CommButtonType;
+  buttonKey: string;
+  action?: string | null;
+  url?: string | null;
+  promotionId?: string | null;
   sortOrder: number;
+  style: CommButtonStyle;
 };
 
 export type CommCampaignDto = {
@@ -110,14 +117,21 @@ export type CommCampaignDto = {
   segmentName: string | null;
   messageText: string;
   imageUrl: string | null;
+  mediaAssetId: string | null;
+  mediaPreviewUrl: string | null;
+  sendMode: "UNSPECIFIED" | "NOW" | "SCHEDULED";
   scheduledAt: string | null;
+  scheduleTimezone: string;
   attributionWindowHours: number;
+  attributionDays: number;
   utmSource: string;
   utmMedium: string;
   utmCampaign: string | null;
   buttons: CommCampaignButtonDto[];
   audienceEstimate: number | null;
   stats: unknown;
+  recipientSnapshotAt: string | null;
+  contentLockedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -126,9 +140,46 @@ export type CommCampaignPreview = {
   messageText: string;
   buttons: CommCampaignButtonDto[];
   imageUrl: string | null;
+  mediaAssetId: string | null;
   audienceEstimate: number;
   connectorMessage: string;
   canSend: false;
+};
+
+export type CommCampaignCheckResult = {
+  campaign: CommCampaignDto;
+  audience: {
+    segmentTotal: number;
+    eligible: number;
+    excluded: number;
+    exclusionReasons: Array<{ reason: string; label: string; count: number }>;
+  };
+  issues: Array<{
+    code: string;
+    message: string;
+    blocksReady: boolean;
+    blocksLaunch: boolean;
+  }>;
+  canSaveDraft: boolean;
+  canMarkReady: boolean;
+  canLaunch: boolean;
+  canTestSend: boolean;
+  connector: {
+    vkConnectorReady: boolean;
+    canSchedule: boolean;
+    canRun: boolean;
+    message: string;
+  };
+  workerReady: boolean;
+  providerReady: {
+    ready: boolean;
+    supportsButtons: boolean;
+    supportsImages: boolean;
+    supportsTestSend: boolean;
+    reason: string;
+  };
+  linksWithUtm: Array<{ buttonText: string; url: string }>;
+  studioTimezoneLabel: string;
 };
 
 export type CommAnalyticsSummary = {
@@ -196,15 +247,15 @@ export const COMM_CAMPAIGN_STATUS_LABELS: Record<CommCampaignStatus, string> = {
 };
 
 export const COMM_BUTTON_TYPE_LABELS: Record<CommButtonType, string> = {
-  REPLY_TEXT: "Ответ текстом",
-  CALLBACK: "Callback",
-  OPEN_LINK: "Ссылка",
-  UNSUBSCRIBE: "Отписка",
+  REPLY_TEXT: "Ответить сообщением",
+  CALLBACK: "Передать действие боту",
+  OPEN_LINK: "Открыть страницу",
+  UNSUBSCRIBE: "Отписаться",
 };
 
 export const COMM_BUTTON_STYLE_LABELS: Record<CommButtonStyle, string> = {
-  PRIMARY: "PRIMARY",
-  POSITIVE: "POSITIVE",
-  NEGATIVE: "NEGATIVE",
-  SECONDARY: "SECONDARY",
+  PRIMARY: "Основная",
+  POSITIVE: "Акцентная",
+  NEGATIVE: "Отписка",
+  SECONDARY: "Нейтральная",
 };
