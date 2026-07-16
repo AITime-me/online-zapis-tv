@@ -3,7 +3,12 @@
 import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 import { bookingStudio, bookingStudioTelHref } from "@/components/booking/booking-config";
-import { BookingLegalLinks } from "@/components/booking/booking-legal-links";
+import {
+  BOOKING_LEGAL_CONSENT_HREF,
+  BOOKING_LEGAL_PRIVACY_HREF,
+  BOOKING_LEGAL_TERMS_HREF,
+  BookingLegalLink,
+} from "@/components/booking/booking-legal-links";
 import { StudioLogo } from "@/components/brand/studio-logo";
 import { HOME_FOOTER_LEGAL_LINKS } from "@/components/home/home-data";
 import { studioBrand } from "@/lib/brand/studio-brand";
@@ -210,11 +215,18 @@ export function HomeLegalNotice({
       className={`font-body text-xs leading-relaxed sm:text-sm ${className}`}
       style={{ color: studioBrand.inkMuted }}
     >
-      Нажимая «{actionLabel}», Вы соглашаетесь с{" "}
-      <BookingLegalLinks
-        privacyLabel="политикой конфиденциальности"
-        termsLabel="публичной офертой"
-      />
+      Нажимая «{actionLabel}», вы даёте{" "}
+      <BookingLegalLink href={BOOKING_LEGAL_CONSENT_HREF}>
+        согласие на обработку персональных данных
+      </BookingLegalLink>
+      , подтверждаете ознакомление с{" "}
+      <BookingLegalLink href={BOOKING_LEGAL_PRIVACY_HREF}>
+        политикой конфиденциальности
+      </BookingLegalLink>{" "}
+      и принимаете условия{" "}
+      <BookingLegalLink href={BOOKING_LEGAL_TERMS_HREF}>
+        публичной оферты
+      </BookingLegalLink>
       .
     </p>
   );

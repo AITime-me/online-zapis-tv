@@ -1,47 +1,78 @@
 "use client";
 
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { useId } from "react";
 import { bookingTheme } from "@/components/booking/booking-theme";
+import {
+  BOOKING_LEGAL_CONSENT_HREF,
+  BOOKING_LEGAL_PRIVACY_HREF,
+  BOOKING_LEGAL_TERMS_HREF,
+} from "@/lib/booking/legal-document-hrefs";
+
+export {
+  BOOKING_LEGAL_CONSENT_HREF,
+  BOOKING_LEGAL_PRIVACY_HREF,
+  BOOKING_LEGAL_TERMS_HREF,
+} from "@/lib/booking/legal-document-hrefs";
 
 export const bookingLegalLinkClassName =
   "font-medium underline decoration-[#c4a35a]/50 underline-offset-[3px] transition hover:decoration-[#c4a35a] active:opacity-80";
 
-type BookingLegalLinksProps = {
-  className?: string;
-  privacyLabel?: string;
-  termsLabel?: string;
+type BookingLegalLinkProps = {
+  href: string;
+  children: ReactNode;
 };
 
-export function BookingLegalLinks({
-  className = "",
-  privacyLabel = "политикой конфиденциальности",
-  termsLabel = "публичной офертой",
-}: BookingLegalLinksProps) {
+export function BookingLegalLink({ href, children }: BookingLegalLinkProps) {
   return (
-    <span className={className}>
-      <Link
-        href="/privacy"
-        target="_blank"
-        rel="noopener noreferrer"
-        className={bookingLegalLinkClassName}
-        style={{ color: bookingTheme.green }}
-        onClick={(event) => event.stopPropagation()}
-      >
-        {privacyLabel}
-      </Link>
-      {" и "}
-      <Link
-        href="/terms"
-        target="_blank"
-        rel="noopener noreferrer"
-        className={bookingLegalLinkClassName}
-        style={{ color: bookingTheme.green }}
-        onClick={(event) => event.stopPropagation()}
-      >
-        {termsLabel}
-      </Link>
-    </span>
+    <Link
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={bookingLegalLinkClassName}
+      style={{ color: bookingTheme.green }}
+      onClick={(event) => event.stopPropagation()}
+    >
+      {children}
+    </Link>
+  );
+}
+
+/**
+ * Полная формулировка согласия с тремя отдельными ссылками.
+ * Ссылки намеренно вне <label>, чтобы клик по ним не отмечал чекбокс.
+ */
+export function BookingLegalConsentWording({
+  consentId,
+}: {
+  consentId?: string;
+}) {
+  const LabelPart = ({ children }: { children: ReactNode }) =>
+    consentId ? (
+      <label htmlFor={consentId} className="cursor-pointer">
+        {children}
+      </label>
+    ) : (
+      <span>{children}</span>
+    );
+
+  return (
+    <>
+      <LabelPart>Я даю </LabelPart>
+      <BookingLegalLink href={BOOKING_LEGAL_CONSENT_HREF}>
+        согласие на обработку персональных данных
+      </BookingLegalLink>
+      <LabelPart>, подтверждаю ознакомление с </LabelPart>
+      <BookingLegalLink href={BOOKING_LEGAL_PRIVACY_HREF}>
+        политикой конфиденциальности
+      </BookingLegalLink>
+      <LabelPart> и принимаю условия </LabelPart>
+      <BookingLegalLink href={BOOKING_LEGAL_TERMS_HREF}>
+        публичной оферты
+      </BookingLegalLink>
+      <LabelPart>.</LabelPart>
+    </>
   );
 }
 
@@ -59,11 +90,18 @@ export function BookingLegalConfirmNotice({
       className={`text-xs leading-relaxed sm:text-sm ${className}`}
       style={{ color: bookingTheme.textMuted }}
     >
-      Нажимая «{actionLabel}», вы соглашаетесь с{" "}
-      <BookingLegalLinks
-        privacyLabel="политикой конфиденциальности"
-        termsLabel="публичной офертой"
-      />
+      Нажимая «{actionLabel}», вы даёте{" "}
+      <BookingLegalLink href={BOOKING_LEGAL_CONSENT_HREF}>
+        согласие на обработку персональных данных
+      </BookingLegalLink>
+      , подтверждаете ознакомление с{" "}
+      <BookingLegalLink href={BOOKING_LEGAL_PRIVACY_HREF}>
+        политикой конфиденциальности
+      </BookingLegalLink>{" "}
+      и принимаете условия{" "}
+      <BookingLegalLink href={BOOKING_LEGAL_TERMS_HREF}>
+        публичной оферты
+      </BookingLegalLink>
       .
     </p>
   );
@@ -97,14 +135,7 @@ export function BookingLegalConsentField({
           aria-invalid={Boolean(error)}
         />
         <div style={{ color: textColor }}>
-          <label htmlFor={consentId} className="cursor-pointer">
-            Я согласен(на) с{" "}
-          </label>
-          <BookingLegalLinks
-            privacyLabel="политикой конфиденциальности"
-            termsLabel="публичной офертой"
-          />
-          .
+          <BookingLegalConsentWording consentId={consentId} />
         </div>
       </div>
       {error && (

@@ -44,6 +44,7 @@
     "test:security:password-reset": "tsx scripts/security-password-reset-check.ts",
     "test:security:login-throttle": "tsx scripts/security-login-throttle-check.ts",
     "test:security:staging-ops": "tsx scripts/security-staging-ops-check.ts",
+    "test:security:legal-consent": "tsx scripts/security-legal-consent-check.ts",
     "test:security:mail": "tsx scripts/security-mail-check.ts",
     "test:e2e": "playwright test"
   },
