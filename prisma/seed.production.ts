@@ -85,6 +85,28 @@ async function seedBotSettings(prisma: PrismaClient): Promise<"created" | "skipp
   return "created";
 }
 
+async function seedCommunicationSettings(
+  prisma: PrismaClient,
+): Promise<"created" | "skipped"> {
+  const existing = await prisma.communicationSettings.findUnique({
+    where: { id: "default" },
+  });
+
+  if (existing) {
+    return "skipped";
+  }
+
+  await prisma.communicationSettings.create({
+    data: {
+      id: "default",
+      vkConnectorReady: false,
+      defaultCommunityId: "studio",
+    },
+  });
+
+  return "created";
+}
+
 async function seedLegalDocuments(
   prisma: PrismaClient,
 ): Promise<{ created: number; skipped: number }> {
@@ -178,6 +200,9 @@ async function main(): Promise<void> {
 
     const bot = await seedBotSettings(prisma);
     console.log(`BotSettings: ${bot}`);
+
+    const communications = await seedCommunicationSettings(prisma);
+    console.log(`CommunicationSettings: ${communications}`);
 
     const legal = await seedLegalDocuments(prisma);
     console.log(`LegalDocument: created=${legal.created}, skipped=${legal.skipped}`);

@@ -175,6 +175,9 @@ model User {
   clientMergeLogs         ClientMergeLog[]        @relation("ClientMergePerformedBy")
   botSettingsUpdated      BotSettings[]           @relation("BotSettingsUpdatedBy")
   passwordResetTokens     PasswordResetToken[]
+  communicationImports    CommunicationImportJob[] @relation("CommunicationImportCreatedBy")
+  communicationCampaignsCreated CommunicationCampaign[] @relation("CommunicationCampaignCreatedBy")
+  communicationCampaignsUpdated CommunicationCampaign[] @relation("CommunicationCampaignUpdatedBy")
 
   @@map("users")
 }
@@ -801,13 +804,14 @@ model Client {
   createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz
   updatedAt          DateTime     @updatedAt @map("updated_at") @db.Timestamptz
 
-  appointments      Appointment[]
-  bookingRequests   BookingRequest[]
-  mergedIntoClient  Client?          @relation("ClientMergeTarget", fields: [mergedIntoClientId], references: [id], onDelete: SetNull)
-  mergedSources     Client[]         @relation("ClientMergeTarget")
-  mergedByUser      User?            @relation("ClientMergedBy", fields: [mergedByUserId], references: [id], onDelete: SetNull)
-  mergeLogsAsTarget ClientMergeLog[] @relation("MergeLogTarget")
-  botEventLogs      BotEventLog[]
+  appointments             Appointment[]
+  bookingRequests          BookingRequest[]
+  mergedIntoClient         Client?                 @relation("ClientMergeTarget", fields: [mergedIntoClientId], references: [id], onDelete: SetNull)
+  mergedSources            Client[]                @relation("ClientMergeTarget")
+  mergedByUser             User?                   @relation("ClientMergedBy", fields: [mergedByUserId], references: [id], onDelete: SetNull)
+  mergeLogsAsTarget        ClientMergeLog[]        @relation("MergeLogTarget")
+  botEventLogs             BotEventLog[]
+  communicationContacts    CommunicationContact[]
 
   @@index([status, isArchived])
   @@index([phone])
@@ -904,4 +908,287 @@ model BotEventLog {
   @@index([clientId])
   @@index([bookingRequestId])
   @@map("bot_event_logs")
+}
+
+/**
+ * Коммуникации (VK-рассылки) — control plane foundation.
+ * Без реальной отправки, без VK-токенов, без автоматического создания Client.
+ * Телефон/email в CommunicationContact не хранятся (ПДн остаются в CRM Client).
+ */
+
+enum CommChannel {
+  VK
+}
+
+enum CommContactSource {
+  SALEBOT_IMPORT
+  VK_WEBHOOK
+  MANUAL
+}
+
+enum CommDeliveryStatus {
+  UNKNOWN
+  ALLOWED
+  DENIED
+  BLOCKED
+}
+
+enum CommConsentStatus {
+  UNKNOWN
+  CONFIRMED
+  REVOKED
+}
+
+enum CommCampaignStatus {
+  DRAFT
+  READY
+  SCHEDULED
+  RUNNING
+  PAUSED
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+enum CommButtonType {
+  REPLY_TEXT
+  CALLBACK
+  OPEN_LINK
+  UNSUBSCRIBE
+}
+
+enum CommButtonStyle {
+  PRIMARY
+  POSITIVE
+  NEGATIVE
+  SECONDARY
+}
+
+enum CommEventType {
+  IMPORTED
+  EXCLUDED
+  QUEUED
+  ACCEPTED_BY_CHANNEL
+  SEND_ERROR
+  READ_CONFIRMED
+  BUTTON_CLICKED
+  LINK_OPENED
+  REPLY_RECEIVED
+  UNSUBSCRIBED
+  LEAD_CREATED
+  APPOINTMENT_CREATED
+}
+
+enum CommImportJobStatus {
+  PREVIEWED
+  APPLIED
+  FAILED
+}
+
+model CommunicationSettings {
+  /**
+   * Singleton control plane: VK connector readiness без токенов.
+   */
+  id                 String   @id @default("default")
+  vkConnectorReady   Boolean  @default(false) @map("vk_connector_ready")
+  defaultCommunityId String?  @map("default_community_id")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("communication_settings")
+}
+
+model CommunicationContact {
+  id                  String             @id @default(uuid()) @db.Uuid
+  channel             CommChannel
+  communityId         String             @map("community_id")
+  channelUserId       String             @map("channel_user_id")
+  displayName         String?            @map("display_name")
+  clientId            String?            @map("client_id") @db.Uuid
+  source              CommContactSource
+  firstInteractionAt  DateTime?          @map("first_interaction_at") @db.Timestamptz
+  lastInteractionAt   DateTime?          @map("last_interaction_at") @db.Timestamptz
+  lastInboundAt       DateTime?          @map("last_inbound_at") @db.Timestamptz
+  deliveryStatus      CommDeliveryStatus @default(UNKNOWN) @map("delivery_status")
+  consentStatus       CommConsentStatus  @default(UNKNOWN) @map("consent_status")
+  consentSource       String?            @map("consent_source")
+  consentVersion      String?            @map("consent_version")
+  consentActionAt     DateTime?          @map("consent_action_at") @db.Timestamptz
+  consentAction       String?            @map("consent_action")
+  isUnsubscribed      Boolean            @default(false) @map("is_unsubscribed")
+  exclusionReason     String?            @map("exclusion_reason")
+  tags                String[]           @default([])
+  createdAt           DateTime           @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime           @updatedAt @map("updated_at") @db.Timestamptz
+
+  client     Client?                     @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  events     CommunicationEvent[]
+  recipients CommunicationCampaignRecipient[]
+  redirects  CommunicationRedirectToken[]
+
+  @@unique([channel, communityId, channelUserId])
+  @@index([source])
+  @@index([deliveryStatus])
+  @@index([consentStatus])
+  @@index([isUnsubscribed])
+  @@index([clientId])
+  @@index([lastInteractionAt])
+  @@map("communication_contacts")
+}
+
+model CommunicationSuppression {
+  id            String      @id @default(uuid()) @db.Uuid
+  channel       CommChannel
+  communityId   String      @map("community_id")
+  channelUserId String      @map("channel_user_id")
+  reason        String
+  source        String
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([channel, communityId, channelUserId])
+  @@index([createdAt])
+  @@map("communication_suppressions")
+}
+
+model CommunicationSegment {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String   @unique
+  name        String
+  description String?
+  definition  Json
+  isSystem    Boolean  @default(false) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  campaigns CommunicationCampaign[]
+
+  @@map("communication_segments")
+}
+
+model CommunicationCampaign {
+  id                     String             @id @default(uuid()) @db.Uuid
+  name                   String
+  slug                   String             @unique
+  status                 CommCampaignStatus @default(DRAFT)
+  segmentId              String?            @map("segment_id") @db.Uuid
+  messageText            String             @default("") @map("message_text") @db.Text
+  imageUrl               String?            @map("image_url")
+  scheduledAt            DateTime?          @map("scheduled_at") @db.Timestamptz
+  attributionWindowHours Int                @default(72) @map("attribution_window_hours")
+  utmSource              String             @default("vk") @map("utm_source")
+  utmMedium              String             @default("messenger") @map("utm_medium")
+  utmCampaign            String?            @map("utm_campaign")
+  stats                  Json?
+  createdByUserId        String?            @map("created_by_user_id") @db.Uuid
+  updatedByUserId        String?            @map("updated_by_user_id") @db.Uuid
+  createdAt              DateTime           @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt              DateTime           @updatedAt @map("updated_at") @db.Timestamptz
+
+  segment     CommunicationSegment?            @relation(fields: [segmentId], references: [id], onDelete: SetNull)
+  createdBy   User?                            @relation("CommunicationCampaignCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedBy   User?                            @relation("CommunicationCampaignUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+  buttons     CommunicationCampaignButton[]
+  recipients  CommunicationCampaignRecipient[]
+  events      CommunicationEvent[]
+  redirects   CommunicationRedirectToken[]
+
+  @@index([status])
+  @@index([segmentId])
+  @@map("communication_campaigns")
+}
+
+model CommunicationCampaignButton {
+  id          String          @id @default(uuid()) @db.Uuid
+  campaignId  String          @map("campaign_id") @db.Uuid
+  text        String
+  type        CommButtonType
+  buttonKey   String          @map("button_key")
+  action      String?
+  url         String?
+  promotionId String?         @map("promotion_id") @db.Uuid
+  sortOrder   Int             @default(0) @map("sort_order")
+  style       CommButtonStyle @default(SECONDARY)
+
+  campaign CommunicationCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, buttonKey])
+  @@index([campaignId, sortOrder])
+  @@map("communication_campaign_buttons")
+}
+
+model CommunicationCampaignRecipient {
+  id          String   @id @default(uuid()) @db.Uuid
+  campaignId  String   @map("campaign_id") @db.Uuid
+  contactId   String   @map("contact_id") @db.Uuid
+  status      String   @default("PENDING")
+  queuedAt    DateTime? @map("queued_at") @db.Timestamptz
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  campaign CommunicationCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact  CommunicationContact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  events   CommunicationEvent[]
+
+  @@unique([campaignId, contactId])
+  @@index([campaignId, status])
+  @@map("communication_campaign_recipients")
+}
+
+model CommunicationImportJob {
+  id              String               @id @default(uuid()) @db.Uuid
+  status          CommImportJobStatus  @default(PREVIEWED)
+  originalFileName String?             @map("original_file_name")
+  fileKind        String               @map("file_kind")
+  summary         Json
+  errorMessage    String?              @map("error_message")
+  createdByUserId String?              @map("created_by_user_id") @db.Uuid
+  appliedAt       DateTime?            @map("applied_at") @db.Timestamptz
+  createdAt       DateTime             @default(now()) @map("created_at") @db.Timestamptz
+
+  createdBy User? @relation("CommunicationImportCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt(sort: Desc)])
+  @@index([status])
+  @@map("communication_import_jobs")
+}
+
+model CommunicationEvent {
+  id          String        @id @default(uuid()) @db.Uuid
+  type        CommEventType
+  contactId   String?       @map("contact_id") @db.Uuid
+  campaignId  String?       @map("campaign_id") @db.Uuid
+  recipientId String?       @map("recipient_id") @db.Uuid
+  buttonKey   String?       @map("button_key")
+  occurredAt  DateTime      @default(now()) @map("occurred_at") @db.Timestamptz
+  metadata    Json?
+
+  contact   CommunicationContact?           @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  campaign  CommunicationCampaign?          @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  recipient CommunicationCampaignRecipient? @relation(fields: [recipientId], references: [id], onDelete: SetNull)
+
+  @@index([type, occurredAt(sort: Desc)])
+  @@index([campaignId, type])
+  @@index([contactId, type])
+  @@map("communication_events")
+}
+
+model CommunicationRedirectToken {
+  id             String    @id @default(uuid()) @db.Uuid
+  tokenHash      String    @unique @map("token_hash") @db.VarChar(64)
+  campaignId     String    @map("campaign_id") @db.Uuid
+  contactId      String?   @map("contact_id") @db.Uuid
+  buttonKey      String    @map("button_key")
+  targetPath     String    @map("target_path")
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz
+  clickCount     Int       @default(0) @map("click_count")
+  firstClickedAt DateTime? @map("first_clicked_at") @db.Timestamptz
+  lastClickedAt  DateTime? @map("last_clicked_at") @db.Timestamptz
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  campaign CommunicationCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact  CommunicationContact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  @@index([campaignId, buttonKey])
+  @@index([expiresAt])
+  @@map("communication_redirect_tokens")
 }

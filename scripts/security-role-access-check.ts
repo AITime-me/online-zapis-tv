@@ -17,6 +17,7 @@ import {
   canAccessEmergencyExport,
   canEditBotAdmin,
   canManageClientsAdmin,
+  canManageCommunicationsAdmin,
   canManageGameAdmin,
   canManageOperationalEntities,
   canManagePromotionsAdmin,
@@ -54,6 +55,7 @@ const EXPORT_ALLOWED_ROLES = OPERATIONAL_ADMIN_ROLES;
 const USERS_ADMIN_ROLES = OWNER_ROLES;
 const BOT_SETTINGS_VIEW_ROLES = OWNER_ROLES;
 const BOT_SETTINGS_EDIT_ROLES = OWNER_ROLES;
+const COMMUNICATIONS_ADMIN_ROLES = OWNER_ROLES;
 const GAME_ADMIN_ROLES = OWNER_ROLES;
 const PROMOTIONS_ADMIN_ROLES = OWNER_ROLES;
 const SYSTEM_SETTINGS_ADMIN_ROLES = OWNER_ROLES;
@@ -114,6 +116,11 @@ function testPermissionMatrix(): void {
     assert.equal(canViewBotAdmin(role), role === "OWNER", `bot view: ${role}`);
     assert.equal(canEditBotAdmin(role), role === "OWNER", `bot edit: ${role}`);
     assert.equal(
+      canManageCommunicationsAdmin(role),
+      role === "OWNER",
+      `communications: ${role}`,
+    );
+    assert.equal(
       canManageGameAdmin(role),
       role === "OWNER",
       `game: ${role}`,
@@ -149,6 +156,7 @@ function testPermissionMatrix(): void {
   assert.equal(canAccessAdminSection("MANAGER", "users"), false);
   assert.equal(canAccessAdminSection("MASTER", "users"), false);
   assert.equal(canAccessAdminSection("MANAGER", "bot"), false);
+  assert.equal(canAccessAdminSection("MANAGER", "communications"), false);
   assert.equal(canAccessAdminSection("MANAGER", "clients"), true);
   assert.equal(canAccessAdminSection("MASTER", "clients"), false);
   assert.equal(canAccessAdminSection("MASTER", "emergency-export"), false);
@@ -156,6 +164,8 @@ function testPermissionMatrix(): void {
   assert.equal(canAccessAdminPath("OWNER", "/admin/users"), true);
   assert.equal(canAccessAdminPath("MANAGER", "/admin/users"), false);
   assert.equal(canAccessAdminPath("MANAGER", "/admin/bot"), false);
+  assert.equal(canAccessAdminPath("MANAGER", "/admin/communications"), false);
+  assert.equal(canAccessAdminPath("MANAGER", "/admin/game"), false);
   assert.equal(canAccessAdminPath("MANAGER", "/admin/games"), false);
   assert.equal(canAccessAdminPath("MANAGER", "/admin/clients"), true);
   assert.equal(canAccessAdminPath("MASTER", "/admin/clients"), false);
@@ -163,6 +173,7 @@ function testPermissionMatrix(): void {
   assert.deepEqual([...USERS_ADMIN_ROLES], [...OWNER_ROLES]);
   assert.deepEqual([...BOT_SETTINGS_VIEW_ROLES], [...OWNER_ROLES]);
   assert.deepEqual([...BOT_SETTINGS_EDIT_ROLES], [...OWNER_ROLES]);
+  assert.deepEqual([...COMMUNICATIONS_ADMIN_ROLES], [...OWNER_ROLES]);
   assert.deepEqual([...GAME_ADMIN_ROLES], [...OWNER_ROLES]);
   assert.deepEqual([...PROMOTIONS_ADMIN_ROLES], [...OWNER_ROLES]);
   assert.deepEqual([...SYSTEM_SETTINGS_ADMIN_ROLES], [...OWNER_ROLES]);
@@ -451,6 +462,14 @@ function testOwnerOnlyRoutesUseOwnerRoleConstants(): void {
       needle: /BOT_SETTINGS_VIEW_ROLES/,
     },
     {
+      file: "src/app/api/admin/communications/route.ts",
+      needle: /COMMUNICATIONS_ADMIN_ROLES/,
+    },
+    {
+      file: "src/app/api/admin/communications/import/preview/route.ts",
+      needle: /COMMUNICATIONS_ADMIN_ROLES/,
+    },
+    {
       file: "src/app/api/admin/game/data/route.ts",
       needle: /GAME_ADMIN_ROLES/,
     },
@@ -538,6 +557,7 @@ function testApiAccessRoleConstantsMatchCanon(): void {
     { name: "USERS_ADMIN_ROLES", source: "OWNER_ROLES" },
     { name: "BOT_SETTINGS_VIEW_ROLES", source: "OWNER_ROLES" },
     { name: "BOT_SETTINGS_EDIT_ROLES", source: "OWNER_ROLES" },
+    { name: "COMMUNICATIONS_ADMIN_ROLES", source: "OWNER_ROLES" },
     { name: "GAME_ADMIN_ROLES", source: "OWNER_ROLES" },
     { name: "PROMOTIONS_ADMIN_ROLES", source: "OWNER_ROLES" },
     { name: "SYSTEM_SETTINGS_ADMIN_ROLES", source: "OWNER_ROLES" },

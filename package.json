@@ -47,6 +47,7 @@
     "test:security:staging-game-promotions-restore": "tsx scripts/security-staging-game-promotions-restore-check.ts",
     "test:security:admin-promotions": "tsx scripts/security-admin-promotions-check.ts",
     "test:security:bot-foundation": "tsx scripts/security-bot-foundation-check.ts",
+    "test:security:communications-foundation": "tsx scripts/security-communications-foundation-check.ts",
     "test:security:legal-consent": "tsx scripts/security-legal-consent-check.ts",
     "test:security:mail": "tsx scripts/security-mail-check.ts",
     "test:e2e": "playwright test"

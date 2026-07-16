@@ -89,6 +89,8 @@ export const BOT_SETTINGS_VIEW_ROLES: UserRole[] = OWNER_ROLES;
 
 export const BOT_SETTINGS_EDIT_ROLES: UserRole[] = OWNER_ROLES;
 
+export const COMMUNICATIONS_ADMIN_ROLES: UserRole[] = OWNER_ROLES;
+
 export const INTERNAL_API_ROLES: UserRole[] = INTERNAL_ROLES;
 
 export async function requireInternalApiAuth(): Promise<ApiAuthResult> {

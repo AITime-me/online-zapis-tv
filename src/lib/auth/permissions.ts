@@ -24,7 +24,8 @@ export type AdminSection =
   | "users"
   | "system-settings"
   | "emergency-export"
-  | "bot";
+  | "bot"
+  | "communications";
 
 /** Разделы /admin/*, доступные менеджеру (операционная админка). */
 export const MANAGER_ADMIN_PATH_PREFIXES = [
@@ -43,6 +44,7 @@ export const OWNER_ONLY_ADMIN_PATH_PREFIXES = [
   "/admin/users",
   "/admin/settings",
   "/admin/bot",
+  "/admin/communications",
 ] as const;
 
 export function canAccessInternalZone(role: UserRole): boolean {
@@ -140,6 +142,11 @@ export function canEditBotAdmin(role: UserRole): boolean {
   return isOwner(role);
 }
 
+/** Коммуникации / VK-рассылки (control plane) — только владелец. */
+export function canManageCommunicationsAdmin(role: UserRole): boolean {
+  return isOwner(role);
+}
+
 export function isOwnerOnlyAdminPath(pathname: string): boolean {
   return OWNER_ONLY_ADMIN_PATH_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
@@ -179,6 +186,8 @@ export function canAccessAdminSection(
       return canAccessEmergencyExport(role);
     case "bot":
       return canViewBotAdmin(role);
+    case "communications":
+      return canManageCommunicationsAdmin(role);
     default:
       return false;
   }

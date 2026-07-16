@@ -5,6 +5,7 @@ import { DEFAULT_STUDIO_SETTINGS } from "@/lib/studio-settings/defaults";
 export type ProductionSeedAction =
   | { entity: "StudioSettings"; id: string; action: "create-if-missing" }
   | { entity: "BotSettings"; id: string; action: "create-if-missing" }
+  | { entity: "CommunicationSettings"; id: string; action: "create-if-missing" }
   | { entity: "LegalDocument"; slug: string; action: "create-if-missing" }
   | { entity: "GameConfig"; id: string; action: "create-if-missing" }
   | { entity: "GameCatalog"; slug: string; action: "create-if-missing" };
@@ -22,6 +23,11 @@ export function getProductionSeedPlan(): ProductionSeedAction[] {
     {
       entity: "BotSettings",
       id: DEFAULT_BOT_SETTINGS.id,
+      action: "create-if-missing",
+    },
+    {
+      entity: "CommunicationSettings",
+      id: "default",
       action: "create-if-missing",
     },
     ...LEGAL_DOCUMENT_SEEDS.map(
@@ -53,6 +59,8 @@ export function describeProductionSeedAction(action: ProductionSeedAction): stri
       return `StudioSettings(id=${action.id}): ${action.action} — реквизиты студии по умолчанию (без перезаписи существующих)`;
     case "BotSettings":
       return `BotSettings(id=${action.id}): ${action.action} — бот выключен, каналы отключены, без API-ключей`;
+    case "CommunicationSettings":
+      return `CommunicationSettings(id=${action.id}): ${action.action} — VK connector выключен, без токенов и рассылок`;
     case "LegalDocument":
       return `LegalDocument(slug=${action.slug}): ${action.action} — юридический документ (create-if-missing, без перезаписи правок владельца)`;
     case "GameConfig":
@@ -73,6 +81,7 @@ export function printProductionSeedDryRun(): void {
   }
 
   console.log("\nНе создаются: пользователи, клиенты, заявки, записи, мастера, услуги,");
-  console.log("расписание, игровые результаты, подарки, акции, тестовые токены.");
+  console.log("расписание, игровые результаты, подарки, акции, тестовые токены,");
+  console.log("контакты коммуникаций, получатели и демо-рассылки.");
   console.log("\nПосле первого запуска проверьте реквизиты студии и тексты юридических документов.");
 }
