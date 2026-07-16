@@ -21,9 +21,11 @@ const fieldClass =
 const labelClass = "text-xs font-medium text-zinc-700";
 
 export function GamePanel({
+  gameCatalogId,
   initialConfig,
   initialGifts,
 }: {
+  gameCatalogId: string;
   initialConfig: GameConfigDto;
   initialGifts: GameGiftDto[];
 }) {
@@ -59,7 +61,10 @@ export function GamePanel({
           : null;
 
   const refresh = async () => {
-    const response = await fetch("/api/admin/game/data", { cache: "no-store" });
+    const response = await fetch(
+      `/api/admin/game/data?catalogId=${encodeURIComponent(gameCatalogId)}`,
+      { cache: "no-store" },
+    );
     const payload = await response.json();
     if (!response.ok || !payload.ok) {
       throw new Error(payload.error ?? "Не удалось обновить данные");
@@ -134,7 +139,9 @@ export function GamePanel({
     setMessage(null);
     try {
       const isNew = editingGiftId === "new";
-      const url = isNew ? "/api/admin/game/gifts" : `/api/admin/game/gifts/${editingGiftId}`;
+      const url = isNew
+        ? `/api/admin/games/${encodeURIComponent(gameCatalogId)}/gifts`
+        : `/api/admin/games/${encodeURIComponent(gameCatalogId)}/gifts/${encodeURIComponent(String(editingGiftId))}`;
       const method = isNew ? "POST" : "PATCH";
       const response = await fetch(url, {
         method,
@@ -176,9 +183,12 @@ export function GamePanel({
     setStatus("saving");
     setMessage(null);
     try {
-      const response = await fetch(`/api/admin/game/gifts/${id}`, {
-        method: "DELETE",
-      });
+      const response = await fetch(
+        `/api/admin/games/${encodeURIComponent(gameCatalogId)}/gifts/${encodeURIComponent(id)}`,
+        {
+          method: "DELETE",
+        },
+      );
       const payload = await response.json();
       if (!response.ok || !payload.ok) {
         throw new Error(payload.error ?? "Не удалось удалить подарок");

@@ -30,12 +30,13 @@ export type GameGiftDto = {
   allowedGameDirections: string[];
   allowedResultTypes: string[];
   requiredPremiumLevel: number;
+  gameCatalogId: string | null;
   createdAt: string;
   updatedAt: string;
 };
 
 export type GameGiftWriteInput = Partial<
-  Omit<GameGiftDto, "id" | "createdAt" | "updatedAt">
+  Omit<GameGiftDto, "id" | "createdAt" | "updatedAt" | "gameCatalogId">
 > & {
   name: string;
   shortDescription: string;

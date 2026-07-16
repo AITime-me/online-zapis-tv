@@ -313,6 +313,7 @@ curl http://127.0.0.1:3000/api/health
 | `scripts/ops/staging-rollback-app.sh` | Откат app |
 | `scripts/ops/staging-restore-db.sh` | Ручной restore БД |
 | `scripts/ops/staging-backup-db.sh` | Ежедневный scheduled backup (см. [staging-backup.md](./staging-backup.md)) |
+| `scripts/ops/staging-restore-game-promotions.sh` | Ручной restore подарков игры + витринной скидки (см. [staging-restore-game-promotions.md](./staging-restore-game-promotions.md); не в deploy) |
 | `scripts/ops/lib/staging-ops-common.sh` | Общие безопасные функции |
 | `docker-compose.staging.yml` | Сервисы app, postgres, migrator (profile ops) |
 | `Dockerfile` | Targets: deps, builder, **migrator**, runner |

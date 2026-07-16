@@ -2,6 +2,14 @@ import type { Prisma } from "@prisma/client";
 import { getStudioNow } from "@/lib/datetime/date-layer";
 import { prisma } from "@/lib/db";
 import {
+  assertHomepageCtaFields,
+  assertSafePromotionCtaLink,
+} from "@/lib/promotions/cta-link-policy";
+import {
+  syncPromotionServicesInTx,
+  validateNewPromotionServiceIds,
+} from "@/lib/promotions/promotion-services-sync";
+import {
   promotionSourceFromDb,
   promotionSourceToDb,
   promotionStatusFromDb,
@@ -105,7 +113,11 @@ function parseOptionalDate(
 }
 
 function normalizeSlug(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 async function assertUniqueSlug(slug: string, excludeId?: string): Promise<void> {
@@ -118,34 +130,13 @@ async function assertUniqueSlug(slug: string, excludeId?: string): Promise<void>
   }
 }
 
-async function syncPromotionServices(
-  promotionId: string,
-  serviceIds: string[],
-): Promise<void> {
-  const uniqueIds = [...new Set(serviceIds)];
-  if (uniqueIds.length === 0) {
-    await prisma.promotionService.deleteMany({ where: { promotionId } });
-    return;
+function wrapSyncError(error: unknown): never {
+  if (error instanceof PromotionValidationError) {
+    throw error;
   }
-
-  const services = await prisma.service.findMany({
-    where: {
-      id: { in: uniqueIds },
-      ...promotionServiceOptionsWhere,
-    },
-    select: { id: true },
-  });
-  if (services.length !== uniqueIds.length) {
-    throw new PromotionValidationError("Одна или несколько услуг недоступны");
-  }
-
-  await prisma.$transaction([
-    prisma.promotionService.deleteMany({ where: { promotionId } }),
-    prisma.promotionService.createMany({
-      data: uniqueIds.map((serviceId) => ({ promotionId, serviceId })),
-      skipDuplicates: true,
-    }),
-  ]);
+  throw new PromotionValidationError(
+    error instanceof Error ? error.message : "Ошибка привязки услуг",
+  );
 }
 
 function parseDiscountValue(
@@ -173,9 +164,7 @@ function applyDiscountFields(
   }
   if (input.discountUnit !== undefined) {
     data.discountUnit =
-      input.discountUnit === null
-        ? null
-        : discountUnitToDb(input.discountUnit);
+      input.discountUnit === null ? null : discountUnitToDb(input.discountUnit);
   }
   if (input.discountDescription !== undefined) {
     data.discountDescription = input.discountDescription?.trim() || null;
@@ -198,7 +187,38 @@ function validateDiscountCombination(
     discountUnit === "percent" &&
     discountValue > 100
   ) {
-    throw new PromotionValidationError("Процентная скидка не может быть больше 100");
+    throw new PromotionValidationError(
+      "Процентная скидка не может быть больше 100",
+    );
+  }
+}
+
+function resolveCtaLinkForWrite(
+  input: PromotionWriteInput,
+): string | null | undefined {
+  if (input.ctaLink === undefined) {
+    return undefined;
+  }
+  try {
+    return assertSafePromotionCtaLink(input.ctaLink);
+  } catch (error) {
+    throw new PromotionValidationError(
+      error instanceof Error ? error.message : "Некорректная ссылка кнопки",
+    );
+  }
+}
+
+function assertHomepageRequirements(input: {
+  showOnHomepage: boolean;
+  ctaText: string | null | undefined;
+  ctaLink: string | null | undefined;
+}): void {
+  try {
+    assertHomepageCtaFields(input);
+  } catch (error) {
+    throw new PromotionValidationError(
+      error instanceof Error ? error.message : "Недостаточно данных для главной",
+    );
   }
 }
 
@@ -255,7 +275,7 @@ function buildWriteData(input: PromotionWriteInput): Prisma.PromotionUpdateInput
     data.ctaText = input.ctaText?.trim() || null;
   }
   if (input.ctaLink !== undefined) {
-    data.ctaLink = input.ctaLink?.trim() || null;
+    data.ctaLink = resolveCtaLinkForWrite(input);
   }
   if (input.imageUrl !== undefined) {
     data.imageUrl = input.imageUrl?.trim() || null;
@@ -285,10 +305,47 @@ export async function listPromotionServiceOptions(): Promise<
   const services = await prisma.service.findMany({
     where: promotionServiceOptionsWhere,
     orderBy: [{ sortOrder: "asc" }, { publicName: "asc" }],
-    select: { id: true, publicName: true },
+    select: { id: true, publicName: true, isActive: true },
   });
 
-  return services;
+  return services.map((service) => ({
+    id: service.id,
+    publicName: service.publicName,
+    isActive: service.isActive,
+    unavailableReason: null,
+  }));
+}
+
+/**
+ * Опции для формы: активный каталог + уже выбранные (даже неактивные) с пометкой.
+ */
+export async function listPromotionServiceOptionsForEdit(
+  selectedServiceIds: string[],
+): Promise<PromotionServiceOption[]> {
+  const active = await listPromotionServiceOptions();
+  const activeIds = new Set(active.map((item) => item.id));
+  const missingIds = selectedServiceIds.filter((id) => !activeIds.has(id));
+  if (missingIds.length === 0) {
+    return active;
+  }
+
+  const extras = await prisma.service.findMany({
+    where: { id: { in: missingIds } },
+    select: { id: true, publicName: true, isActive: true, internalName: true },
+  });
+
+  const extraOptions: PromotionServiceOption[] = extras.map((service) => ({
+    id: service.id,
+    publicName: service.publicName,
+    isActive: service.isActive,
+    unavailableReason: !service.isActive
+      ? "услуга неактивна"
+      : service.internalName.toLowerCase().includes("(тест)")
+        ? "тестовая услуга"
+        : "недоступна для новых привязок",
+  }));
+
+  return [...active, ...extraOptions];
 }
 
 export async function listPromotionsForAdmin(): Promise<PromotionDto[]> {
@@ -324,9 +381,9 @@ export async function createPromotion(
     throw new PromotionValidationError("Название акции обязательно");
   }
 
-  const slug = normalizeSlug(
-    input.slug?.trim() || slugifyPromotionTitle(title),
-  ) || slugifyPromotionTitle(title);
+  const slug =
+    normalizeSlug(input.slug?.trim() || slugifyPromotionTitle(title)) ||
+    slugifyPromotionTitle(title);
   const normalizedSlug = normalizeSlug(slug);
   if (!normalizedSlug) {
     throw new PromotionValidationError("Slug обязателен");
@@ -352,43 +409,72 @@ export async function createPromotion(
 
   validateDiscountCombination(input.discountValue, input.discountUnit);
 
-  const row = await prisma.promotion.create({
-    data: {
-      title,
-      slug: normalizedSlug,
-      shortDescription: input.shortDescription?.trim() || null,
-      description: input.description?.trim() || null,
-      type: promotionTypeToDb(type),
-      status: promotionStatusToDb(status),
-      isActive,
-      startsAt: parseOptionalDate(input.startsAt, "дата начала") ?? null,
-      endsAt: parseOptionalDate(input.endsAt, "дата окончания") ?? null,
-      giftTitle: input.giftTitle?.trim() || null,
-      giftDescription: input.giftDescription?.trim() || null,
-      discountValue: parseDiscountValue(input.discountValue) ?? null,
-      discountUnit:
-        input.discountUnit != null
-          ? discountUnitToDb(input.discountUnit)
-          : null,
-      discountDescription: input.discountDescription?.trim() || null,
-      conditions: input.conditions?.trim() || null,
-      ctaText: input.ctaText?.trim() || null,
-      ctaLink: input.ctaLink?.trim() || null,
-      imageUrl: input.imageUrl?.trim() || null,
-      priority:
-        input.priority !== undefined ? Math.round(input.priority) : 100,
-      source: promotionSourceToDb(source),
-      showOnHomepage: input.showOnHomepage ?? false,
-    },
-    include: promotionInclude,
+  const ctaLink = resolveCtaLinkForWrite({
+    ...input,
+    ctaLink: input.ctaLink ?? null,
+  });
+  const ctaText = input.ctaText?.trim() || null;
+  const showOnHomepage = input.showOnHomepage ?? false;
+  assertHomepageRequirements({
+    showOnHomepage,
+    ctaText,
+    ctaLink: ctaLink ?? null,
   });
 
-  if (input.serviceIds?.length) {
-    await syncPromotionServices(row.id, input.serviceIds);
-    return getPromotionById(row.id);
-  }
+  const createdId = await prisma.$transaction(async (tx) => {
+    let serviceIds: string[] = [];
+    try {
+      serviceIds = await validateNewPromotionServiceIds(
+        tx,
+        input.serviceIds ?? [],
+      );
+    } catch (error) {
+      wrapSyncError(error);
+    }
 
-  return mapPromotion(row);
+    const row = await tx.promotion.create({
+      data: {
+        title,
+        slug: normalizedSlug,
+        shortDescription: input.shortDescription?.trim() || null,
+        description: input.description?.trim() || null,
+        type: promotionTypeToDb(type),
+        status: promotionStatusToDb(status),
+        isActive,
+        startsAt: parseOptionalDate(input.startsAt, "дата начала") ?? null,
+        endsAt: parseOptionalDate(input.endsAt, "дата окончания") ?? null,
+        giftTitle: input.giftTitle?.trim() || null,
+        giftDescription: input.giftDescription?.trim() || null,
+        discountValue: parseDiscountValue(input.discountValue) ?? null,
+        discountUnit:
+          input.discountUnit != null
+            ? discountUnitToDb(input.discountUnit)
+            : null,
+        discountDescription: input.discountDescription?.trim() || null,
+        conditions: input.conditions?.trim() || null,
+        ctaText,
+        ctaLink: ctaLink ?? null,
+        imageUrl: input.imageUrl?.trim() || null,
+        priority:
+          input.priority !== undefined ? Math.round(input.priority) : 100,
+        source: promotionSourceToDb(source),
+        showOnHomepage,
+      },
+      select: { id: true },
+    });
+
+    if (serviceIds.length > 0) {
+      try {
+        await syncPromotionServicesInTx(tx, row.id, serviceIds);
+      } catch (error) {
+        wrapSyncError(error);
+      }
+    }
+
+    return row.id;
+  });
+
+  return getPromotionById(createdId);
 }
 
 export async function restorePromotionFromArchive(
@@ -457,16 +543,18 @@ export async function updatePromotion(
     data.isActive = false;
   }
 
-  if (existing.status === "ARCHIVED" && input.status && input.status !== "archived") {
+  if (
+    existing.status === "ARCHIVED" &&
+    input.status &&
+    input.status !== "archived"
+  ) {
     throw new PromotionValidationError(
       "Чтобы изменить статус архивной акции, сначала верните её из архива.",
     );
   }
 
   const nextStatus =
-    typeof data.status === "string"
-      ? data.status
-      : existing.status;
+    typeof data.status === "string" ? data.status : existing.status;
   const nextIsActive =
     typeof data.isActive === "boolean" ? data.isActive : existing.isActive;
 
@@ -480,14 +568,39 @@ export async function updatePromotion(
     await assertUniqueSlug(data.slug, id);
   }
 
-  await prisma.promotion.update({
-    where: { id },
-    data,
+  const nextShowOnHomepage =
+    typeof data.showOnHomepage === "boolean"
+      ? data.showOnHomepage
+      : existing.showOnHomepage;
+  const nextCtaText =
+    input.ctaText !== undefined
+      ? input.ctaText?.trim() || null
+      : existing.ctaText;
+  const nextCtaLink =
+    input.ctaLink !== undefined
+      ? (resolveCtaLinkForWrite(input) ?? null)
+      : existing.ctaLink;
+
+  assertHomepageRequirements({
+    showOnHomepage: nextShowOnHomepage,
+    ctaText: nextCtaText,
+    ctaLink: nextCtaLink,
   });
 
-  if (input.serviceIds !== undefined) {
-    await syncPromotionServices(id, input.serviceIds);
-  }
+  await prisma.$transaction(async (tx) => {
+    await tx.promotion.update({
+      where: { id },
+      data,
+    });
+
+    if (input.serviceIds !== undefined) {
+      try {
+        await syncPromotionServicesInTx(tx, id, input.serviceIds);
+      } catch (error) {
+        wrapSyncError(error);
+      }
+    }
+  });
 
   return getPromotionById(id);
 }

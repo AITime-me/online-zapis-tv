@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { readApiJsonResponse } from "@/lib/api/read-json-response";
+import { PROMOTION_CTA_LINK_HINT } from "@/lib/promotions/cta-link-policy";
 import { getPromotionHomepageReadiness } from "@/lib/promotions/homepage-eligibility";
+import type { PromotionAdminRule } from "@/services/PromotionAdminService";
 import {
   DISCOUNT_UNIT_LABELS,
   PROMOTION_SOURCE_LABELS,
@@ -19,6 +21,10 @@ import {
   type PromotionTypeDto,
   type PromotionWriteInput,
 } from "@/types/promotion-admin";
+import {
+  PromotionsDetailsList,
+  PromotionsTable,
+} from "@/components/admin/promotions-table";
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 
@@ -262,9 +268,11 @@ function replacePromotion(
 export function PromotionsPanel({
   initialPromotions,
   initialServices,
+  builtInRules = [],
 }: {
   initialPromotions: PromotionDto[];
   initialServices: PromotionServiceOption[];
+  builtInRules?: PromotionAdminRule[];
 }) {
   const router = useRouter();
   const [promotions, setPromotions] = useState(initialPromotions);
@@ -330,22 +338,40 @@ export function PromotionsPanel({
   const startCreate = () => {
     setEditingId("new");
     setForm(emptyForm());
+    setServices(initialServices);
     setSlugTouched(false);
     setSaveStatus("idle");
     setSaveMessage(null);
   };
 
-  const startEdit = (promotion: PromotionDto) => {
+  const startEdit = async (promotion: PromotionDto) => {
     setEditingId(promotion.id);
     setForm(formFromPromotion(promotion));
     setSlugTouched(true);
     setSaveStatus("idle");
     setSaveMessage(null);
+    try {
+      const response = await fetch(
+        `/api/admin/promotions/${encodeURIComponent(promotion.id)}/service-options`,
+        { cache: "no-store" },
+      );
+      const payload = (await response.json()) as {
+        ok?: boolean;
+        services?: PromotionServiceOption[];
+        error?: string;
+      };
+      if (response.ok && payload.ok && Array.isArray(payload.services)) {
+        setServices(payload.services);
+      }
+    } catch {
+      // оставляем initialServices
+    }
   };
 
   const cancelEdit = () => {
     setEditingId(null);
     setForm(emptyForm());
+    setServices(initialServices);
     setSlugTouched(false);
     setSaveStatus("idle");
     setSaveMessage(null);
@@ -517,6 +543,38 @@ export function PromotionsPanel({
 
   return (
     <div className="flex flex-col gap-6">
+      {builtInRules.length > 0 ? (
+        <section className="flex flex-col gap-3 rounded border border-sky-200 bg-sky-50/60 p-4">
+          <div>
+            <h2 className="text-sm font-semibold text-zinc-900">
+              Встроенные правила расчёта (только чтение)
+            </h2>
+            <p className="mt-1 text-xs leading-relaxed text-zinc-600">
+              Эти правила управляют скидкой и подарками в онлайн-записи и
+              расписании (например,{" "}
+              <code className="rounded bg-white px-1">cold-plasma-first-visit-30</code>
+              ). Они не редактируются здесь и не заменяются карточками карусели.
+              Блок ниже — отдельные DB-карточки для показа на главной странице.
+            </p>
+          </div>
+          <PromotionsTable rules={builtInRules} />
+          <PromotionsDetailsList rules={builtInRules} />
+        </section>
+      ) : null}
+
+      <section className="rounded border border-zinc-200 bg-white p-4">
+        <h2 className="text-sm font-semibold text-zinc-900">
+          Карточки акций для карусели и маркетинга
+        </h2>
+        <p className="mt-1 text-xs leading-relaxed text-zinc-600">
+          Редактируемые записи из базы. Для витрины на главной нужны статус
+          «Активна», флаги активности и «Показывать на главной», описание и CTA.
+          Привязка услуг хранится в{" "}
+          <code className="rounded bg-zinc-100 px-1">promotion_services</code> и
+          не влияет на расчёт скидки 30% из встроенного правила.
+        </p>
+      </section>
+
       <section className="flex flex-wrap items-end gap-3 rounded border border-zinc-200 bg-white p-4">
         <label className="flex min-w-[180px] flex-1 flex-col gap-1">
           <span className={labelClass}>Поиск по названию</span>
@@ -1061,8 +1119,12 @@ export function PromotionsPanel({
               <input
                 value={form.ctaLink}
                 onChange={(event) => updateForm("ctaLink", event.target.value)}
+                placeholder="/booking"
                 className={fieldClass}
               />
+              <span className="text-[11px] leading-snug text-zinc-500">
+                {PROMOTION_CTA_LINK_HINT}
+              </span>
             </label>
 
             <label className="flex flex-col gap-1">
@@ -1076,8 +1138,13 @@ export function PromotionsPanel({
 
             <div className="flex flex-col gap-2 md:col-span-2">
               <span className={labelClass}>
-                Привязанные услуги (пусто = общая акция)
+                Привязанные услуги (пусто = общая акция без списка зон)
               </span>
+              <p className="text-[11px] text-zinc-500">
+                Список из текущего каталога услуг (публичные названия). Неактивные
+                и тестовые услуги нельзя выбрать заново; уже сохранённые
+                неактивные связи показываются с пометкой.
+              </p>
               {services.length === 0 ? (
                 <p className="text-sm text-zinc-500">Нет активных услуг</p>
               ) : (
@@ -1093,7 +1160,14 @@ export function PromotionsPanel({
                         onChange={() => toggleService(service.id)}
                         className="mt-0.5"
                       />
-                      <span>{service.publicName}</span>
+                      <span>
+                        {service.publicName}
+                        {service.unavailableReason ? (
+                          <span className="mt-0.5 block text-[11px] text-amber-700">
+                            {service.unavailableReason}
+                          </span>
+                        ) : null}
+                      </span>
                     </label>
                   ))}
                 </div>

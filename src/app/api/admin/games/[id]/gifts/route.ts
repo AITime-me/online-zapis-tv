@@ -1,35 +1,34 @@
 import { NextResponse } from "next/server";
-import { requireApiRoles, GAME_ADMIN_ROLES } from "@/lib/auth/api-access";
 import {
+  GAME_ADMIN_ROLES,
+  requireProtectedMutatingApi,
+} from "@/lib/auth/api-access";
+import {
+  createGameGift,
   GameAdminNotFoundError,
   GameAdminValidationError,
-  getGameAdminPageData,
 } from "@/services/GameAdminService";
+import type { GameGiftWriteInput } from "@/types/game-admin";
+
+type RouteContext = {
+  params: Promise<{ id: string }>;
+};
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export async function GET(request: Request) {
-  const authResult = await requireApiRoles(GAME_ADMIN_ROLES);
+export async function POST(request: Request, context: RouteContext) {
+  const authResult = await requireProtectedMutatingApi(GAME_ADMIN_ROLES, request);
   if ("response" in authResult) {
     return authResult.response;
   }
 
-  const catalogId = new URL(request.url).searchParams.get("catalogId");
-  if (!catalogId?.trim()) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "Параметр catalogId обязателен",
-        code: "GAME_GIFT_CATALOG_REQUIRED",
-      },
-      { status: 400 },
-    );
-  }
+  const { id: gameCatalogId } = await context.params;
 
   try {
-    const data = await getGameAdminPageData(catalogId);
-    return NextResponse.json({ ok: true, ...data });
+    const body = (await request.json()) as GameGiftWriteInput;
+    const gift = await createGameGift(gameCatalogId, body);
+    return NextResponse.json({ ok: true, gift });
   } catch (error) {
     if (error instanceof GameAdminValidationError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: 400 });

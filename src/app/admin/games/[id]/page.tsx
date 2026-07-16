@@ -65,7 +65,7 @@ export default async function GameDetailAdminPage({ params }: GameDetailPageProp
       </section>
 
       {game.type === "catch_time" && game.legacyConfigId ? (
-        <CatchTimeEditor />
+        <CatchTimeEditor gameCatalogId={game.id} />
       ) : (
         <section className="rounded border border-dashed border-zinc-300 bg-zinc-50 px-4 py-8 text-center text-sm text-zinc-600">
           Для этого типа игры пока нет редактора механики. Игра может существовать
@@ -76,7 +76,13 @@ export default async function GameDetailAdminPage({ params }: GameDetailPageProp
   );
 }
 
-async function CatchTimeEditor() {
-  const { config, gifts } = await getGameAdminPageData();
-  return <GamePanel initialConfig={config} initialGifts={gifts} />;
+async function CatchTimeEditor({ gameCatalogId }: { gameCatalogId: string }) {
+  const { config, gifts } = await getGameAdminPageData(gameCatalogId);
+  return (
+    <GamePanel
+      gameCatalogId={gameCatalogId}
+      initialConfig={config}
+      initialGifts={gifts}
+    />
+  );
 }

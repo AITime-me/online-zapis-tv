@@ -24,13 +24,16 @@ ENV DATABASE_URL=postgresql://build:build@localhost:5432/build
 RUN npx prisma generate
 RUN npm run build
 
-# Минимальный образ только для prisma migrate status/deploy (profile ops).
-# Без исходников приложения, без prisma generate, без runtime secrets.
+# Минимальный образ только для prisma migrate status/deploy и ручных ops CLI (profile ops).
+# Без исходников приложения и без runtime secrets.
 FROM deps AS migrator
 WORKDIR /app
 COPY prisma ./prisma
+RUN npx prisma generate
 COPY scripts/ops/lib/prisma-migrate-status.ts ./scripts/ops/lib/prisma-migrate-status.ts
 COPY scripts/ops/lib/classify-migrate-status-cli.ts ./scripts/ops/lib/classify-migrate-status-cli.ts
+COPY scripts/ops/lib/staging-game-promotions-canonical.ts ./scripts/ops/lib/staging-game-promotions-canonical.ts
+COPY scripts/ops/lib/staging-restore-game-promotions-cli.ts ./scripts/ops/lib/staging-restore-game-promotions-cli.ts
 
 FROM base AS runner
 WORKDIR /app

@@ -82,6 +82,8 @@ export type PromotionWriteInput = {
 export type PromotionServiceOption = {
   id: string;
   publicName: string;
+  isActive: boolean;
+  unavailableReason?: string | null;
 };
 
 export const PROMOTION_TYPE_LABELS: Record<PromotionTypeDto, string> = {

@@ -267,6 +267,7 @@ const OPS_SHELL_FILES = [
   "scripts/ops/staging-rollback-app.sh",
   "scripts/ops/staging-restore-db.sh",
   "scripts/ops/staging-backup-db.sh",
+  "scripts/ops/staging-restore-game-promotions.sh",
   "scripts/ops/lib/staging-ops-common.sh",
 ] as const;
 
@@ -676,6 +677,9 @@ function assertMigratorImageContainsClassifier(): void {
   assert.ok(migratorBlock.length > 0, "migrator target must exist");
   assert.match(migratorBlock, /COPY scripts\/ops\/lib\/prisma-migrate-status\.ts/);
   assert.match(migratorBlock, /COPY scripts\/ops\/lib\/classify-migrate-status-cli\.ts/);
+  assert.match(migratorBlock, /COPY scripts\/ops\/lib\/staging-game-promotions-canonical\.ts/);
+  assert.match(migratorBlock, /COPY scripts\/ops\/lib\/staging-restore-game-promotions-cli\.ts/);
+  assert.match(migratorBlock, /npx prisma generate/);
   assert.doesNotMatch(migratorBlock, /\.env/);
 }
 
@@ -1045,6 +1049,7 @@ function assertStagingOpsLockConcurrency(): void {
   const deploy = readFile("scripts/ops/staging-deploy.sh");
   const backup = readFile("scripts/ops/staging-backup-db.sh");
   const restore = readFile("scripts/ops/staging-restore-db.sh");
+  const gamePromotions = readFile("scripts/ops/staging-restore-game-promotions.sh");
 
   const lockBody = extractFunctionBodies(common, "ops_acquire_staging_ops_lock");
   assert.ok(lockBody.length > 0, "ops_acquire_staging_ops_lock must exist");
@@ -1061,6 +1066,7 @@ function assertStagingOpsLockConcurrency(): void {
   for (const [label, source, lockCall] of [
     ["backup", backup, "ops_acquire_staging_ops_lock"],
     ["restore", restore, "ops_acquire_staging_ops_lock"],
+    ["game-promotions", gamePromotions, "ops_acquire_staging_ops_lock"],
   ] as const) {
     const mainBody = extractFunctionBodies(source, "main") || stripBashComments(source);
     assert.match(mainBody, new RegExp(lockCall), `${label} must acquire staging ops lock`);
@@ -1071,6 +1077,12 @@ function assertStagingOpsLockConcurrency(): void {
       `${label} dry-run must exit before staging ops lock`,
     );
   }
+
+  assert.doesNotMatch(
+    stripBashComments(deploy),
+    /staging-restore-game-promotions/,
+    "deploy must not invoke game promotions restore",
+  );
 
   const deployMain = extractFunctionBodies(deploy, "main") || stripBashComments(deploy);
   assert.match(deployMain, /ops_acquire_deploy_lock/);

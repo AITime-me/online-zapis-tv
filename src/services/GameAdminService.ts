@@ -1,4 +1,10 @@
 import { prisma } from "@/lib/db";
+import {
+  assertCreateGiftCatalogId,
+  assertGiftBelongsToCatalog,
+  GAME_GIFT_CATALOG_NOT_FOUND_ERROR,
+  rejectClientCatalogRebind,
+} from "@/lib/game/admin-gift-catalog-binding";
 import type {
   GameConfigDto,
   GameConfigWriteInput,
@@ -34,7 +40,22 @@ function mapConfig(row: Awaited<ReturnType<typeof prisma.gameConfig.findUnique>>
   };
 }
 
-function mapGift(row: Awaited<ReturnType<typeof prisma.gameGift.findMany>>[number]): GameGiftDto {
+function mapGift(row: {
+  id: string;
+  name: string;
+  shortDescription: string;
+  image: string | null;
+  isActive: boolean;
+  probability: number;
+  priority: string;
+  cardStyle: string;
+  allowedGameDirections: string[];
+  allowedResultTypes: string[];
+  requiredPremiumLevel: number;
+  gameCatalogId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}): GameGiftDto {
   return {
     id: row.id,
     name: row.name,
@@ -47,21 +68,52 @@ function mapGift(row: Awaited<ReturnType<typeof prisma.gameGift.findMany>>[numbe
     allowedGameDirections: [...row.allowedGameDirections],
     allowedResultTypes: [...row.allowedResultTypes],
     requiredPremiumLevel: row.requiredPremiumLevel,
+    gameCatalogId: row.gameCatalogId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
 }
 
-export async function getGameAdminPageData(): Promise<{
+async function requireGameCatalogId(gameCatalogId: string): Promise<string> {
+  let catalogId: string;
+  try {
+    catalogId = assertCreateGiftCatalogId(gameCatalogId);
+  } catch (error) {
+    throw new GameAdminValidationError(
+      error instanceof Error ? error.message : GAME_GIFT_CATALOG_NOT_FOUND_ERROR,
+    );
+  }
+
+  const catalog = await prisma.gameCatalog.findUnique({
+    where: { id: catalogId },
+    select: { id: true },
+  });
+  if (!catalog) {
+    throw new GameAdminNotFoundError(GAME_GIFT_CATALOG_NOT_FOUND_ERROR);
+  }
+  return catalog.id;
+}
+
+export async function getGameAdminPageData(gameCatalogId: string): Promise<{
   config: GameConfigDto;
   gifts: GameGiftDto[];
+  gameCatalogId: string;
 }> {
+  const catalogId = await requireGameCatalogId(gameCatalogId);
+
   const [configRow, gifts] = await Promise.all([
     prisma.gameConfig.findUnique({ where: { id: DEFAULT_CONFIG_ID } }),
-    prisma.gameGift.findMany({ orderBy: [{ isActive: "desc" }, { probability: "desc" }, { createdAt: "asc" }] }),
+    prisma.gameGift.findMany({
+      where: { gameCatalogId: catalogId },
+      orderBy: [{ isActive: "desc" }, { probability: "desc" }, { createdAt: "asc" }],
+    }),
   ]);
 
-  return { config: mapConfig(configRow), gifts: gifts.map(mapGift) };
+  return {
+    config: mapConfig(configRow),
+    gifts: gifts.map(mapGift),
+    gameCatalogId: catalogId,
+  };
 }
 
 export async function updateGameConfig(
@@ -138,7 +190,29 @@ function toInt(value: unknown, fallback: number): number {
   return fallback;
 }
 
-export async function createGameGift(input: GameGiftWriteInput): Promise<GameGiftDto> {
+function wrapBindingError(error: unknown): never {
+  if (error instanceof GameAdminValidationError || error instanceof GameAdminNotFoundError) {
+    throw error;
+  }
+  throw new GameAdminValidationError(
+    error instanceof Error ? error.message : "Ошибка привязки подарка к каталогу",
+  );
+}
+
+export async function createGameGift(
+  gameCatalogId: string,
+  input: GameGiftWriteInput,
+): Promise<GameGiftDto> {
+  const catalogId = await requireGameCatalogId(gameCatalogId);
+  try {
+    rejectClientCatalogRebind(
+      (input as { gameCatalogId?: unknown }).gameCatalogId,
+      catalogId,
+    );
+  } catch (error) {
+    wrapBindingError(error);
+  }
+
   const name = input.name.trim();
   const shortDescription = input.shortDescription.trim();
   if (!name) {
@@ -163,16 +237,40 @@ export async function createGameGift(input: GameGiftWriteInput): Promise<GameGif
       allowedGameDirections: normalizeStrings(input.allowedGameDirections),
       allowedResultTypes: normalizeStrings(input.allowedResultTypes),
       requiredPremiumLevel,
+      gameCatalogId: catalogId,
     },
   });
 
   return mapGift(created);
 }
 
-export async function updateGameGift(id: string, input: Partial<GameGiftWriteInput>): Promise<GameGiftDto> {
+export async function updateGameGift(
+  gameCatalogId: string,
+  id: string,
+  input: Partial<GameGiftWriteInput>,
+): Promise<GameGiftDto> {
+  const catalogId = await requireGameCatalogId(gameCatalogId);
+  try {
+    rejectClientCatalogRebind(
+      (input as { gameCatalogId?: unknown }).gameCatalogId,
+      catalogId,
+    );
+  } catch (error) {
+    wrapBindingError(error);
+  }
+
   const existing = await prisma.gameGift.findUnique({ where: { id } });
   if (!existing) {
     throw new GameAdminNotFoundError("Подарок не найден");
+  }
+
+  try {
+    assertGiftBelongsToCatalog({
+      giftCatalogId: existing.gameCatalogId,
+      expectedCatalogId: catalogId,
+    });
+  } catch (error) {
+    wrapBindingError(error);
   }
 
   const name = input.name?.trim();
@@ -203,19 +301,41 @@ export async function updateGameGift(id: string, input: Partial<GameGiftWriteInp
         ? { allowedResultTypes: normalizeStrings(input.allowedResultTypes) }
         : {}),
       ...(input.requiredPremiumLevel !== undefined
-        ? { requiredPremiumLevel: Math.max(0, toInt(input.requiredPremiumLevel, existing.requiredPremiumLevel)) }
+        ? {
+            requiredPremiumLevel: Math.max(
+              0,
+              toInt(input.requiredPremiumLevel, existing.requiredPremiumLevel),
+            ),
+          }
         : {}),
+      gameCatalogId: catalogId,
     },
   });
 
   return mapGift(updated);
 }
 
-export async function deleteGameGift(id: string): Promise<void> {
-  const existing = await prisma.gameGift.findUnique({ where: { id }, select: { id: true } });
+export async function deleteGameGift(
+  gameCatalogId: string,
+  id: string,
+): Promise<void> {
+  const catalogId = await requireGameCatalogId(gameCatalogId);
+  const existing = await prisma.gameGift.findUnique({
+    where: { id },
+    select: { id: true, gameCatalogId: true },
+  });
   if (!existing) {
     throw new GameAdminNotFoundError("Подарок не найден");
   }
+
+  try {
+    assertGiftBelongsToCatalog({
+      giftCatalogId: existing.gameCatalogId,
+      expectedCatalogId: catalogId,
+    });
+  } catch (error) {
+    wrapBindingError(error);
+  }
+
   await prisma.gameGift.delete({ where: { id } });
 }
-

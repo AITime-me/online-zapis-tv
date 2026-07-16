@@ -135,10 +135,10 @@ export function PromotionsDetailsList({ rules }: { rules: PromotionAdminRule[] }
               <dt className="font-medium text-zinc-500">Источник</dt>
               <dd className="mt-0.5">
                 {rule.source === "promo-engine"
-                  ? "promo-engine"
+                  ? "Встроенное правило расчёта (promo-engine)"
                   : rule.source === "gift-engine"
-                    ? "gift-engine"
-                    : "planned"}
+                    ? "Встроенное правило подарка (gift-engine)"
+                    : "Заготовка (ещё не подключена)"}
               </dd>
             </div>
           </dl>
