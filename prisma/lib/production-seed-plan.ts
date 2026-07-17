@@ -1,5 +1,5 @@
 import { DEFAULT_BOT_SETTINGS } from "@/lib/bot-settings/defaults";
-import { LEGAL_DOCUMENT_SEEDS } from "@/lib/legal-document/defaults";
+import { LEGAL_DOCUMENT_SEED_METADATA } from "@/lib/legal-document/defaults";
 import { DEFAULT_STUDIO_SETTINGS } from "@/lib/studio-settings/defaults";
 
 export type ProductionSeedAction =
@@ -30,7 +30,7 @@ export function getProductionSeedPlan(): ProductionSeedAction[] {
       id: "default",
       action: "create-if-missing",
     },
-    ...LEGAL_DOCUMENT_SEEDS.map(
+    ...LEGAL_DOCUMENT_SEED_METADATA.map(
       (document) =>
         ({
           entity: "LegalDocument",
@@ -62,7 +62,7 @@ export function describeProductionSeedAction(action: ProductionSeedAction): stri
     case "CommunicationSettings":
       return `CommunicationSettings(id=${action.id}): ${action.action} — VK connector выключен, без токенов и рассылок`;
     case "LegalDocument":
-      return `LegalDocument(slug=${action.slug}): ${action.action} — юридический документ (create-if-missing, без перезаписи правок владельца)`;
+      return `LegalDocument(slug=${action.slug}): ${action.action} — только metadata/пустой draft, без юридического текста и без публикации`;
     case "GameConfig":
       return `GameConfig(id=${action.id}): ${action.action} — игра выключена (isActive=false)`;
     case "GameCatalog":

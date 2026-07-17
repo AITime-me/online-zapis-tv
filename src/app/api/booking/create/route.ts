@@ -21,6 +21,7 @@ import {
   OnlineServiceUnavailableError,
 } from "@/services/BookingService";
 import { buildManageUrl } from "@/services/BookingManageService";
+import { LegalDocumentsNotReadyError } from "@/services/LegalDocumentService";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -33,7 +34,8 @@ type CreateBookingBody = {
   name?: string;
   phone?: string;
   comment?: string | null;
-  consent?: boolean;
+  personalDataConsent?: boolean;
+  offerAcknowledgement?: boolean;
 };
 
 function toPublicCreatedAppointment(appointment: Awaited<
@@ -105,7 +107,8 @@ export async function POST(request: Request) {
     const clientData: ClientDataInput = {
       clientName,
       clientPhone,
-      consent: body.consent === true,
+      personalDataConsent: body.personalDataConsent === true,
+      offerAcknowledgement: body.offerAcknowledgement === true,
     };
 
     const fieldErrors = validateClientData(clientData);
@@ -138,6 +141,8 @@ export async function POST(request: Request) {
       name: clientName,
       phone: clientPhone,
       comment: comment || undefined,
+      personalDataConsent: true,
+      offerAcknowledgement: true,
     });
 
     if (!appointment.manageToken) {
@@ -159,6 +164,12 @@ export async function POST(request: Request) {
       { headers: { "Content-Type": "application/json; charset=utf-8" } },
     );
   } catch (error) {
+    if (error instanceof LegalDocumentsNotReadyError) {
+      return errorResponse(error.message, 503, {
+        code: "LEGAL_DOCUMENTS_NOT_READY",
+        missingSlugs: error.missingSlugs,
+      });
+    }
     if (error instanceof AppointmentConflictError) {
       return errorResponse(error.message, 409, { code: error.name });
     }

@@ -178,6 +178,7 @@ model User {
   communicationImports    CommunicationImportJob[] @relation("CommunicationImportCreatedBy")
   communicationCampaignsCreated CommunicationCampaign[] @relation("CommunicationCampaignCreatedBy")
   communicationCampaignsUpdated CommunicationCampaign[] @relation("CommunicationCampaignUpdatedBy")
+  legalDocumentVersionsCreated LegalDocumentVersion[] @relation("LegalDocumentVersionCreatedBy")
 
   @@map("users")
 }
@@ -358,6 +359,7 @@ model Appointment {
   createdByUser User?    @relation("AppointmentCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   client        Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
   rescheduleRequests BookingRequest[]
+  legalAcceptanceRecords LegalAcceptanceRecord[]
 
   @@index([masterId, startsAt, endsAt])
   @@index([startsAt])
@@ -463,6 +465,7 @@ model BookingRequest {
   appointment  Appointment?  @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
   botEventLogs BotEventLog[]
   gamePlay     GamePlay?     @relation("GamePlayLead")
+  legalAcceptanceRecords LegalAcceptanceRecord[]
 
   @@index([status, createdAt(sort: Desc)])
   @@index([clientId])
@@ -606,6 +609,8 @@ model GamePlay {
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
   completedAt DateTime? @map("completed_at") @db.Timestamptz
   consumedAt  DateTime? @map("consumed_at") @db.Timestamptz
+
+  legalAcceptanceRecords LegalAcceptanceRecord[]
 
   @@index([createdAt])
   @@index([gameDirection])
@@ -764,15 +769,98 @@ model StudioSettings {
 }
 
 model LegalDocument {
-  id          String   @id @default(cuid())
-  slug        String   @unique
-  title       String
-  content     String   @db.Text
-  isPublished Boolean  @default(true) @map("is_published")
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  /// Служебное название для админки (не обязательно совпадает с title опубликованной версии).
+  title     String
+  /// Публичный путь (для документов вне корневых /slug).
+  publicPath String? @map("public_path")
+
+  /// Legacy: прежний текст. После миграции версий не используется reader'ом.
+  /// TODO(legal-versioning): удалить content/isPublished после подтверждения на staging/prod.
+  content     String  @default("") @db.Text
+  isPublished Boolean @default(false) @map("is_published")
+
+  currentPublishedVersionId String?               @unique @map("current_published_version_id")
+  currentPublishedVersion   LegalDocumentVersion? @relation("CurrentPublishedLegalVersion", fields: [currentPublishedVersionId], references: [id], onDelete: SetNull)
+
+  versions LegalDocumentVersion[] @relation("LegalDocumentVersions")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   @@map("legal_documents")
+}
+
+enum LegalDocumentVersionStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+model LegalDocumentVersion {
+  id            String                     @id @default(cuid())
+  documentId    String                     @map("document_id")
+  versionNumber Int                        @map("version_number")
+  title         String
+  content       String                     @db.Text
+  contentHash   String                     @map("content_hash") @db.VarChar(64)
+  status        LegalDocumentVersionStatus @default(DRAFT)
+  createdAt     DateTime                   @default(now()) @map("created_at") @db.Timestamptz
+  publishedAt   DateTime?                  @map("published_at") @db.Timestamptz
+  createdByUserId String?                  @map("created_by_user_id") @db.Uuid
+
+  document      LegalDocument @relation("LegalDocumentVersions", fields: [documentId], references: [id], onDelete: Cascade)
+  createdByUser User?         @relation("LegalDocumentVersionCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  currentForDocument LegalDocument? @relation("CurrentPublishedLegalVersion")
+  acceptanceRecords LegalAcceptanceRecord[]
+
+  @@unique([documentId, versionNumber])
+  @@index([documentId, status])
+  @@map("legal_document_versions")
+}
+
+enum LegalAcceptanceType {
+  PERSONAL_DATA_CONSENT
+  OFFER_ACKNOWLEDGEMENT
+  MARKETING_CONSENT
+}
+
+enum LegalAcceptanceSource {
+  ONLINE_BOOKING
+  MANAGER_REQUEST
+  CONSULTATION_REQUEST
+  GAME_CLAIM
+}
+
+/// Append-only журнал юридически значимых подтверждений. Не редактируется через админку.
+model LegalAcceptanceRecord {
+  id               String                @id @default(cuid())
+  acceptanceType   LegalAcceptanceType   @map("acceptance_type")
+  documentVersionId String               @map("document_version_id")
+  documentSlug     String                @map("document_slug")
+  contentHash      String                @map("content_hash") @db.VarChar(64)
+  acceptedAt       DateTime              @default(now()) @map("accepted_at") @db.Timestamptz
+  source           LegalAcceptanceSource
+  appointmentId    String?               @map("appointment_id") @db.Uuid
+  bookingRequestId String?               @map("booking_request_id") @db.Uuid
+  clientId         String?               @map("client_id") @db.Uuid
+  gamePlayId       String?               @map("game_play_id") @db.Uuid
+  requestReference String?               @map("request_reference")
+
+  documentVersion LegalDocumentVersion @relation(fields: [documentVersionId], references: [id], onDelete: Restrict)
+  appointment     Appointment?         @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  bookingRequest  BookingRequest?      @relation(fields: [bookingRequestId], references: [id], onDelete: SetNull)
+  client          Client?              @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  gamePlay        GamePlay?            @relation(fields: [gamePlayId], references: [id], onDelete: SetNull)
+
+  @@index([documentVersionId])
+  @@index([bookingRequestId])
+  @@index([appointmentId])
+  @@index([gamePlayId])
+  @@index([acceptedAt])
+  @@index([acceptanceType, source])
+  @@map("legal_acceptance_records")
 }
 
 /**
@@ -812,6 +900,7 @@ model Client {
   mergeLogsAsTarget        ClientMergeLog[]        @relation("MergeLogTarget")
   botEventLogs             BotEventLog[]
   communicationContacts    CommunicationContact[]
+  legalAcceptanceRecords   LegalAcceptanceRecord[]
 
   @@index([status, isArchived])
   @@index([phone])

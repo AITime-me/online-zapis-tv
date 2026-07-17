@@ -35,6 +35,7 @@ import {
   resolveServiceTimingForMaster,
 } from "@/services/ServiceTimingService";
 import { createManageToken } from "@/services/BookingManageService";
+import { recordRequiredPublicFormAcceptances } from "@/services/LegalAcceptanceService";
 import type { AppliedPromotionRecord } from "@/types/applied-promotion";
 
 const APPOINTMENT_BUSY_CONFLICT_MESSAGE =
@@ -116,6 +117,8 @@ export type AppointmentWriteInput = {
   isManualTimeOverride?: boolean;
   appliedPromotions?: AppliedPromotionRecord[] | null;
   clientId?: string | null;
+  /** Только для публичной ONLINE-записи: писать LegalAcceptanceRecord в той же транзакции. */
+  recordPublicLegalAcceptances?: boolean;
 };
 
 export type AppointmentDto = {
@@ -382,6 +385,7 @@ export async function createOnlineAppointment(
       ...input,
       status: "SCHEDULED",
       source: "ONLINE",
+      recordPublicLegalAcceptances: true,
     },
     null,
   );
@@ -479,10 +483,21 @@ async function createAppointmentRecord(
         candidateBreakAfterMinutes,
       );
 
-      return tx.appointment.create({
+      const created = await tx.appointment.create({
         data: createPayload,
         include: { service: true },
       });
+
+      if (input.recordPublicLegalAcceptances && input.source === "ONLINE") {
+        await recordRequiredPublicFormAcceptances(tx, {
+          source: "ONLINE_BOOKING",
+          appointmentId: created.id,
+          clientId: input.clientId ?? null,
+          requestReference: created.manageToken,
+        });
+      }
+
+      return created;
     });
 
     if (input.source === "ONLINE" && !appointment.manageToken) {

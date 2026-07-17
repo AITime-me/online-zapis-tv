@@ -246,7 +246,8 @@ test.describe("Security Batch 1", () => {
         comment: "Security batch regression",
         masterId: null,
         type: "CONSULTATION_REQUEST",
-        consent: true,
+        personalDataConsent: true,
+        offerAcknowledgement: true,
       },
     });
 

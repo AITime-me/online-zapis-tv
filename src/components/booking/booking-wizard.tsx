@@ -79,7 +79,8 @@ type BookingSelection = {
   countryCode: PhoneCountryCode;
   phoneLocal: string;
   comment: string;
-  consent: boolean;
+  personalDataConsent: boolean;
+  offerAcknowledgement: boolean;
 };
 
 const EMPTY_CLIENT_FIELDS = {
@@ -87,7 +88,8 @@ const EMPTY_CLIENT_FIELDS = {
   countryCode: "RU" as PhoneCountryCode,
   phoneLocal: "",
   comment: "",
-  consent: false,
+  personalDataConsent: false,
+  offerAcknowledgement: false,
 };
 
 const STEPS: { id: Step; label: string }[] = [
@@ -586,10 +588,21 @@ export function BookingWizard() {
     const clientErrors = validateClientData({
       clientName: selection.name,
       clientPhone: fullPhone,
-      consent: selection.consent,
+      personalDataConsent: selection.personalDataConsent,
+      offerAcknowledgement: selection.offerAcknowledgement,
     });
-    return !clientErrors.name && !clientErrors.phone && !clientErrors.consent;
-  }, [fullPhone, selection.consent, selection.name]);
+    return (
+      !clientErrors.name &&
+      !clientErrors.phone &&
+      !clientErrors.personalDataConsent &&
+      !clientErrors.offerAcknowledgement
+    );
+  }, [
+    fullPhone,
+    selection.personalDataConsent,
+    selection.offerAcknowledgement,
+    selection.name,
+  ]);
 
   const submitBooking = async () => {
     clientDebugLog("booking.submit", {
@@ -620,11 +633,17 @@ export function BookingWizard() {
     const validationErrors = validateClientData({
       clientName: selection.name,
       clientPhone: fullPhone,
-      consent: selection.consent,
+      personalDataConsent: selection.personalDataConsent,
+      offerAcknowledgement: selection.offerAcknowledgement,
     });
     setClientFieldErrors(validationErrors);
 
-    if (validationErrors.name || validationErrors.phone || validationErrors.consent) {
+    if (
+      validationErrors.name ||
+      validationErrors.phone ||
+      validationErrors.personalDataConsent ||
+      validationErrors.offerAcknowledgement
+    ) {
       clientDebugWarn("booking.submit.blocked", { reason: "client-validation" });
       return;
     }
@@ -640,7 +659,8 @@ export function BookingWizard() {
       name: selection.name.trim(),
       phone: fullPhone,
       comment: selection.comment.trim() || undefined,
-      consent: selection.consent,
+      personalDataConsent: selection.personalDataConsent,
+      offerAcknowledgement: selection.offerAcknowledgement,
     };
 
     clientDebugLog("booking.submit.request", { route: "/api/booking/create" });
@@ -1262,9 +1282,19 @@ export function BookingWizard() {
               onCommentChange={(value) =>
                 setSelection((prev) => ({ ...prev, comment: value }))
               }
-              consent={selection.consent}
-              onConsentChange={(value) =>
-                setSelection((prev) => ({ ...prev, consent: value }))
+              personalDataConsent={selection.personalDataConsent}
+              onPersonalDataConsentChange={(value) =>
+                setSelection((prev) => ({
+                  ...prev,
+                  personalDataConsent: value,
+                }))
+              }
+              offerAcknowledgement={selection.offerAcknowledgement}
+              onOfferAcknowledgementChange={(value) =>
+                setSelection((prev) => ({
+                  ...prev,
+                  offerAcknowledgement: value,
+                }))
               }
               errors={clientFieldErrors}
               onClearError={(field) =>

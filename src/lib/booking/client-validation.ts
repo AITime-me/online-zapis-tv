@@ -13,13 +13,15 @@ import {
 export type ClientDataFieldErrors = {
   name?: string;
   phone?: string;
-  consent?: string;
+  personalDataConsent?: string;
+  offerAcknowledgement?: string;
 };
 
 export type ClientDataInput = {
   clientName: string;
   clientPhone: string;
-  consent: boolean;
+  personalDataConsent: boolean;
+  offerAcknowledgement: boolean;
 };
 
 export {
@@ -33,8 +35,14 @@ export {
   type PhoneCountryId,
 } from "@/lib/phone/country-codes";
 
-export const CLIENT_DATA_CONSENT_ERROR =
+export const CLIENT_DATA_PERSONAL_CONSENT_ERROR =
   "Необходимо согласие на обработку персональных данных";
+
+export const CLIENT_DATA_OFFER_ACK_ERROR =
+  "Необходимо подтвердить ознакомление с условиями записи и публичной офертой";
+
+/** @deprecated Use CLIENT_DATA_PERSONAL_CONSENT_ERROR */
+export const CLIENT_DATA_CONSENT_ERROR = CLIENT_DATA_PERSONAL_CONSENT_ERROR;
 
 export function countPhoneDigits(phone: string): number {
   return phone.replace(/\D/g, "").length;
@@ -71,8 +79,8 @@ export function buildFullPhoneNumber(
   return `+${codeDigits}${localDigits}`;
 }
 
-export function isClientConsentGiven(consent: unknown): boolean {
-  return consent === true;
+export function isClientConsentGiven(value: unknown): boolean {
+  return value === true;
 }
 
 export function validateClientContactFields(
@@ -106,15 +114,24 @@ export function validateClientData(input: ClientDataInput): ClientDataFieldError
     ...validateClientContactFields(input.clientName, input.clientPhone),
   };
 
-  if (!isClientConsentGiven(input.consent)) {
-    errors.consent = CLIENT_DATA_CONSENT_ERROR;
+  if (!isClientConsentGiven(input.personalDataConsent)) {
+    errors.personalDataConsent = CLIENT_DATA_PERSONAL_CONSENT_ERROR;
+  }
+
+  if (!isClientConsentGiven(input.offerAcknowledgement)) {
+    errors.offerAcknowledgement = CLIENT_DATA_OFFER_ACK_ERROR;
   }
 
   return errors;
 }
 
 export function hasClientDataErrors(errors: ClientDataFieldErrors): boolean {
-  return Boolean(errors.name || errors.phone || errors.consent);
+  return Boolean(
+    errors.name ||
+      errors.phone ||
+      errors.personalDataConsent ||
+      errors.offerAcknowledgement,
+  );
 }
 
 export function isClientDataValid(input: ClientDataInput): boolean {
@@ -127,7 +144,8 @@ export function getFirstClientDataError(
   return (
     errors.name ??
     errors.phone ??
-    errors.consent ??
+    errors.personalDataConsent ??
+    errors.offerAcknowledgement ??
     "Заполните обязательные поля"
   );
 }

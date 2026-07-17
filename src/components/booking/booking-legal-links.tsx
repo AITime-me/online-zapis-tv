@@ -39,40 +39,126 @@ export function BookingLegalLink({ href, children }: BookingLegalLinkProps) {
   );
 }
 
-/**
- * Полная формулировка согласия с тремя отдельными ссылками.
- * Ссылки намеренно вне <label>, чтобы клик по ним не отмечал чекбокс.
- */
-export function BookingLegalConsentWording({
-  consentId,
-}: {
-  consentId?: string;
-}) {
-  const LabelPart = ({ children }: { children: ReactNode }) =>
-    consentId ? (
-      <label htmlFor={consentId} className="cursor-pointer">
-        {children}
-      </label>
-    ) : (
-      <span>{children}</span>
-    );
+type LegalCheckboxFieldProps = {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  error?: string;
+  textColor?: string;
+  wording: (labelId: string) => ReactNode;
+};
+
+function LegalCheckboxField({
+  checked,
+  onChange,
+  error,
+  textColor = bookingTheme.textMuted,
+  wording,
+}: LegalCheckboxFieldProps) {
+  const fieldId = useId();
 
   return (
-    <>
-      <LabelPart>Я даю </LabelPart>
-      <BookingLegalLink href={BOOKING_LEGAL_CONSENT_HREF}>
-        согласие на обработку персональных данных
-      </BookingLegalLink>
-      <LabelPart>, подтверждаю ознакомление с </LabelPart>
-      <BookingLegalLink href={BOOKING_LEGAL_PRIVACY_HREF}>
-        политикой конфиденциальности
-      </BookingLegalLink>
-      <LabelPart> и принимаю условия </LabelPart>
-      <BookingLegalLink href={BOOKING_LEGAL_TERMS_HREF}>
-        публичной оферты
-      </BookingLegalLink>
-      <LabelPart>.</LabelPart>
-    </>
+    <div className="space-y-1.5">
+      <div className="flex items-start gap-2.5 text-xs leading-relaxed sm:text-sm">
+        <input
+          id={fieldId}
+          type="checkbox"
+          checked={checked}
+          onChange={(event) => onChange(event.target.checked)}
+          className="mt-0.5 h-4 w-4 shrink-0 rounded border accent-[#1a3d32]"
+          style={{ borderColor: bookingTheme.border }}
+          aria-invalid={Boolean(error)}
+        />
+        <div style={{ color: textColor }}>{wording(fieldId)}</div>
+      </div>
+      {error ? (
+        <p className="pl-6 text-xs" style={{ color: bookingTheme.goldMuted }}>
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function LabelPart({
+  consentId,
+  children,
+}: {
+  consentId: string;
+  children: ReactNode;
+}) {
+  return (
+    <label htmlFor={consentId} className="cursor-pointer">
+      {children}
+    </label>
+  );
+}
+
+type BookingLegalConsentFieldsProps = {
+  personalDataConsent: boolean;
+  onPersonalDataConsentChange: (value: boolean) => void;
+  offerAcknowledgement: boolean;
+  onOfferAcknowledgementChange: (value: boolean) => void;
+  personalDataConsentError?: string;
+  offerAcknowledgementError?: string;
+  textColor?: string;
+};
+
+/**
+ * Два отдельных обязательных подтверждения (согласие на ПД отдельно от оферты).
+ * Ссылки намеренно вне единого <label>, чтобы клик не отмечал чекбокс.
+ */
+export function BookingLegalConsentFields({
+  personalDataConsent,
+  onPersonalDataConsentChange,
+  offerAcknowledgement,
+  onOfferAcknowledgementChange,
+  personalDataConsentError,
+  offerAcknowledgementError,
+  textColor = bookingTheme.textMuted,
+}: BookingLegalConsentFieldsProps) {
+  return (
+    <div className="space-y-3">
+      <LegalCheckboxField
+        checked={personalDataConsent}
+        onChange={onPersonalDataConsentChange}
+        error={personalDataConsentError}
+        textColor={textColor}
+        wording={(id) => (
+          <>
+            <LabelPart consentId={id}>Даю </LabelPart>
+            <BookingLegalLink href={BOOKING_LEGAL_CONSENT_HREF}>
+              согласие на обработку персональных данных
+            </BookingLegalLink>
+            <LabelPart consentId={id}> и подтверждаю ознакомление с </LabelPart>
+            <BookingLegalLink href={BOOKING_LEGAL_PRIVACY_HREF}>
+              политикой обработки персональных данных
+            </BookingLegalLink>
+            <LabelPart consentId={id}>.</LabelPart>
+          </>
+        )}
+      />
+
+      <LegalCheckboxField
+        checked={offerAcknowledgement}
+        onChange={onOfferAcknowledgementChange}
+        error={offerAcknowledgementError}
+        textColor={textColor}
+        wording={(id) => (
+          <>
+            <LabelPart consentId={id}>
+              Ознакомился(ась) с условиями записи и{" "}
+            </LabelPart>
+            <BookingLegalLink href={BOOKING_LEGAL_TERMS_HREF}>
+              публичной офертой
+            </BookingLegalLink>
+            <LabelPart consentId={id}>
+              . Отправка формы является заявкой на бронирование и не означает
+              автоматическое заключение договора — запись подтверждает студия.
+            </LabelPart>
+          </>
+        )}
+      />
+    </div>
   );
 }
 
@@ -90,59 +176,20 @@ export function BookingLegalConfirmNotice({
       className={`text-xs leading-relaxed sm:text-sm ${className}`}
       style={{ color: bookingTheme.textMuted }}
     >
-      Нажимая «{actionLabel}», вы даёте{" "}
+      Нажимая «{actionLabel}», подтвердите оба обязательных пункта выше:
+      согласие на обработку{" "}
       <BookingLegalLink href={BOOKING_LEGAL_CONSENT_HREF}>
-        согласие на обработку персональных данных
+        персональных данных
       </BookingLegalLink>
-      , подтверждаете ознакомление с{" "}
+      , ознакомление с{" "}
       <BookingLegalLink href={BOOKING_LEGAL_PRIVACY_HREF}>
-        политикой конфиденциальности
+        политикой
       </BookingLegalLink>{" "}
-      и принимаете условия{" "}
+      и условиями{" "}
       <BookingLegalLink href={BOOKING_LEGAL_TERMS_HREF}>
         публичной оферты
       </BookingLegalLink>
-      .
+      . Заявка ожидает подтверждения студией.
     </p>
-  );
-}
-
-type BookingLegalConsentFieldProps = {
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-  error?: string;
-  textColor?: string;
-};
-
-export function BookingLegalConsentField({
-  checked,
-  onChange,
-  error,
-  textColor = bookingTheme.textMuted,
-}: BookingLegalConsentFieldProps) {
-  const consentId = useId();
-
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-start gap-2.5 text-xs leading-relaxed sm:text-sm">
-        <input
-          id={consentId}
-          type="checkbox"
-          checked={checked}
-          onChange={(event) => onChange(event.target.checked)}
-          className="mt-0.5 h-4 w-4 shrink-0 rounded border accent-[#1a3d32]"
-          style={{ borderColor: bookingTheme.border }}
-          aria-invalid={Boolean(error)}
-        />
-        <div style={{ color: textColor }}>
-          <BookingLegalConsentWording consentId={consentId} />
-        </div>
-      </div>
-      {error && (
-        <p className="pl-6 text-xs" style={{ color: bookingTheme.goldMuted }}>
-          {error}
-        </p>
-      )}
-    </div>
   );
 }

@@ -92,7 +92,8 @@ export function ProcedureGiftGame({ config }: { config: PublicGameConfig | null 
   const [name, setName] = useState("");
   const [countryCode, setCountryCode] = useState<PhoneCountryCode>("RU");
   const [phoneLocal, setPhoneLocal] = useState("");
-  const [consent, setConsent] = useState(false);
+  const [personalDataConsent, setPersonalDataConsent] = useState(false);
+  const [offerAcknowledgement, setOfferAcknowledgement] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<ClientDataFieldErrors>({});
   const [leadSubmitting, setLeadSubmitting] = useState(false);
   const [leadSuccess, setLeadSuccess] = useState(false);
@@ -190,10 +191,16 @@ export function ProcedureGiftGame({ config }: { config: PublicGameConfig | null 
     const validationErrors = validateClientData({
       clientName: name,
       clientPhone: fullPhone,
-      consent,
+      personalDataConsent,
+      offerAcknowledgement,
     });
     setFieldErrors(validationErrors);
-    if (validationErrors.name || validationErrors.phone || validationErrors.consent) {
+    if (
+      validationErrors.name ||
+      validationErrors.phone ||
+      validationErrors.personalDataConsent ||
+      validationErrors.offerAcknowledgement
+    ) {
       return;
     }
 
@@ -220,7 +227,8 @@ export function ProcedureGiftGame({ config }: { config: PublicGameConfig | null 
           comment: userComment,
           masterId: null,
           type: "CONSULTATION_REQUEST",
-          consent,
+          personalDataConsent,
+          offerAcknowledgement,
           gamePlayId: playId,
         }),
       });
@@ -465,8 +473,10 @@ export function ProcedureGiftGame({ config }: { config: PublicGameConfig | null 
                   onCountryCodeChange={setCountryCode}
                   phoneLocal={phoneLocal}
                   onPhoneLocalChange={setPhoneLocal}
-                  consent={consent}
-                  onConsentChange={setConsent}
+                  personalDataConsent={personalDataConsent}
+                  onPersonalDataConsentChange={setPersonalDataConsent}
+                  offerAcknowledgement={offerAcknowledgement}
+                  onOfferAcknowledgementChange={setOfferAcknowledgement}
                   errors={fieldErrors}
                   onClearError={(field) =>
                     setFieldErrors((current) => ({ ...current, [field]: undefined }))

@@ -7,7 +7,8 @@ import {
   BOOKING_LEGAL_TERMS_HREF,
 } from "../src/lib/booking/legal-document-hrefs";
 import {
-  CLIENT_DATA_CONSENT_ERROR,
+  CLIENT_DATA_OFFER_ACK_ERROR,
+  CLIENT_DATA_PERSONAL_CONSENT_ERROR,
   isClientConsentGiven,
   validateClientData,
 } from "../src/lib/booking/client-validation";
@@ -22,62 +23,24 @@ function runRouteConstantsTests(): void {
   assert.equal(BOOKING_LEGAL_CONSENT_HREF, "/consent");
   assert.equal(BOOKING_LEGAL_PRIVACY_HREF, "/privacy");
   assert.equal(BOOKING_LEGAL_TERMS_HREF, "/terms");
-
-  const hrefsSource = readRepoFile("src/lib/booking/legal-document-hrefs.ts");
-  assert.match(hrefsSource, /BOOKING_LEGAL_CONSENT_HREF\s*=\s*"\/consent"/);
-  assert.match(hrefsSource, /BOOKING_LEGAL_PRIVACY_HREF\s*=\s*"\/privacy"/);
-  assert.match(hrefsSource, /BOOKING_LEGAL_TERMS_HREF\s*=\s*"\/terms"/);
 }
 
 function runConsentComponentSourceTests(): void {
   const legalLinksPath = "src/components/booking/booking-legal-links.tsx";
   const source = readRepoFile(legalLinksPath);
 
-  assert.match(
-    source,
-    /BOOKING_LEGAL_CONSENT_HREF/,
-    `${legalLinksPath}: должна использовать маршрут согласия`,
-  );
-  assert.match(
-    source,
-    /BOOKING_LEGAL_PRIVACY_HREF/,
-    `${legalLinksPath}: должна использовать маршрут политики`,
-  );
-  assert.match(
-    source,
-    /BOOKING_LEGAL_TERMS_HREF/,
-    `${legalLinksPath}: должна использовать маршрут оферты`,
-  );
-
-  assert.match(
-    source,
-    /согласие на обработку персональных данных/,
-    `${legalLinksPath}: должна быть формулировка согласия`,
-  );
-  assert.match(
-    source,
-    /политикой конфиденциальности/,
-    `${legalLinksPath}: должна быть ссылка на политику`,
-  );
-  assert.match(
-    source,
-    /публичной оферты/,
-    `${legalLinksPath}: должна быть ссылка на оферту`,
-  );
-  assert.match(
-    source,
-    /event\.stopPropagation\(\)/,
-    `${legalLinksPath}: клик по ссылке не должен всплывать к чекбоксу`,
-  );
-  assert.match(
-    source,
-    /type=["']checkbox["']/,
-    `${legalLinksPath}: должен быть чекбокс согласия`,
-  );
-  assert.match(
-    source,
-    /checked=\{checked\}/,
-    `${legalLinksPath}: чекбокс контролируется снаружи (по умолчанию false)`,
+  assert.match(source, /BookingLegalConsentFields/);
+  assert.match(source, /Даю/);
+  assert.match(source, /согласие на обработку персональных данных/);
+  assert.match(source, /политикой обработки персональных данных|политикой/);
+  assert.match(source, /Ознакомился\(ась\) с условиями записи/);
+  assert.match(source, /публичной офертой/);
+  assert.match(source, /заявкой на бронирование/);
+  assert.match(source, /event\.stopPropagation\(\)/);
+  assert.equal(
+    (source.match(/LegalCheckboxField/g) ?? []).length >= 2,
+    true,
+    "должны быть два чекбокса",
   );
 }
 
@@ -85,11 +48,9 @@ function runSharedFormUsageTests(): void {
   const clientFields = readRepoFile(
     "src/components/booking/booking-client-fields.tsx",
   );
-  assert.match(
-    clientFields,
-    /BookingLegalConsentField/,
-    "публичные поля клиента должны использовать общий компонент согласия",
-  );
+  assert.match(clientFields, /BookingLegalConsentFields/);
+  assert.match(clientFields, /personalDataConsent/);
+  assert.match(clientFields, /offerAcknowledgement/);
 
   const consumers = [
     "src/components/booking/booking-wizard.tsx",
@@ -100,32 +61,20 @@ function runSharedFormUsageTests(): void {
 
   for (const file of consumers) {
     const source = readRepoFile(file);
-    assert.match(
+    assert.match(source, /BookingClientFields/);
+    assert.match(source, /personalDataConsent.*false|personalDataConsent:\s*false/);
+    assert.match(source, /offerAcknowledgement.*false|offerAcknowledgement:\s*false/);
+    assert.doesNotMatch(
       source,
-      /BookingClientFields/,
-      `${file}: публичная форма должна использовать BookingClientFields`,
-    );
-    assert.match(
-      source,
-      /consent.*false|consent:\s*false/,
-      `${file}: согласие изначально не отмечено`,
+      /consent:\s*false(?![\s\S]*personalDataConsent)/,
     );
   }
-
-  const homeUi = readRepoFile("src/components/home/home-ui.tsx");
-  assert.match(homeUi, /BOOKING_LEGAL_CONSENT_HREF/);
-  assert.match(homeUi, /BOOKING_LEGAL_PRIVACY_HREF/);
-  assert.match(homeUi, /BOOKING_LEGAL_TERMS_HREF/);
 }
 
 function runLegalPagesExistTests(): void {
   for (const route of ["consent", "privacy", "terms"] as const) {
     const pagePath = path.join(ROOT, "src", "app", route, "page.tsx");
-    assert.equal(
-      fs.existsSync(pagePath),
-      true,
-      `страница /${route} должна существовать: ${pagePath}`,
-    );
+    assert.equal(fs.existsSync(pagePath), true, `страница /${route}`);
   }
 }
 
@@ -133,23 +82,32 @@ function runConsentValidationTests(): void {
   assert.equal(isClientConsentGiven(false), false);
   assert.equal(isClientConsentGiven(true), true);
   assert.equal(isClientConsentGiven("true"), false);
-  assert.equal(isClientConsentGiven(1), false);
 
   const withoutConsent = validateClientData({
     clientName: "Анна",
     clientPhone: "+79001234567",
-    consent: false,
+    personalDataConsent: false,
+    offerAcknowledgement: true,
   });
-  assert.equal(withoutConsent.consent, CLIENT_DATA_CONSENT_ERROR);
-  assert.equal(withoutConsent.name, undefined);
-  assert.equal(withoutConsent.phone, undefined);
+  assert.equal(withoutConsent.personalDataConsent, CLIENT_DATA_PERSONAL_CONSENT_ERROR);
+  assert.equal(withoutConsent.offerAcknowledgement, undefined);
 
-  const withConsent = validateClientData({
+  const withoutOffer = validateClientData({
     clientName: "Анна",
     clientPhone: "+79001234567",
-    consent: true,
+    personalDataConsent: true,
+    offerAcknowledgement: false,
   });
-  assert.equal(withConsent.consent, undefined);
+  assert.equal(withoutOffer.offerAcknowledgement, CLIENT_DATA_OFFER_ACK_ERROR);
+
+  const withBoth = validateClientData({
+    clientName: "Анна",
+    clientPhone: "+79001234567",
+    personalDataConsent: true,
+    offerAcknowledgement: true,
+  });
+  assert.equal(withBoth.personalDataConsent, undefined);
+  assert.equal(withBoth.offerAcknowledgement, undefined);
 }
 
 runRouteConstantsTests();

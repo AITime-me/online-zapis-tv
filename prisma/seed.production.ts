@@ -9,7 +9,8 @@
 
 import { PrismaClient } from "@prisma/client";
 import { DEFAULT_BOT_SETTINGS } from "@/lib/bot-settings/defaults";
-import { LEGAL_DOCUMENT_SEEDS } from "@/lib/legal-document/defaults";
+import { hashLegalDocumentContent } from "@/lib/legal-document/content-hash";
+import { LEGAL_DOCUMENT_SEED_METADATA } from "@/lib/legal-document/defaults";
 import { DEFAULT_STUDIO_SETTINGS } from "@/lib/studio-settings/defaults";
 import {
   getProductionSeedPlan,
@@ -113,7 +114,7 @@ async function seedLegalDocuments(
   let created = 0;
   let skipped = 0;
 
-  for (const document of LEGAL_DOCUMENT_SEEDS) {
+  for (const document of LEGAL_DOCUMENT_SEED_METADATA) {
     const existing = await prisma.legalDocument.findUnique({
       where: { slug: document.slug },
     });
@@ -123,12 +124,24 @@ async function seedLegalDocuments(
       continue;
     }
 
-    await prisma.legalDocument.create({
+    const createdDoc = await prisma.legalDocument.create({
       data: {
         slug: document.slug,
         title: document.title,
-        content: document.content,
-        isPublished: document.isPublished,
+        publicPath: document.publicPath,
+        content: "",
+        isPublished: false,
+      },
+    });
+
+    await prisma.legalDocumentVersion.create({
+      data: {
+        documentId: createdDoc.id,
+        versionNumber: 1,
+        title: document.title,
+        content: "",
+        contentHash: hashLegalDocumentContent(""),
+        status: "DRAFT",
       },
     });
     created += 1;

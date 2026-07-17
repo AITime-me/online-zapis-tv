@@ -46,7 +46,8 @@ export function BookingManagerRequestForm({
   const [countryCode, setCountryCode] = useState<PhoneCountryCode>("RU");
   const [phoneLocal, setPhoneLocal] = useState("");
   const [comment, setComment] = useState("");
-  const [consent, setConsent] = useState(false);
+  const [personalDataConsent, setPersonalDataConsent] = useState(false);
+  const [offerAcknowledgement, setOfferAcknowledgement] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<ClientDataFieldErrors>({});
@@ -90,9 +91,10 @@ export function BookingManagerRequestForm({
     () => ({
       clientName: name,
       clientPhone: fullPhone,
-      consent,
+      personalDataConsent,
+      offerAcknowledgement,
     }),
-    [consent, fullPhone, name],
+    [personalDataConsent, offerAcknowledgement, fullPhone, name],
   );
 
   const canSubmit = useMemo(
@@ -105,7 +107,8 @@ export function BookingManagerRequestForm({
     setCountryCode("RU");
     setPhoneLocal("");
     setComment("");
-    setConsent(false);
+    setPersonalDataConsent(false);
+    setOfferAcknowledgement(false);
     setError(null);
     setFieldErrors({});
     setSuccess(false);
@@ -128,7 +131,12 @@ export function BookingManagerRequestForm({
     const validationErrors = validateClientData(clientData);
     setFieldErrors(validationErrors);
 
-    if (validationErrors.name || validationErrors.phone || validationErrors.consent) {
+    if (
+      validationErrors.name ||
+      validationErrors.phone ||
+      validationErrors.personalDataConsent ||
+      validationErrors.offerAcknowledgement
+    ) {
       return;
     }
 
@@ -148,7 +156,8 @@ export function BookingManagerRequestForm({
           comment: comment || null,
           masterId: master?.id ?? null,
           type,
-          consent,
+          personalDataConsent,
+          offerAcknowledgement,
         }),
       });
       const data = (await response.json()) as {
@@ -244,8 +253,10 @@ export function BookingManagerRequestForm({
                 onCountryCodeChange={setCountryCode}
                 phoneLocal={phoneLocal}
                 onPhoneLocalChange={setPhoneLocal}
-                consent={consent}
-                onConsentChange={setConsent}
+                personalDataConsent={personalDataConsent}
+                onPersonalDataConsentChange={setPersonalDataConsent}
+                offerAcknowledgement={offerAcknowledgement}
+                onOfferAcknowledgementChange={setOfferAcknowledgement}
                 errors={fieldErrors}
                 onClearError={clearFieldError}
                 showComment={false}

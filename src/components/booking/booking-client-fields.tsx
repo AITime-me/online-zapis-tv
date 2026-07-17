@@ -1,7 +1,7 @@
 "use client";
 
 import { bookingTheme } from "@/components/booking/booking-theme";
-import { BookingLegalConsentField } from "@/components/booking/booking-legal-links";
+import { BookingLegalConsentFields } from "@/components/booking/booking-legal-links";
 import { PhoneCountrySelect } from "@/components/booking/phone-country-select";
 import {
   getPhonePlaceholder,
@@ -18,8 +18,10 @@ type BookingClientFieldsProps = {
   onPhoneLocalChange: (value: string) => void;
   comment?: string;
   onCommentChange?: (value: string) => void;
-  consent: boolean;
-  onConsentChange: (value: boolean) => void;
+  personalDataConsent: boolean;
+  onPersonalDataConsentChange: (value: boolean) => void;
+  offerAcknowledgement: boolean;
+  onOfferAcknowledgementChange: (value: boolean) => void;
   errors: ClientDataFieldErrors;
   onClearError?: (field: keyof ClientDataFieldErrors) => void;
   variant?: "booking" | "wizard";
@@ -38,8 +40,10 @@ export function BookingClientFields({
   onPhoneLocalChange,
   comment = "",
   onCommentChange,
-  consent,
-  onConsentChange,
+  personalDataConsent,
+  onPersonalDataConsentChange,
+  offerAcknowledgement,
+  onOfferAcknowledgementChange,
   errors,
   onClearError,
   variant = "booking",
@@ -60,9 +64,7 @@ export function BookingClientFields({
     ? "font-body min-w-0 flex-1 rounded-2xl border bg-white/92 px-3 py-2.5 text-sm outline-none transition focus:ring-2 focus:ring-[rgba(201,169,106,0.28)]"
     : "font-body min-w-0 flex-1 rounded-2xl border bg-white/92 px-3 py-3 text-base outline-none transition focus:ring-2 focus:ring-[rgba(201,169,106,0.28)]";
   const borderColor = (hasError: boolean) =>
-    hasError
-      ? bookingTheme.gold
-      : "rgba(201, 169, 106, 0.34)";
+    hasError ? bookingTheme.gold : "rgba(201, 169, 106, 0.34)";
 
   return (
     <div className="space-y-3">
@@ -143,19 +145,25 @@ export function BookingClientFields({
         </label>
       ) : null}
 
-      {showConsent && (
+      {showConsent ? (
         <div className="pt-1">
-          <BookingLegalConsentField
-            checked={consent}
-            onChange={(value) => {
-              onConsentChange(value);
-              onClearError?.("consent");
+          <BookingLegalConsentFields
+            personalDataConsent={personalDataConsent}
+            onPersonalDataConsentChange={(value) => {
+              onPersonalDataConsentChange(value);
+              onClearError?.("personalDataConsent");
             }}
-            error={errors.consent}
+            offerAcknowledgement={offerAcknowledgement}
+            onOfferAcknowledgementChange={(value) => {
+              onOfferAcknowledgementChange(value);
+              onClearError?.("offerAcknowledgement");
+            }}
+            personalDataConsentError={errors.personalDataConsent}
+            offerAcknowledgementError={errors.offerAcknowledgement}
             textColor={isWizard ? "#6b7280" : bookingTheme.textMuted}
           />
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

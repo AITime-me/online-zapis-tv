@@ -19,6 +19,7 @@ import {
   BookingRequestValidationError,
   createBookingRequest,
 } from "@/services/BookingRequestService";
+import { LegalDocumentsNotReadyError } from "@/services/LegalDocumentService";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -29,7 +30,8 @@ type CreateBookingRequestBody = {
   comment?: string;
   masterId?: string | null;
   type?: BookingRequestType;
-  consent?: boolean;
+  personalDataConsent?: boolean;
+  offerAcknowledgement?: boolean;
   gamePlayId?: string | null;
   serviceName?: string | null;
 };
@@ -80,7 +82,8 @@ export async function POST(request: Request) {
     const clientData: ClientDataInput = {
       clientName,
       clientPhone,
-      consent: body.consent === true,
+      personalDataConsent: body.personalDataConsent === true,
+      offerAcknowledgement: body.offerAcknowledgement === true,
     };
 
     const fieldErrors = validateClientData(clientData);
@@ -111,7 +114,8 @@ export async function POST(request: Request) {
       comment: body.comment,
       masterId: body.masterId ?? null,
       type: body.type,
-      consent: body.consent === true,
+      personalDataConsent: true,
+      offerAcknowledgement: true,
       gamePlayId:
         typeof body.gamePlayId === "string"
           ? body.gamePlayId
@@ -124,6 +128,18 @@ export async function POST(request: Request) {
       toPublicBookingRequestCreateResponse({ id: bookingRequest.id }),
     );
   } catch (error) {
+    if (error instanceof LegalDocumentsNotReadyError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: error.message,
+          code: "LEGAL_DOCUMENTS_NOT_READY",
+          missingSlugs: error.missingSlugs,
+        },
+        { status: 503 },
+      );
+    }
+
     if (error instanceof BookingRequestPublicError) {
       return NextResponse.json(
         { ok: false, error: error.message, code: error.code },

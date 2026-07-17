@@ -1,11 +1,18 @@
 import { NextResponse } from "next/server";
-import { SYSTEM_SETTINGS_ADMIN_ROLES, requireApiRoles, requireProtectedMutatingApi, requireProtectedInternalMutatingApi } from "@/lib/auth/api-access";
+import {
+  SYSTEM_SETTINGS_ADMIN_ROLES,
+  requireApiRoles,
+  requireProtectedMutatingApi,
+} from "@/lib/auth/api-access";
 import {
   LegalDocumentValidationError,
+  createDraftFromPublished,
   getLegalDocumentForAdmin,
-  updateLegalDocument,
+  getLegalDocumentsReadiness,
+  publishLegalDocumentDraft,
+  saveLegalDocumentDraft,
 } from "@/services/LegalDocumentService";
-import type { LegalDocumentWriteInput } from "@/types/legal-document";
+import type { LegalDocumentDraftWriteInput } from "@/types/legal-document";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -30,7 +37,10 @@ export async function GET(_request: Request, context: RouteContext) {
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
-  const authResult = await requireProtectedMutatingApi(SYSTEM_SETTINGS_ADMIN_ROLES, request);
+  const authResult = await requireProtectedMutatingApi(
+    SYSTEM_SETTINGS_ADMIN_ROLES,
+    request,
+  );
   if ("response" in authResult) {
     return authResult.response;
   }
@@ -38,8 +48,28 @@ export async function PATCH(request: Request, context: RouteContext) {
   const { slug } = await context.params;
 
   try {
-    const body = (await request.json()) as LegalDocumentWriteInput;
-    const document = await updateLegalDocument(slug, body);
+    const body = (await request.json()) as LegalDocumentDraftWriteInput & {
+      action?: "save-draft" | "publish" | "create-draft-from-published";
+    };
+
+    const action = body.action ?? "save-draft";
+    let document;
+
+    if (action === "publish") {
+      document = await publishLegalDocumentDraft(slug, authResult.user.id);
+    } else if (action === "create-draft-from-published") {
+      document = await createDraftFromPublished(slug, authResult.user.id);
+    } else {
+      document = await saveLegalDocumentDraft(
+        slug,
+        {
+          title: body.title,
+          content: body.content,
+        },
+        authResult.user.id,
+      );
+    }
+
     return NextResponse.json({ ok: true, document });
   } catch (error) {
     if (error instanceof LegalDocumentValidationError) {

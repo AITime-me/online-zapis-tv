@@ -28,11 +28,17 @@ import {
   AppointmentValidationError,
   createOnlineAppointment,
 } from "@/services/AppointmentService";
+import {
+  assertRequiredLegalDocumentsPublished,
+} from "@/services/LegalDocumentService";
+import {
+  isClientConsentGiven,
+  validateClientContactFields,
+} from "@/lib/booking/client-validation";
 import { resolveClientForLead } from "@/services/ClientLinkService";
 import { checkMasterIntervalAvailability } from "@/services/MasterAvailabilityService";
 import { blocksForDayWhere } from "@/services/ScheduleBlockService";
 import { resolveServiceTimingForMaster } from "@/services/ServiceTimingService";
-import { validateClientContactFields } from "@/lib/booking/client-validation";
 import {
   formatPriceDisplay,
   fromPriceBounds,
@@ -56,6 +62,8 @@ export type OnlineBookingInput = {
   name: string;
   phone: string;
   comment?: string;
+  personalDataConsent: boolean;
+  offerAcknowledgement: boolean;
 };
 
 export class OnlineServiceUnavailableError extends AppointmentValidationError {
@@ -668,6 +676,20 @@ export async function getAvailableDaysInMonth(
 export async function createOnlineBooking(input: OnlineBookingInput) {
   const name = input.name.trim();
   const phone = input.phone.trim();
+
+  await assertRequiredLegalDocumentsPublished();
+
+  if (!isClientConsentGiven(input.personalDataConsent)) {
+    throw new AppointmentValidationError(
+      "Необходимо согласие на обработку персональных данных",
+    );
+  }
+  if (!isClientConsentGiven(input.offerAcknowledgement)) {
+    throw new AppointmentValidationError(
+      "Необходимо подтвердить ознакомление с условиями записи и публичной офертой",
+    );
+  }
+
   const fieldErrors = validateClientContactFields(name, phone);
 
   if (fieldErrors.name) {

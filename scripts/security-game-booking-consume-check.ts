@@ -90,7 +90,8 @@ function assertHmacPayloadHash(): void {
     type: "CONSULTATION_REQUEST",
     comment: "Нужна консультация",
     masterId: null,
-    consent: true,
+    personalDataConsent: true,
+    offerAcknowledgement: true,
     gamePlayId: null,
     gameSessionId: null,
   });
@@ -100,7 +101,8 @@ function assertHmacPayloadHash(): void {
     type: "CONSULTATION_REQUEST",
     comment: "Нужна консультация",
     masterId: null,
-    consent: true,
+    personalDataConsent: true,
+    offerAcknowledgement: true,
     gamePlayId: null,
     gameSessionId: null,
   });
@@ -124,10 +126,11 @@ function assertHmacPayloadHash(): void {
     clientName: left.clientName,
     clientPhone: left.clientPhone,
     comment: left.comment,
-    consent: left.consent,
     gamePlayId: left.gamePlayId,
     gameSessionId: left.gameSessionId,
     masterId: left.masterId,
+    offerAcknowledgement: left.offerAcknowledgement,
+    personalDataConsent: left.personalDataConsent,
     type: left.type,
   });
   const expected = createHmac("sha256", secret).update(canonical, "utf8").digest("hex");
@@ -316,7 +319,8 @@ function simulateRegularDoubleSubmit(): void {
       type: "CONSULTATION_REQUEST",
       comment: null,
       masterId: null,
-      consent: true,
+      personalDataConsent: true,
+      offerAcknowledgement: true,
       gamePlayId: null,
       gameSessionId: null,
     }),

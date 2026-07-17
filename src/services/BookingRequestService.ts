@@ -61,6 +61,11 @@ import {
   validateGameBookingForFirstSubmit,
   validateGameBookingForIdempotentRetry,
 } from "@/lib/game/game-booking-consume";
+import {
+  recordRequiredPublicFormAcceptances,
+  resolveAcceptanceSourceForBookingRequestType,
+} from "@/services/LegalAcceptanceService";
+import { assertRequiredLegalDocumentsPublished } from "@/services/LegalDocumentService";
 
 export class BookingRequestValidationError extends Error {
   constructor(message: string) {
@@ -87,7 +92,8 @@ export type CreateBookingRequestInput = {
   comment?: string | null;
   masterId?: string | null;
   type: BookingRequestType;
-  consent: boolean;
+  personalDataConsent: boolean;
+  offerAcknowledgement: boolean;
   gamePlayId?: string | null;
   serviceName?: string | null;
   idempotencyKey: string;
@@ -447,6 +453,19 @@ async function createGameBookingRequest(
         include: bookingRequestInclude,
       });
 
+      await recordRequiredPublicFormAcceptances(tx, {
+        source: resolveAcceptanceSourceForBookingRequestType(
+          input.type === "MANAGER_REQUEST"
+            ? "MANAGER_REQUEST"
+            : "CONSULTATION_REQUEST",
+          true,
+        ),
+        bookingRequestId: created.id,
+        clientId: clientLink.clientId,
+        gamePlayId: resolvedGamePlayId,
+        requestReference: input.idempotencyKey,
+      });
+
       const playUpdated = await tx.gamePlay.updateMany({
         where: {
           id: resolvedGamePlayId,
@@ -559,7 +578,7 @@ async function createRegularBookingRequest(
         return duplicate;
       }
 
-      return tx.bookingRequest.create({
+      const created = await tx.bookingRequest.create({
         data: {
           clientName,
           clientPhone,
@@ -574,6 +593,20 @@ async function createRegularBookingRequest(
         },
         include: bookingRequestInclude,
       });
+
+      await recordRequiredPublicFormAcceptances(tx, {
+        source: resolveAcceptanceSourceForBookingRequestType(
+          input.type === "MANAGER_REQUEST"
+            ? "MANAGER_REQUEST"
+            : "CONSULTATION_REQUEST",
+          false,
+        ),
+        bookingRequestId: created.id,
+        clientId: clientLink.clientId,
+        requestReference: input.idempotencyKey,
+      });
+
+      return created;
     });
 
     return mapBookingRequest(request);
@@ -611,10 +644,13 @@ export async function createBookingRequest(
   const resolvedGamePlayId = resolvePublicGamePlayId(input.gamePlayId);
   const now = new Date();
 
+  await assertRequiredLegalDocumentsPublished();
+
   const fieldErrors = validateClientData({
     clientName,
     clientPhone,
-    consent: input.consent,
+    personalDataConsent: input.personalDataConsent,
+    offerAcknowledgement: input.offerAcknowledgement,
   });
 
   if (fieldErrors.name) {
@@ -625,9 +661,15 @@ export async function createBookingRequest(
     throw new BookingRequestValidationError(fieldErrors.phone);
   }
 
-  if (!isClientConsentGiven(input.consent)) {
+  if (!isClientConsentGiven(input.personalDataConsent)) {
     throw new BookingRequestValidationError(
       "Необходимо согласие на обработку персональных данных",
+    );
+  }
+
+  if (!isClientConsentGiven(input.offerAcknowledgement)) {
+    throw new BookingRequestValidationError(
+      "Необходимо подтвердить ознакомление с условиями записи и публичной офертой",
     );
   }
 
@@ -662,7 +704,8 @@ export async function createBookingRequest(
     type: input.type,
     comment: payloadComment,
     masterId: input.masterId ?? null,
-    consent: input.consent,
+    personalDataConsent: input.personalDataConsent,
+    offerAcknowledgement: input.offerAcknowledgement,
     gamePlayId: resolvedGamePlayId,
     gameSessionId,
   });

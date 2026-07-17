@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { isSystemLegalDocumentSlug } from "@/lib/legal-document/defaults";
-import type { LegalDocumentDto } from "@/types/legal-document";
+import type { LegalDocumentAdminDto } from "@/types/legal-document";
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 
@@ -14,23 +14,47 @@ const labelClass = "text-xs font-medium text-zinc-700";
 export function LegalDocumentEditor({
   initialDocument,
 }: {
-  initialDocument: LegalDocumentDto;
+  initialDocument: LegalDocumentAdminDto;
 }) {
   const [document, setDocument] = useState(initialDocument);
+  const [draftTitle, setDraftTitle] = useState(
+    initialDocument.draftVersion?.title ??
+      initialDocument.currentPublishedVersion?.title ??
+      initialDocument.title,
+  );
+  const [draftContent, setDraftContent] = useState(
+    initialDocument.draftVersion?.content ??
+      initialDocument.currentPublishedVersion?.content ??
+      "",
+  );
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
   const slugReadonly = isSystemLegalDocumentSlug(document.slug);
+  const hasDraft = Boolean(document.draftVersion);
+  const published = document.currentPublishedVersion;
 
   const statusLabel =
     status === "saving"
       ? "Сохраняю..."
       : status === "saved"
-        ? "Сохранено"
+        ? "Готово"
         : status === "error"
           ? `Ошибка${message ? `: ${message}` : ""}`
           : null;
 
-  const saveDocument = async () => {
+  const runAction = async (
+    action: "save-draft" | "publish" | "create-draft-from-published",
+    confirmPublish = false,
+  ) => {
+    if (action === "publish") {
+      if (!confirmPublish) {
+        const ok = window.confirm(
+          "Опубликовать текущий черновик? Он станет неизменяемой версией для сайта и согласий.",
+        );
+        if (!ok) return;
+      }
+    }
+
     setStatus("saving");
     setMessage(null);
 
@@ -39,16 +63,27 @@ export function LegalDocumentEditor({
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: document.title,
-          content: document.content,
-          isPublished: document.isPublished,
+          action,
+          title: draftTitle,
+          content: draftContent,
         }),
       });
       const payload = await response.json();
       if (!response.ok || !payload.ok || !payload.document) {
         throw new Error(payload.error ?? "Ошибка сохранения");
       }
-      setDocument(payload.document);
+      const next = payload.document as LegalDocumentAdminDto;
+      setDocument(next);
+      setDraftTitle(
+        next.draftVersion?.title ??
+          next.currentPublishedVersion?.title ??
+          next.title,
+      );
+      setDraftContent(
+        next.draftVersion?.content ??
+          next.currentPublishedVersion?.content ??
+          "",
+      );
       setStatus("saved");
       window.setTimeout(() => setStatus("idle"), 1500);
     } catch (error) {
@@ -62,8 +97,8 @@ export function LegalDocumentEditor({
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-zinc-200 bg-white p-4">
         <p className="text-sm text-zinc-600">
-          Изменения применяются после сохранения и сразу отображаются на публичной
-          странице, если документ опубликован.
+          Опубликованный текст используется на публичных страницах и при фиксации
+          согласий. Редактируется только черновик.
         </p>
         <Link
           href="/admin/settings/legal"
@@ -73,15 +108,49 @@ export function LegalDocumentEditor({
         </Link>
       </div>
 
+      {published ? (
+        <section className="space-y-2 rounded border border-emerald-200 bg-emerald-50/60 p-4">
+          <h3 className="text-sm font-semibold text-emerald-900">
+            Опубликованная версия v{published.versionNumber}
+          </h3>
+          <p className="text-xs text-emerald-800">
+            Hash: <code>{published.contentHash.slice(0, 16)}…</code>
+            {published.publishedAt
+              ? ` · ${new Date(published.publishedAt).toLocaleString("ru-RU")}`
+              : null}
+          </p>
+          <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded border border-emerald-100 bg-white p-3 text-xs text-zinc-700">
+            {published.content}
+          </pre>
+          {!hasDraft ? (
+            <button
+              type="button"
+              onClick={() => void runAction("create-draft-from-published")}
+              disabled={status === "saving"}
+              className="rounded border border-emerald-700 px-3 py-1.5 text-sm text-emerald-900 hover:bg-emerald-100 disabled:opacity-60"
+            >
+              Создать черновик на основе опубликованной версии
+            </button>
+          ) : null}
+        </section>
+      ) : (
+        <section className="rounded border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+          Опубликованной версии пока нет. Сохраните черновик и опубликуйте его.
+        </section>
+      )}
+
       <section className="space-y-4 rounded border border-zinc-200 bg-zinc-50 p-4">
+        <h3 className="text-sm font-semibold text-zinc-900">
+          {hasDraft ? "Черновик" : "Новый черновик"}
+        </h3>
+
         <label className="flex flex-col gap-1">
-          <span className={labelClass}>Название документа</span>
+          <span className={labelClass}>Название</span>
           <input
-            value={document.title}
-            onChange={(event) =>
-              setDocument((current) => ({ ...current, title: event.target.value }))
-            }
+            value={draftTitle}
+            onChange={(event) => setDraftTitle(event.target.value)}
             className={fieldClass}
+            disabled={Boolean(published) && !hasDraft}
           />
         </label>
 
@@ -92,51 +161,38 @@ export function LegalDocumentEditor({
             readOnly={slugReadonly}
             className={`${fieldClass} ${slugReadonly ? "bg-zinc-100 text-zinc-600" : ""}`}
           />
-          {slugReadonly ? (
-            <span className="text-xs text-zinc-500">
-              Системный slug нельзя изменить.
-            </span>
-          ) : null}
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className={labelClass}>Текст документа</span>
+          <span className={labelClass}>Текст черновика</span>
           <textarea
-            value={document.content}
-            onChange={(event) =>
-              setDocument((current) => ({ ...current, content: event.target.value }))
-            }
-            rows={24}
-            className={`${fieldClass} min-h-[28rem] font-mono text-[13px] leading-relaxed`}
+            value={draftContent}
+            onChange={(event) => setDraftContent(event.target.value)}
+            rows={20}
+            className={`${fieldClass} min-h-[24rem] font-mono text-[13px] leading-relaxed`}
+            disabled={Boolean(published) && !hasDraft}
           />
         </label>
 
-        <label className="flex items-start gap-2 text-sm text-zinc-700">
-          <input
-            type="checkbox"
-            checked={document.isPublished}
-            onChange={(event) =>
-              setDocument((current) => ({
-                ...current,
-                isPublished: event.target.checked,
-              }))
-            }
-            className="mt-0.5"
-          />
-          <span>Опубликован</span>
-        </label>
-
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {statusLabel ? (
             <span className="text-sm text-zinc-500">{statusLabel}</span>
           ) : null}
           <button
             type="button"
-            onClick={saveDocument}
-            disabled={status === "saving"}
+            onClick={() => void runAction("save-draft")}
+            disabled={status === "saving" || (Boolean(published) && !hasDraft)}
             className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
           >
-            Сохранить
+            Сохранить черновик
+          </button>
+          <button
+            type="button"
+            onClick={() => void runAction("publish")}
+            disabled={status === "saving" || !hasDraft}
+            className="rounded bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-60"
+          >
+            Опубликовать версию
           </button>
         </div>
       </section>

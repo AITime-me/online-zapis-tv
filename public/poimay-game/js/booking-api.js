@@ -148,9 +148,14 @@
       clientName: data.clientName,
       clientPhone: data.clientPhone,
       type: data.type || 'MANAGER_REQUEST',
-      consent: data.consent !== false,
+      personalDataConsent: data.personalDataConsent === true,
+      offerAcknowledgement: data.offerAcknowledgement === true,
       gamePlayId: getPlayId(data.gamePlayId)
     };
+
+    if (data.personalDataConsent !== true || data.offerAcknowledgement !== true) {
+      return Promise.reject(new Error('consent_required'));
+    }
 
     if (data.comment) {
       body.comment = data.comment;

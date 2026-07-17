@@ -174,7 +174,8 @@ export function ProcedureGiftGameVanilla({
   const [countryCode, setCountryCode] = useState<PhoneCountryCode>("RU");
   const [phoneLocal, setPhoneLocal] = useState("");
   const [comment, setComment] = useState("");
-  const [consent, setConsent] = useState(false);
+  const [personalDataConsent, setPersonalDataConsent] = useState(false);
+  const [offerAcknowledgement, setOfferAcknowledgement] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<ClientDataFieldErrors>({});
 
   const [leadSubmitting, setLeadSubmitting] = useState(false);
@@ -551,10 +552,16 @@ export function ProcedureGiftGameVanilla({
     const validationErrors = validateClientData({
       clientName: name,
       clientPhone: fullPhone,
-      consent,
+      personalDataConsent,
+      offerAcknowledgement,
     });
     setFieldErrors(validationErrors);
-    if (validationErrors.name || validationErrors.phone || validationErrors.consent) {
+    if (
+      validationErrors.name ||
+      validationErrors.phone ||
+      validationErrors.personalDataConsent ||
+      validationErrors.offerAcknowledgement
+    ) {
       return;
     }
 
@@ -585,7 +592,8 @@ export function ProcedureGiftGameVanilla({
           comment: userComment,
           masterId: null,
           type: "CONSULTATION_REQUEST",
-          consent,
+          personalDataConsent,
+          offerAcknowledgement,
           gamePlayId: playId,
         }),
       });
@@ -615,7 +623,8 @@ export function ProcedureGiftGameVanilla({
       setName("");
       setPhoneLocal("");
       setComment("");
-      setConsent(false);
+      setPersonalDataConsent(false);
+      setOfferAcknowledgement(false);
     } catch (e) {
       setLeadError(e instanceof Error ? e.message : "Не удалось отправить заявку");
     } finally {
@@ -1071,8 +1080,10 @@ export function ProcedureGiftGameVanilla({
                     onCountryCodeChange={setCountryCode}
                     phoneLocal={phoneLocal}
                     onPhoneLocalChange={setPhoneLocal}
-                    consent={consent}
-                    onConsentChange={setConsent}
+                    personalDataConsent={personalDataConsent}
+                    onPersonalDataConsentChange={setPersonalDataConsent}
+                    offerAcknowledgement={offerAcknowledgement}
+                    onOfferAcknowledgementChange={setOfferAcknowledgement}
                     errors={fieldErrors}
                     onClearError={(field) =>
                       setFieldErrors((current) => ({ ...current, [field]: undefined }))

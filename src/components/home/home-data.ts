@@ -102,4 +102,5 @@ export const HOME_FOOTER_LEGAL_LINKS = [
   { label: "Пользовательское соглашение", href: "/offer" },
   { label: "Политика конфиденциальности", href: "/privacy" },
   { label: "Договор публичной оферты", href: "/terms" },
+  { label: "Правила акций и игры", href: "/rules/promotions-game" },
 ] as const;

@@ -215,19 +215,19 @@ export function HomeLegalNotice({
       className={`font-body text-xs leading-relaxed sm:text-sm ${className}`}
       style={{ color: studioBrand.inkMuted }}
     >
-      Нажимая «{actionLabel}», вы даёте{" "}
+      Нажимая «{actionLabel}», подтвердите согласие на обработку{" "}
       <BookingLegalLink href={BOOKING_LEGAL_CONSENT_HREF}>
-        согласие на обработку персональных данных
+        персональных данных
       </BookingLegalLink>
-      , подтверждаете ознакомление с{" "}
+      , ознакомление с{" "}
       <BookingLegalLink href={BOOKING_LEGAL_PRIVACY_HREF}>
-        политикой конфиденциальности
+        политикой
       </BookingLegalLink>{" "}
-      и принимаете условия{" "}
+      и условиями{" "}
       <BookingLegalLink href={BOOKING_LEGAL_TERMS_HREF}>
         публичной оферты
       </BookingLegalLink>
-      .
+      . Заявка ожидает подтверждения студией.
     </p>
   );
 }

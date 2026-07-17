@@ -6,7 +6,8 @@ import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { CLIENT_SEED_IDS } from "@/lib/clients/defaults";
 import { normalizePhone } from "@/lib/phone/normalize-phone";
-import { LEGAL_DOCUMENT_SEEDS } from "@/lib/legal-document/defaults";
+import { hashLegalDocumentContent } from "@/lib/legal-document/content-hash";
+import { LEGAL_DOCUMENT_SEED_METADATA } from "@/lib/legal-document/defaults";
 import { backfillClientNormalizedPhones } from "@/services/ClientLinkService";
 import { assertDevSeedAllowed } from "./lib/assert-dev-seed-allowed";
 
@@ -977,15 +978,34 @@ async function main() {
     },
   });
 
-  for (const document of LEGAL_DOCUMENT_SEEDS) {
-    await prisma.legalDocument.upsert({
+  for (const document of LEGAL_DOCUMENT_SEED_METADATA) {
+    const existing = await prisma.legalDocument.findUnique({
       where: { slug: document.slug },
-      update: {},
-      create: {
+      include: { versions: { take: 1 } },
+    });
+
+    if (existing) {
+      continue;
+    }
+
+    const created = await prisma.legalDocument.create({
+      data: {
         slug: document.slug,
         title: document.title,
-        content: document.content,
-        isPublished: document.isPublished,
+        publicPath: document.publicPath,
+        content: "",
+        isPublished: false,
+      },
+    });
+
+    await prisma.legalDocumentVersion.create({
+      data: {
+        documentId: created.id,
+        versionNumber: 1,
+        title: document.title,
+        content: "",
+        contentHash: hashLegalDocumentContent(""),
+        status: "DRAFT",
       },
     });
   }

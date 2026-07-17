@@ -58,6 +58,7 @@
     "test:security:communications-foundation": "tsx scripts/security-communications-foundation-check.ts",
     "test:security:communications-composer": "tsx scripts/security-communications-composer-check.ts",
     "test:security:legal-consent": "tsx scripts/security-legal-consent-check.ts",
+    "test:security:legal-versioning": "tsx scripts/security-legal-versioning-check.ts",
     "test:security:mail": "tsx scripts/security-mail-check.ts",
     "test:e2e": "playwright test"
   },

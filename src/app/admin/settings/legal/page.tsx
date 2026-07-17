@@ -1,12 +1,18 @@
 import Link from "next/link";
 import { requireAdminSection } from "@/lib/auth/session";
 import { LegalDocumentsPanel } from "@/components/admin/legal-documents-panel";
-import { listLegalDocumentsForAdmin } from "@/services/LegalDocumentService";
+import {
+  getLegalDocumentsReadiness,
+  listLegalDocumentsForAdmin,
+} from "@/services/LegalDocumentService";
 import { SettingsPageHeader } from "../settings-page-header";
 
 export default async function LegalDocumentsAdminPage() {
   const user = await requireAdminSection("system-settings");
-  const documents = await listLegalDocumentsForAdmin();
+  const [documents, readiness] = await Promise.all([
+    listLegalDocumentsForAdmin(),
+    getLegalDocumentsReadiness(),
+  ]);
 
   return (
     <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 p-4 md:p-6">
@@ -17,7 +23,8 @@ export default async function LegalDocumentsAdminPage() {
           <div>
             <h2 className="text-lg font-semibold text-zinc-900">Юридические документы</h2>
             <p className="text-sm text-zinc-600">
-              Тексты для страниц /privacy, /terms, /consent, /offer и /cookies.
+              Версии для /privacy, /terms, /consent, /offer, /cookies и
+              /rules/promotions-game.
             </p>
           </div>
           <Link
@@ -29,7 +36,7 @@ export default async function LegalDocumentsAdminPage() {
         </div>
       </div>
 
-      <LegalDocumentsPanel documents={documents} />
+      <LegalDocumentsPanel documents={documents} readiness={readiness} />
     </main>
   );
 }
