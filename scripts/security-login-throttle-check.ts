@@ -105,6 +105,128 @@ function mockHeaders(values: Record<string, string> = {}) {
   };
 }
 
+type LoginThrottleDeleteWhere = {
+  scope?: LoginThrottleScope;
+  keyHash?: string;
+  OR?: Array<Record<string, unknown>>;
+  AND?: Array<Record<string, unknown>>;
+};
+
+function matchesDateLt(value: Date | null, filter: { lt?: Date } | undefined): boolean {
+  if (!filter?.lt || value == null) {
+    return false;
+  }
+
+  return value.getTime() < filter.lt.getTime();
+}
+
+function matchesLoginThrottleFieldCondition(
+  row: LoginThrottleRow,
+  condition: Record<string, unknown>,
+): boolean {
+  if ("blockedUntil" in condition) {
+    const blockedUntil = condition.blockedUntil;
+    if (blockedUntil === null) {
+      return row.blockedUntil === null;
+    }
+
+    if (
+      typeof blockedUntil === "object" &&
+      blockedUntil !== null &&
+      "lt" in blockedUntil
+    ) {
+      return matchesDateLt(row.blockedUntil, blockedUntil as { lt?: Date });
+    }
+  }
+
+  if ("windowStartedAt" in condition) {
+    const windowStartedAt = condition.windowStartedAt;
+    if (
+      typeof windowStartedAt === "object" &&
+      windowStartedAt !== null &&
+      "lt" in windowStartedAt
+    ) {
+      return matchesDateLt(row.windowStartedAt, windowStartedAt as { lt?: Date });
+    }
+  }
+
+  if ("scope" in condition && condition.scope !== undefined) {
+    return row.scope === condition.scope;
+  }
+
+  if ("keyHash" in condition && condition.keyHash !== undefined) {
+    return row.keyHash === condition.keyHash;
+  }
+
+  return false;
+}
+
+function matchesLoginThrottleAndConditions(
+  row: LoginThrottleRow,
+  conditions: unknown[],
+): boolean {
+  return conditions.every((condition) =>
+    matchesLoginThrottleFieldCondition(row, condition as Record<string, unknown>),
+  );
+}
+
+/** Соответствует Prisma deleteMany для cleanup и точечного clear account throttle. */
+function shouldDeleteLoginThrottleRow(
+  row: LoginThrottleRow,
+  where: LoginThrottleDeleteWhere | undefined,
+): boolean {
+  if (!where) {
+    return false;
+  }
+
+  if (Array.isArray(where.OR)) {
+    return where.OR.some((branch) => {
+      if (branch.AND && Array.isArray(branch.AND)) {
+        return matchesLoginThrottleAndConditions(row, branch.AND);
+      }
+
+      return matchesLoginThrottleFieldCondition(row, branch);
+    });
+  }
+
+  if (where.scope !== undefined && row.scope !== where.scope) {
+    return false;
+  }
+
+  if (where.keyHash !== undefined && row.keyHash !== where.keyHash) {
+    return false;
+  }
+
+  if (where.scope !== undefined || where.keyHash !== undefined) {
+    return true;
+  }
+
+  if (where.AND) {
+    return false;
+  }
+
+  return false;
+}
+
+function createLoginThrottleDeleteMany(
+  entries: Map<string, LoginThrottleRow>,
+): LoginThrottlePrisma["loginThrottleEntry"]["deleteMany"] {
+  return async (args) => {
+    let count = 0;
+
+    for (const [mapKey, row] of entries) {
+      if (!shouldDeleteLoginThrottleRow(row, args.where as LoginThrottleDeleteWhere)) {
+        continue;
+      }
+
+      entries.delete(mapKey);
+      count += 1;
+    }
+
+    return { count };
+  };
+}
+
 function createThrottleMock(now: () => Date) {
   const entries = new Map<string, LoginThrottleRow>();
   let txChain: Promise<unknown> = Promise.resolve();
@@ -145,20 +267,7 @@ function createThrottleMock(now: () => Date) {
         entries.set(keyOf(updated.scope, updated.keyHash), updated);
         return updated;
       },
-      async deleteMany(args) {
-        let count = 0;
-        for (const [mapKey, row] of entries) {
-          if (args.where.scope && row.scope !== args.where.scope) {
-            continue;
-          }
-          if (args.where.keyHash && row.keyHash !== args.where.keyHash) {
-            continue;
-          }
-          entries.delete(mapKey);
-          count += 1;
-        }
-        return { count };
-      },
+      deleteMany: createLoginThrottleDeleteMany(entries),
     },
     async $transaction(fn) {
       const run = txChain.then(() => fn(db));
