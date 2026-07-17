@@ -39,6 +39,7 @@
     "test:security:role-access": "tsx scripts/security-role-access-check.ts",
     "test:security:reschedule-request": "tsx scripts/security-reschedule-request-check.ts",
     "test:security:appointment-cancel-race": "tsx scripts/security-appointment-cancel-race-check.ts",
+    "test:security:appointment-double-book": "tsx scripts/security-appointment-double-book-check.ts",
     "test:security:official-work-hours": "tsx scripts/security-official-work-hours-check.ts",
     "test:security:owner-password-reset": "tsx scripts/security-owner-password-reset-check.ts",
     "test:e2e:schedule-cancel-race": "playwright test tests/schedule-cancel-race.spec.ts",

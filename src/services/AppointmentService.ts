@@ -1,8 +1,8 @@
 import {
   AppointmentSource,
   AppointmentStatus,
+  Prisma,
   type Appointment,
-  type Prisma,
 } from "@prisma/client";
 import { isBlockingAppointmentStatus } from "@/lib/schedule/non-blocking-appointment-statuses";
 import { prisma } from "@/lib/db";
@@ -40,6 +40,15 @@ import type { AppliedPromotionRecord } from "@/types/applied-promotion";
 const APPOINTMENT_BUSY_CONFLICT_MESSAGE =
   "У мастера уже есть запись или перерыв в это время.";
 
+/** Максимум повторов Serializable-транзакции при P2034. */
+export const APPOINTMENT_WRITE_SERIALIZABLE_RETRIES = 3;
+
+/** Минимальный Prisma client для проверки конфликтов внутри транзакции. */
+export type AppointmentConflictDbClient = Pick<
+  Prisma.TransactionClient,
+  "master" | "appointment" | "scheduleBlock" | "extraWorkWindow"
+>;
+
 export class AppointmentConflictError extends Error {
   constructor(message = APPOINTMENT_BUSY_CONFLICT_MESSAGE) {
     super(message);
@@ -52,6 +61,34 @@ export class AppointmentValidationError extends Error {
     super(message);
     this.name = "AppointmentValidationError";
   }
+}
+
+function isAppointmentSerializationFailure(error: unknown): boolean {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034"
+  );
+}
+
+export async function runSerializableAppointmentWrite<T>(
+  fn: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  for (let attempt = 0; attempt < APPOINTMENT_WRITE_SERIALIZABLE_RETRIES; attempt += 1) {
+    try {
+      return await prisma.$transaction(fn, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
+    } catch (error) {
+      if (
+        isAppointmentSerializationFailure(error) &&
+        attempt < APPOINTMENT_WRITE_SERIALIZABLE_RETRIES - 1
+      ) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw new Error("appointment serializable transaction failed");
 }
 
 function assertValidMasterNote(value: string | null | undefined): string | null {
@@ -126,11 +163,12 @@ function mapAppointment(
 }
 
 async function loadConflictContext(
+  db: AppointmentConflictDbClient,
   masterId: string,
   dateKey: string,
   excludeAppointmentId?: string,
 ) {
-  const master = await prisma.master.findUnique({
+  const master = await db.master.findUnique({
     where: { id: masterId },
     select: {
       id: true,
@@ -147,7 +185,7 @@ async function loadConflictContext(
   const { dayStart, dayEnd, noteDate } = getStudioDayRangeFromDateKey(dateKey);
 
   const [appointments, scheduleBlocks, extraWorkWindows] = await Promise.all([
-    prisma.appointment.findMany({
+    db.appointment.findMany({
       where: {
         masterId,
         startsAt: { gte: dayStart, lte: dayEnd },
@@ -163,7 +201,7 @@ async function loadConflictContext(
         status: true,
       },
     }),
-    prisma.scheduleBlock.findMany({
+    db.scheduleBlock.findMany({
       where: blocksForDayWhere(masterId, dateKey),
       select: {
         startsAt: true,
@@ -171,7 +209,7 @@ async function loadConflictContext(
         isFullDay: true,
       },
     }),
-    prisma.extraWorkWindow.findMany({
+    db.extraWorkWindow.findMany({
       where: {
         masterId,
         workDate: noteDate,
@@ -207,7 +245,9 @@ async function resolveBreakAfterMinutesForInput(
 }
 
 async function assertNoBlockingConflict(
+  db: AppointmentConflictDbClient,
   input: AppointmentWriteInput,
+  candidateBreakAfterMinutes: number,
   excludeAppointmentId?: string,
 ) {
   const startsAt = parseStudioDateTime(input.dateKey, input.startTime);
@@ -217,10 +257,12 @@ async function assertNoBlockingConflict(
     throw new AppointmentValidationError("Окончание должно быть позже начала");
   }
 
-  const [context, candidateBreakAfterMinutes] = await Promise.all([
-    loadConflictContext(input.masterId, input.dateKey, excludeAppointmentId),
-    resolveBreakAfterMinutesForInput(input),
-  ]);
+  const context = await loadConflictContext(
+    db,
+    input.masterId,
+    input.dateKey,
+    excludeAppointmentId,
+  );
 
   const workHours = resolveMasterWorkHours(context.master, input.dateKey);
 
@@ -366,8 +408,6 @@ async function createAppointmentRecord(
       throw new AppointmentValidationError("Не указан телефон клиента");
     }
 
-    await assertNoBlockingConflict(input);
-
     const startsAt = parseStudioDateTime(input.dateKey, input.startTime);
     const endsAt = parseStudioDateTime(input.dateKey, input.endTime);
 
@@ -375,7 +415,15 @@ async function createAppointmentRecord(
       throw new AppointmentValidationError("Некорректные дата или время записи");
     }
 
-    const timingFields = await resolveTimingFields(input, startsAt, endsAt);
+    if (endsAt <= startsAt) {
+      throw new AppointmentValidationError("Окончание должно быть позже начала");
+    }
+
+    const [timingFields, candidateBreakAfterMinutes] = await Promise.all([
+      resolveTimingFields(input, startsAt, endsAt),
+      resolveBreakAfterMinutesForInput(input),
+    ]);
+
     const manageToken =
       input.source === "ONLINE" ? createManageToken() : null;
 
@@ -424,9 +472,17 @@ async function createAppointmentRecord(
       });
     }
 
-    const appointment = await prisma.appointment.create({
-      data: createPayload,
-      include: { service: true },
+    const appointment = await runSerializableAppointmentWrite(async (tx) => {
+      await assertNoBlockingConflict(
+        tx,
+        input,
+        candidateBreakAfterMinutes,
+      );
+
+      return tx.appointment.create({
+        data: createPayload,
+        include: { service: true },
+      });
     });
 
     if (input.source === "ONLINE" && !appointment.manageToken) {
@@ -484,10 +540,6 @@ export async function updateAppointment(
       input.isManualTimeOverride ?? existing.isManualTimeOverride,
   };
 
-  if (isBlockingAppointmentStatus(merged.status)) {
-    await assertNoBlockingConflict(merged, id);
-  }
-
   const startsAt = parseStudioDateTime(merged.dateKey, merged.startTime);
   const endsAt = parseStudioDateTime(merged.dateKey, merged.endTime);
 
@@ -514,11 +566,31 @@ export async function updateAppointment(
     ...timingFields,
   };
 
-  const appointment = await prisma.appointment.update({
-    where: { id },
-    data,
-    include: { service: true },
-  });
+  const needsConflictCheck = isBlockingAppointmentStatus(merged.status);
+  const candidateBreakAfterMinutes = needsConflictCheck
+    ? await resolveBreakAfterMinutesForInput(merged)
+    : 0;
+
+  const appointment = needsConflictCheck
+    ? await runSerializableAppointmentWrite(async (tx) => {
+        await assertNoBlockingConflict(
+          tx,
+          merged,
+          candidateBreakAfterMinutes,
+          id,
+        );
+
+        return tx.appointment.update({
+          where: { id },
+          data,
+          include: { service: true },
+        });
+      })
+    : await prisma.appointment.update({
+        where: { id },
+        data,
+        include: { service: true },
+      });
 
   return mapAppointment(appointment);
 }
