@@ -1,0 +1,105 @@
+# Production compose — полностью изолирован от staging (docker-compose.staging.yml).
+#
+# Подготовка:
+#   1. cp .env.production.example .env.production  (вне Git, реальные секреты)
+#   2. docker compose -f docker-compose.production.yml --env-file .env.production up -d postgres
+#   3. docker compose -f docker-compose.production.yml --env-file .env.production --profile ops run --rm migrator migrate deploy
+#   4. docker compose -f docker-compose.production.yml --env-file .env.production up -d app
+#
+# HTTPS/reverse proxy, backup/deploy/rollback и bootstrap БД — отдельные этапы.
+# Этот compose не является разрешением на публичный production-запуск.
+
+name: tvoe-vremya-production
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: tvoe-vremya-production-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_production_data:/var/lib/postgresql/data
+    networks:
+      - production_internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  app:
+    image: online-zapis-tv-production-app:current
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tvoe-vremya-production-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      NODE_ENV: production
+      APP_ENV: production
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Yekaterinburg}
+      AUTH_SECRET: ${AUTH_SECRET}
+      AUTH_URL: ${AUTH_URL}
+      SCHEDULE_VIEW_TOKEN: ${SCHEDULE_VIEW_TOKEN}
+      EXPORT_STORAGE: ${EXPORT_STORAGE:-local}
+      EXPORT_LOCAL_DIR: /app/exports/emergency
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
+      MAIL_PROVIDER: ${MAIL_PROVIDER:-disabled}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-}
+      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_IP_FAMILY: ${SMTP_IP_FAMILY:-auto}
+      NEXT_PUBLIC_STUDIO_PHONE: ${NEXT_PUBLIC_STUDIO_PHONE:-}
+      NEXT_PUBLIC_STUDIO_PHONE_DISPLAY: ${NEXT_PUBLIC_STUDIO_PHONE_DISPLAY:-}
+    ports:
+      - "127.0.0.1:${APP_PORT:-3100}:3000"
+    volumes:
+      - emergency_exports_production:/app/exports/emergency
+    networks:
+      - production_internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # Миграции — только вручную через profile ops:
+  #   docker compose -f docker-compose.production.yml --env-file .env.production --profile ops run --rm migrator migrate deploy
+  migrator:
+    profiles:
+      - ops
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrator
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    networks:
+      - production_internal
+    restart: "no"
+    entrypoint: ["/app/node_modules/.bin/prisma"]
+
+networks:
+  production_internal:
+    driver: bridge
+    enable_ipv6: true
+
+volumes:
+  postgres_production_data:
+  emergency_exports_production:

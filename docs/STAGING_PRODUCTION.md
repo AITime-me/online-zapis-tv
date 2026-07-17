@@ -3,6 +3,8 @@
 Документ описывает подготовку **новой чистой PostgreSQL-базы** для staging/production.
 Локальная dev-база **не переносится** и **не очищается**.
 
+**Production Docker Compose** (отдельный контур, `127.0.0.1:3100`, без HTTPS): [`docs/operations/production-compose.md`](./operations/production-compose.md).
+
 ## Критические правила
 
 - **Никогда** не запускайте `prisma/seed.ts` (`npm run db:seed`) в production — скрипт защищён и завершится с ошибкой при `NODE_ENV=production` или `APP_ENV/DEPLOY_ENV=production`.
