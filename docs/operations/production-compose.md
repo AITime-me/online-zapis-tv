@@ -3,6 +3,7 @@
 Минимальный production-контур приложения и PostgreSQL. **Полностью изолирован** от staging.
 
 Общий порядок bootstrap БД и первого входа: [`docs/STAGING_PRODUCTION.md`](../STAGING_PRODUCTION.md).  
+Канонические рабочие данные (мастера, каталог, gifts, витрина): [`production-bootstrap.md`](./production-bootstrap.md).  
 Staging automation: [`staging-deploy.md`](./staging-deploy.md).  
 **Production deploy/rollback:** [`production-deploy.md`](./production-deploy.md).
 
@@ -48,7 +49,7 @@ docker compose -f docker-compose.production.yml --env-file .env.production --pro
 docker compose -f docker-compose.production.yml --env-file .env.production up -d app
 ```
 
-Seed, OWNER, каталог услуг и игровой bootstrap — **отдельные этапы** (см. `STAGING_PRODUCTION.md`).
+Seed, OWNER, каталог услуг и игровой bootstrap — **отдельные этапы** (см. `STAGING_PRODUCTION.md`, [`production-bootstrap.md`](./production-bootstrap.md)).
 
 ## Доступ с хоста
 

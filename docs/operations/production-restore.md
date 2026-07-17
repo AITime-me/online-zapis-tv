@@ -6,7 +6,8 @@
 
 - [Production backup](./production-backup.md) — создание dump
 - [Production deploy](./production-deploy.md) — deploy не восстанавливает БД
-- [STAGING_PRODUCTION.md](../STAGING_PRODUCTION.md) — bootstrap (отдельный этап)
+- [Production bootstrap](./production-bootstrap.md) — канонические рабочие данные после migrate/seed
+- [STAGING_PRODUCTION.md](../STAGING_PRODUCTION.md) — foundation seed и OWNER (отдельный этап)
 
 ## Принцип
 

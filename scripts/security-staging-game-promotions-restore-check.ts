@@ -254,6 +254,7 @@ function assertRestorePostCheckAndOpsWiring(): void {
 
   const dockerfile = read("Dockerfile");
   assert.match(dockerfile, /staging-restore-game-promotions-cli\.ts/);
+  assert.match(dockerfile, /game-promotions-canonical\.ts/);
   assert.match(dockerfile, /staging-game-promotions-canonical\.ts/);
   assert.match(dockerfile, /npx prisma generate/);
 

@@ -7,10 +7,11 @@
 - [Production Docker Compose](./production-compose.md) — compose, env, первый запуск контуров
 - [Production backup](./production-backup.md) — ежедневный и ручной backup PostgreSQL
 - [Production restore](./production-restore.md) — ручное восстановление БД
+- [Production bootstrap](./production-bootstrap.md) — канонические рабочие данные (отдельный этап)
 - [Staging deploy](./staging-deploy.md) — отдельный staging-контур (`/opt/online-zapis-tv`)
-- [STAGING_PRODUCTION.md](../STAGING_PRODUCTION.md) — bootstrap БД и OWNER (отдельный этап)
+- [STAGING_PRODUCTION.md](../STAGING_PRODUCTION.md) — foundation seed и OWNER (отдельный этап)
 
-> Скрипты **не являются разрешением** на публичный production-запуск. HTTPS reverse proxy, restore БД и bootstrap — следующие этапы. Scheduled backup: [production-backup.md](./production-backup.md).
+> Скрипты **не являются разрешением** на публичный production-запуск. HTTPS reverse proxy и bootstrap данных — отдельные этапы. Scheduled backup: [production-backup.md](./production-backup.md).
 
 ## Размещение
 

@@ -677,6 +677,7 @@ function assertMigratorImageContainsClassifier(): void {
   assert.ok(migratorBlock.length > 0, "migrator target must exist");
   assert.match(migratorBlock, /COPY scripts\/ops\/lib\/prisma-migrate-status\.ts/);
   assert.match(migratorBlock, /COPY scripts\/ops\/lib\/classify-migrate-status-cli\.ts/);
+  assert.match(migratorBlock, /COPY scripts\/ops\/lib\/game-promotions-canonical\.ts/);
   assert.match(migratorBlock, /COPY scripts\/ops\/lib\/staging-game-promotions-canonical\.ts/);
   assert.match(migratorBlock, /COPY scripts\/ops\/lib\/staging-restore-game-promotions-cli\.ts/);
   assert.match(migratorBlock, /npx prisma generate/);

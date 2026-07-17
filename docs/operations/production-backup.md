@@ -6,6 +6,7 @@
 
 - [Production deploy](./production-deploy.md) — deploy, rollback, общий lock
 - [Production restore](./production-restore.md) — ручное восстановление БД (отдельная операция)
+- [Production bootstrap](./production-bootstrap.md) — канонические рабочие данные (отдельный этап)
 - [Production compose](./production-compose.md) — контуры и env
 - [Staging backup](./staging-backup.md) — отдельный staging-контур
 

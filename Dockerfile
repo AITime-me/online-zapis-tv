@@ -32,8 +32,12 @@ COPY prisma ./prisma
 RUN npx prisma generate
 COPY scripts/ops/lib/prisma-migrate-status.ts ./scripts/ops/lib/prisma-migrate-status.ts
 COPY scripts/ops/lib/classify-migrate-status-cli.ts ./scripts/ops/lib/classify-migrate-status-cli.ts
+COPY scripts/ops/lib/game-promotions-canonical.ts ./scripts/ops/lib/game-promotions-canonical.ts
 COPY scripts/ops/lib/staging-game-promotions-canonical.ts ./scripts/ops/lib/staging-game-promotions-canonical.ts
 COPY scripts/ops/lib/staging-restore-game-promotions-cli.ts ./scripts/ops/lib/staging-restore-game-promotions-cli.ts
+COPY scripts/data/import-services-data.ts ./scripts/data/import-services-data.ts
+COPY scripts/ops/lib/production-bootstrap-canonical.ts ./scripts/ops/lib/production-bootstrap-canonical.ts
+COPY scripts/ops/lib/production-bootstrap-data-cli.ts ./scripts/ops/lib/production-bootstrap-data-cli.ts
 
 FROM base AS runner
 WORKDIR /app

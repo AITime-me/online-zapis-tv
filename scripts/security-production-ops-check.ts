@@ -13,6 +13,7 @@ const PRODUCTION_OPS_SHELL_FILES = [
   "scripts/ops/production-rollback-app.sh",
   "scripts/ops/production-backup.sh",
   "scripts/ops/production-restore-database.sh",
+  "scripts/ops/production-bootstrap-data.sh",
   "scripts/ops/install-production-backup-timer.sh",
   "scripts/ops/lib/production-ops-common.sh",
 ] as const;
