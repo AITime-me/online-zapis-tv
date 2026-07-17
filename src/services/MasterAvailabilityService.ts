@@ -24,6 +24,12 @@ export type MasterAvailabilityInput = {
   dateKey: string;
   standardWorkStart: string;
   standardWorkEnd: string;
+  /**
+   * true (индивидуальный график): услуга целиком должна уложиться в окно.
+   * false (официальные часы студии): ограничивается только старт ≤ standardWorkEnd;
+   * конец процедуры может быть позже.
+   */
+  constrainAppointmentEnd?: boolean;
   extraWorkWindows: TimeInterval[];
   appointments: Array<BusyInterval & { status: AppointmentStatus }>;
   scheduleBlocks: ScheduleBlockInterval[];
@@ -76,11 +82,20 @@ export function checkMasterIntervalAvailability(
     ...input.extraWorkWindows,
   ];
 
-  const isInsideWorkWindow = workWindows.some(
-    (window) =>
-      input.candidateInterval.startsAt >= window.startsAt &&
-      input.candidateInterval.endsAt <= window.endsAt,
-  );
+  const constrainAppointmentEnd = input.constrainAppointmentEnd ?? true;
+  const isInsideWorkWindow = workWindows.some((window, index) => {
+    if (input.candidateInterval.startsAt < window.startsAt) {
+      return false;
+    }
+
+    const isStandardWindow = index === 0;
+    if (constrainAppointmentEnd || !isStandardWindow) {
+      return input.candidateInterval.endsAt <= window.endsAt;
+    }
+
+    // Официальные часы студии: standardWorkEnd — последний допустимый старт.
+    return input.candidateInterval.startsAt <= window.endsAt;
+  });
 
   if (!isInsideWorkWindow) {
     conflicts.push({ type: "outside_work_hours" });

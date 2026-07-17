@@ -21,7 +21,7 @@ import {
   parseStudioDateTime,
 } from "@/lib/datetime/date-layer";
 import { getStudioDayRangeFromDateKey, getStudioMonthRangeFromMonthKey } from "@/lib/datetime/studio";
-import { resolveMasterWorkHours } from "@/lib/schedule/master-work-hours";
+import { resolvePublicOnlineBookingHours } from "@/lib/schedule/master-work-hours";
 import { SEED_TEST_SERVICE_IDS } from "@/lib/services/seed-test-service-ids";
 import {
   AppointmentConflictError,
@@ -246,7 +246,7 @@ async function loadSlotContext(masterId: string, dateKey: string) {
     appointments,
     scheduleBlocks,
     extraWorkWindows,
-    workHours: resolveMasterWorkHours(master, dateKey),
+    workHours: resolvePublicOnlineBookingHours(master, dateKey),
   };
 }
 
@@ -266,6 +266,7 @@ function isSlotAvailable(
     dateKey,
     standardWorkStart: context.workHours.workStart,
     standardWorkEnd: context.workHours.workEnd,
+    constrainAppointmentEnd: context.workHours.constrainAppointmentEnd,
     extraWorkWindows: context.extraWorkWindows,
     appointments: context.appointments.map((appointment) => ({
       startsAt: appointment.startsAt,
@@ -591,7 +592,7 @@ export async function getAvailableTimeSlots(
     return [];
   }
 
-  const { workStart, workEnd } = context.workHours;
+  const { workStart, workEnd, constrainAppointmentEnd } = context.workHours;
   const { rangeStart, rangeEnd } = resolveSlotIterationBounds(
     workStart,
     workEnd,
@@ -603,14 +604,22 @@ export async function getAvailableTimeSlots(
     dateKey === studioToday ? formatStudioTimeInput(getStudioNow()) : "00:00";
 
   let current = rangeStart;
-  while (compareTimeStrings(current, rangeEnd) < 0) {
+  while (
+    constrainAppointmentEnd
+      ? compareTimeStrings(current, rangeEnd) < 0
+      : compareTimeStrings(current, rangeEnd) <= 0
+  ) {
     const serviceEnd = addMinutesToTime(
       dateKey,
       current,
       timing.durationMinutes + timing.breakAfterMinutes,
     );
 
-    if (compareTimeStrings(serviceEnd, rangeEnd) <= 0) {
+    const fitsHours = constrainAppointmentEnd
+      ? compareTimeStrings(serviceEnd, rangeEnd) <= 0
+      : true;
+
+    if (fitsHours) {
       if (
         compareTimeStrings(current, minStartTime) >= 0 &&
         isSlotAvailable(

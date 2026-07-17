@@ -191,7 +191,7 @@ export function StudioSettingsPanel({
             value={settings.workingHoursText}
             onChange={(event) => updateField("workingHoursText", event.target.value)}
             rows={3}
-            placeholder="Например: Пн–Сб 10:00–20:00, Вс — выходной"
+            placeholder="Например: Пн–Пт 09:00–18:00, Сб–Вс 10:00–18:00"
             className={fieldClass}
           />
         </label>

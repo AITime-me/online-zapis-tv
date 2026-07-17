@@ -229,6 +229,7 @@ async function assertNoBlockingConflict(
     dateKey: input.dateKey,
     standardWorkStart: workHours.workStart,
     standardWorkEnd: workHours.workEnd,
+    constrainAppointmentEnd: workHours.constrainAppointmentEnd,
     extraWorkWindows: context.extraWorkWindows,
     appointments: context.appointments.map((appointment) => ({
       startsAt: appointment.startsAt,
