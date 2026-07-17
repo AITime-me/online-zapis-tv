@@ -3,7 +3,8 @@
 Минимальный production-контур приложения и PostgreSQL. **Полностью изолирован** от staging.
 
 Общий порядок bootstrap БД и первого входа: [`docs/STAGING_PRODUCTION.md`](../STAGING_PRODUCTION.md).  
-Staging automation (backup/deploy): [`staging-deploy.md`](./staging-deploy.md).
+Staging automation: [`staging-deploy.md`](./staging-deploy.md).  
+**Production deploy/rollback:** [`production-deploy.md`](./production-deploy.md).
 
 > Этот compose **не является разрешением** на публичный production-запуск. Перед открытием домена нужны: HTTPS reverse proxy, ops backup/deploy, чистая БД, OWNER, каталог услуг.
 
@@ -68,7 +69,7 @@ Compose **не** включает reverse proxy.
 
 ## Что не входит в этот этап
 
-- production backup / deploy / rollback scripts;
+- scheduled backup, restore БД, HTTPS reverse proxy (см. [`production-deploy.md`](./production-deploy.md));
 - автоматический seed;
 - автоматическое создание OWNER;
 - включение игры, бота или VK-рассылок.

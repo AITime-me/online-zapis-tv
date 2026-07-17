@@ -47,6 +47,7 @@
     "test:security:login-throttle": "tsx scripts/security-login-throttle-check.ts",
     "test:security:staging-ops": "tsx scripts/security-staging-ops-check.ts",
     "test:security:production-compose": "tsx scripts/security-production-compose-check.ts",
+    "test:security:production-ops": "tsx scripts/security-production-ops-check.ts",
     "test:security:staging-game-promotions-restore": "tsx scripts/security-staging-game-promotions-restore-check.ts",
     "test:security:admin-promotions": "tsx scripts/security-admin-promotions-check.ts",
     "test:security:bot-foundation": "tsx scripts/security-bot-foundation-check.ts",
