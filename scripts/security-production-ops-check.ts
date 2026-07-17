@@ -291,6 +291,10 @@ function assertDeployScript(): void {
   const executable = stripBashComments(source);
   const mainBody = extractFunctionBodies(source, "main") || executable;
   const migrationsBody = extractFunctionBodies(source, "run_migrations");
+  const collectBody = extractFunctionBodies(source, "collect_app_image_state");
+  const prepareRollbackBody = extractFunctionBodies(source, "prepare_rollback_tag");
+  const printPlanBody = extractFunctionBodies(source, "print_plan");
+  const rollbackAppBody = extractFunctionBodies(source, "rollback_app_image");
 
   assert.match(executable, /ops_require_interactive_confirmation\s+"DEPLOY PRODUCTION"/);
   assert.match(executable, /git merge --ff-only origin\/main/);
@@ -303,6 +307,32 @@ function assertDeployScript(): void {
   assert.match(executable, /ops_run_prisma_migrate_status\s+"post"/);
   assert.doesNotMatch(migrationsBody, /\|\|\s*true/);
 
+  assert.match(collectBody, /IS_INITIAL_DEPLOY=1/);
+  assert.match(collectBody, /APP_IMAGE_ROLLBACK_AVAILABLE=0/);
+  assert.match(collectBody, /Initial deploy:/);
+  assert.doesNotMatch(
+    collectBody,
+    /ops_die "app container does not exist \(required to capture previous image for rollback\)"/,
+  );
+  assert.match(collectBody, /IS_INITIAL_DEPLOY=0/);
+  assert.match(collectBody, /APP_IMAGE_ROLLBACK_AVAILABLE=1/);
+
+  assert.match(prepareRollbackBody, /IS_INITIAL_DEPLOY.*-eq 1/);
+  assert.match(prepareRollbackBody, /skipping previous app image capture/);
+  assert.match(
+    prepareRollbackBody,
+    /ops_die "app container does not exist \(required to capture previous image for rollback\)"/,
+  );
+  assert.match(prepareRollbackBody, /docker tag "\$PREVIOUS_APP_IMAGE_ID" "\$ROLLBACK_IMAGE_TAG"/);
+
+  assert.match(printPlanBody, /Deploy kind: INITIAL/);
+  assert.match(printPlanBody, /Skip previous app image tag \(initial deploy/);
+  assert.match(printPlanBody, /Tag current app image for rollback/);
+
+  assert.match(rollbackAppBody, /APP_ROLLBACK_STATUS="unavailable"/);
+  assert.match(rollbackAppBody, /no previous app image available for rollback/);
+
+  assertIndexOrder(mainBody, "collect_app_image_state", "print_plan", "detect initial/redeploy before plan");
   assertIndexOrder(mainBody, "ops_create_production_postgres_backup", "prepare_rollback_tag", "backup before rollback tag");
   assertIndexOrder(mainBody, "prepare_rollback_tag", "init_state_manifest", "rollback tag before manifest");
   assertIndexOrder(mainBody, "init_state_manifest", "build_images", "manifest before build");
@@ -317,6 +347,7 @@ function assertDeployScript(): void {
     "run_migrations",
     "restart_app_only",
     "fast_forward_git",
+    "prepare_rollback_tag",
     "ops_acquire_production_ops_lock",
   ]) {
     const idx = mainBody.indexOf(token);
@@ -362,6 +393,8 @@ function assertRollbackScript(): void {
   const source = readFile("scripts/ops/production-rollback-app.sh");
   const executable = stripBashComments(source);
   const performBody = extractFunctionBodies(source, "perform_rollback");
+  const assertAvailableBody = extractFunctionBodies(source, "assert_previous_app_rollback_available");
+  const mainBody = extractFunctionBodies(source, "main") || executable;
 
   assert.match(executable, /ops_require_interactive_confirmation\s+"ROLLBACK PRODUCTION APP"/);
   assert.match(executable, /ops_apply_compose_app_image/);
@@ -371,6 +404,25 @@ function assertRollbackScript(): void {
   assert.match(executable, /ops_check_http_health_production/);
   assert.doesNotMatch(executable, /pg_restore|DROP DATABASE|git reset/);
   assert.doesNotMatch(executable, /db:seed|owner:create/);
+
+  assert.match(
+    assertAvailableBody,
+    /previous app rollback image is unavailable \(initial deploy or incomplete deploy manifest\)/,
+  );
+  assert.match(assertAvailableBody, /IS_INITIAL_DEPLOY/);
+  assert.match(assertAvailableBody, /APP_IMAGE_ROLLBACK_AVAILABLE/);
+  assert.match(assertAvailableBody, /ROLLBACK_IMAGE_TAG/);
+  assert.match(assertAvailableBody, /PREVIOUS_APP_IMAGE_ID/);
+  assert.match(mainBody, /assert_previous_app_rollback_available/);
+  assertIndexOrder(
+    mainBody,
+    "print_rollback_plan",
+    "assert_previous_app_rollback_available",
+    "fail-closed before dry-run success or mutate",
+  );
+  const dryRunExit = mainBody.indexOf('ops_info "Dry-run complete');
+  const assertIdx = mainBody.indexOf("assert_previous_app_rollback_available");
+  assert.ok(assertIdx >= 0 && dryRunExit > assertIdx, "rollback dry-run must fail-closed before reporting success");
 }
 
 function assertManifestSafety(): void {
@@ -378,6 +430,8 @@ function assertManifestSafety(): void {
   const manifestBody = extractFunctionBodies(deploy, "persist_state_manifest");
 
   assert.match(manifestBody, /ENVIRONMENT=production/);
+  assert.match(manifestBody, /IS_INITIAL_DEPLOY=/);
+  assert.match(manifestBody, /APP_IMAGE_ROLLBACK_AVAILABLE=/);
   assert.match(manifestBody, /GIT_STATUS_STAGE=/);
   assert.match(manifestBody, /BACKUP_STATUS=/);
   assert.match(manifestBody, /BUILD_STATUS=/);
@@ -407,6 +461,10 @@ function assertDocumentation(): void {
   assert.match(runbook, /reverse proxy/i);
   assert.match(runbook, /не являются разрешением/i);
   assert.match(runbook, /production-compose\.md/);
+  assert.match(runbook, /Initial deploy/);
+  assert.match(runbook, /IS_INITIAL_DEPLOY/);
+  assert.match(runbook, /APP_IMAGE_ROLLBACK_AVAILABLE/);
+  assert.match(runbook, /previous rollback image отсутствует/i);
 }
 
 function assertShellSyntax(): void {

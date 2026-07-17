@@ -77,13 +77,22 @@ bash scripts/ops/production-restore-database.sh --dry-run --backup backups/produ
 2. `git fetch origin main` — показ current/target commits.
 3. Fast-forward `main` → `origin/main` (или `--redeploy-current` без изменения Git).
 4. **Pre-deploy backup** PostgreSQL (`pg_dump -Fc`, atomic verify, `chmod 600`).
-5. Tag текущего app image для rollback.
-6. Initial deploy manifest.
+5. Tag текущего app image для rollback (**пропуск** при initial deploy — контейнера ещё нет).
+6. Initial deploy manifest (`IS_INITIAL_DEPLOY`, `APP_IMAGE_ROLLBACK_AVAILABLE`).
 7. Build app + migrator images.
 8. `prisma migrate status` → `migrate deploy` (если pending).
-9. Restart **только** production app (postgres и volumes не пересоздаются).
+9. Create/recreate **только** production app (postgres и volumes не пересоздаются).
 10. Docker health + HTTP `/api/health` (`ok=true`, `status=healthy`).
 11. Manifest обновляется после каждого критического этапа.
+
+### Initial deploy
+
+Если production app container отсутствует, deploy распознаётся как **initial deploy**:
+
+- previous app image **не** захватывается и rollback tag **не** создаётся;
+- в manifest: `IS_INITIAL_DEPLOY=true`, `APP_IMAGE_ROLLBACK_AVAILABLE=false`, пустые `PREVIOUS_APP_IMAGE_ID` / `ROLLBACK_IMAGE_TAG`;
+- dry-run показывает `Deploy kind: INITIAL` и полный план без изменений;
+- после первого успешного deploy последующие запуски снова tag'ают previous image для rollback.
 
 При ошибке backup или миграций deploy останавливается **до** restart app. Автоматический DB restore **не** выполняется.
 
@@ -105,7 +114,7 @@ bash scripts/ops/production-restore-database.sh --dry-run --backup backups/produ
 
 Каталог: `backups/production/deploy-state/`. Права `600`. Symlink `latest` на последний deploy manifest.
 
-Поля (без секретов): `STATE_VERSION`, `TIMESTAMP_UTC`, `ENVIRONMENT=production`, commit SHA, `DEPLOY_MODE`, `BACKUP_PATH`, `BACKUP_STATUS`, `ROLLBACK_IMAGE_TAG`, image IDs, `GIT_STATUS_STAGE`, `BUILD_STATUS`, `MIGRATION_STATUS`, `APP_RESTART_STATUS`, health statuses, `DEPLOY_STATUS`.
+Поля (без секретов): `STATE_VERSION`, `TIMESTAMP_UTC`, `ENVIRONMENT=production`, commit SHA, `DEPLOY_MODE`, `IS_INITIAL_DEPLOY`, `APP_IMAGE_ROLLBACK_AVAILABLE`, `BACKUP_PATH`, `BACKUP_STATUS`, `ROLLBACK_IMAGE_TAG`, image IDs, `GIT_STATUS_STAGE`, `BUILD_STATUS`, `MIGRATION_STATUS`, `APP_RESTART_STATUS`, health statuses, `DEPLOY_STATUS`.
 
 Rollback пишет отдельный `*_rollback.env` manifest.
 
@@ -114,6 +123,7 @@ Rollback пишет отдельный `*_rollback.env` manifest.
 - Откатывает **только** Docker image/container app.
 - Git, PostgreSQL, volumes и схема БД **не** меняются.
 - Нет `git reset --hard`, удаления файлов, seed или автоматического restore БД.
+- Если previous rollback image отсутствует (initial deploy или неполный manifest) — fail-closed с понятной ошибкой.
 - Если в deploy manifest `MIGRATION_STATUS=applied` — выводится предупреждение о возможной несовместимости app/схемы.
 - При `precheck_failed` / `postcheck_failed` / `failed` миграций — rollback блокируется (fail-closed).
 

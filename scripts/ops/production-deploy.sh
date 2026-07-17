@@ -8,6 +8,8 @@ source "${SCRIPT_DIR}/lib/production-ops-common.sh"
 DEPLOY_HELP=0
 DEPLOY_REDEPLOY_CURRENT=0
 DEPLOY_MODE="fast_forward"
+IS_INITIAL_DEPLOY=0
+APP_IMAGE_ROLLBACK_AVAILABLE=0
 
 MANIFEST_PATH=""
 PREVIOUS_COMMIT_SHA=""
@@ -160,9 +162,19 @@ fetch_and_plan_git() {
 }
 
 collect_app_image_state() {
+  COMPOSE_APP_IMAGE_ID="$(ops_get_image_id_from_ref_optional "$PRODUCTION_APP_IMAGE_REF")"
+
   if ! ops_container_exists "$PRODUCTION_APP_CONTAINER"; then
-    ops_die "app container does not exist (required to capture previous image for rollback)"
+    IS_INITIAL_DEPLOY=1
+    APP_IMAGE_ROLLBACK_AVAILABLE=0
+    CURRENT_CONTAINER_IMAGE_ID=""
+    CURRENT_CONTAINER_IMAGE_REF="(none — initial deploy)"
+    ops_info "Initial deploy: app container ${PRODUCTION_APP_CONTAINER} does not exist yet"
+    return 0
   fi
+
+  IS_INITIAL_DEPLOY=0
+  APP_IMAGE_ROLLBACK_AVAILABLE=1
 
   CURRENT_CONTAINER_IMAGE_ID="$(ops_get_container_image_id "$PRODUCTION_APP_CONTAINER" | ops_normalize_image_id)"
   if [[ -z "$CURRENT_CONTAINER_IMAGE_ID" ]]; then
@@ -173,8 +185,6 @@ collect_app_image_state() {
   if [[ -z "$CURRENT_CONTAINER_IMAGE_REF" ]]; then
     CURRENT_CONTAINER_IMAGE_REF="(image id ${CURRENT_CONTAINER_IMAGE_ID})"
   fi
-
-  COMPOSE_APP_IMAGE_ID="$(ops_get_image_id_from_ref_optional "$PRODUCTION_APP_IMAGE_REF")"
 }
 
 fast_forward_git() {
@@ -195,8 +205,16 @@ fast_forward_git() {
 prepare_rollback_tag() {
   local ts short_sha
 
+  if [[ "$IS_INITIAL_DEPLOY" -eq 1 ]]; then
+    PREVIOUS_APP_IMAGE_ID=""
+    ROLLBACK_IMAGE_TAG=""
+    APP_IMAGE_ROLLBACK_AVAILABLE=0
+    ops_info "Initial deploy: skipping previous app image capture (app rollback to a prior image is impossible)"
+    return 0
+  fi
+
   if ! ops_container_exists "$PRODUCTION_APP_CONTAINER"; then
-    ops_die "app container does not exist"
+    ops_die "app container does not exist (required to capture previous image for rollback)"
   fi
 
   PREVIOUS_APP_IMAGE_ID="$(ops_get_container_image_id "$PRODUCTION_APP_CONTAINER" | ops_normalize_image_id)"
@@ -207,6 +225,7 @@ prepare_rollback_tag() {
   ts="$(date -u +%Y%m%dT%H%M%SZ)"
   short_sha="$(git rev-parse --short "$PREVIOUS_COMMIT_SHA")"
   ROLLBACK_IMAGE_TAG="online-zapis-tv-production-rollback:${ts}_${short_sha}"
+  APP_IMAGE_ROLLBACK_AVAILABLE=1
 
   if [[ "$OPS_DRY_RUN" -eq 1 ]]; then
     return 0
@@ -236,6 +255,8 @@ persist_state_manifest() {
     "TIMESTAMP_UTC=$(date -u +%Y%m%dT%H%M%SZ)" \
     "ENVIRONMENT=production" \
     "DEPLOY_MODE=$(ops_escape_manifest_value "$DEPLOY_MODE")" \
+    "IS_INITIAL_DEPLOY=$(ops_escape_manifest_value "$([[ "$IS_INITIAL_DEPLOY" -eq 1 ]] && echo true || echo false)")" \
+    "APP_IMAGE_ROLLBACK_AVAILABLE=$(ops_escape_manifest_value "$([[ "$APP_IMAGE_ROLLBACK_AVAILABLE" -eq 1 ]] && echo true || echo false)")" \
     "PREVIOUS_COMMIT_SHA=$(ops_escape_manifest_value "$PREVIOUS_COMMIT_SHA")" \
     "TARGET_COMMIT_SHA=$(ops_escape_manifest_value "$TARGET_COMMIT_SHA")" \
     "GIT_STATUS_STAGE=$(ops_escape_manifest_value "$GIT_STATUS_STAGE")" \
@@ -415,9 +436,10 @@ verify_health() {
 }
 
 rollback_app_image() {
-  if [[ -z "$ROLLBACK_IMAGE_TAG" || -z "$PREVIOUS_APP_IMAGE_ID" ]]; then
-    APP_ROLLBACK_STATUS="missing_tag"
-    LAST_ERROR_SUMMARY="rollback metadata missing in deploy state"
+  if [[ "$IS_INITIAL_DEPLOY" -eq 1 || -z "$ROLLBACK_IMAGE_TAG" || -z "$PREVIOUS_APP_IMAGE_ID" ]]; then
+    APP_ROLLBACK_STATUS="unavailable"
+    LAST_ERROR_SUMMARY="no previous app image available for rollback (initial deploy or missing rollback metadata)"
+    ops_warn "Automatic app image rollback is impossible; previous image was not captured."
     return 1
   fi
 
@@ -468,6 +490,13 @@ print_plan() {
   else
     ops_info "Mode: interactive"
   fi
+  if [[ "$IS_INITIAL_DEPLOY" -eq 1 ]]; then
+    ops_info "Deploy kind: INITIAL (app container does not exist yet)"
+    ops_info "App image rollback: UNAVAILABLE (no previous image to capture)"
+  else
+    ops_info "Deploy kind: REDEPLOY (existing app container will be replaced)"
+    ops_info "App image rollback: AVAILABLE after tagging previous image"
+  fi
   if [[ "$DEPLOY_REDEPLOY_CURRENT" -eq 1 ]]; then
     ops_info "Deploy mode: redeploy-current (Git will not change)"
   else
@@ -479,7 +508,7 @@ print_plan() {
     ops_info "Redeploy-current summary:"
     ops_info "  commit (current == target): ${short_sha}"
     ops_info "  running container image ref: ${CURRENT_CONTAINER_IMAGE_REF}"
-    ops_info "  running container image id:  ${CURRENT_CONTAINER_IMAGE_ID}"
+    ops_info "  running container image id:  ${CURRENT_CONTAINER_IMAGE_ID:-none}"
     ops_info "  compose app image ref:       ${PRODUCTION_APP_IMAGE_REF}"
     if [[ -n "$COMPOSE_APP_IMAGE_ID" ]]; then
       ops_info "  compose app image id:        ${COMPOSE_APP_IMAGE_ID}"
@@ -492,20 +521,28 @@ print_plan() {
   ops_info "  1. Validate production checkout, env, compose, and git state"
   if [[ "$DEPLOY_REDEPLOY_CURRENT" -eq 1 ]]; then
     ops_info "  2. Create and verify PostgreSQL backup (atomic)"
-    ops_info "  3. Tag current app image for rollback"
+    if [[ "$IS_INITIAL_DEPLOY" -eq 1 ]]; then
+      ops_info "  3. Skip previous app image tag (initial deploy — no rollback image)"
+    else
+      ops_info "  3. Tag current app image for rollback"
+    fi
     ops_info "  4. Write initial deploy state manifest"
     ops_info "  5. Build app and migrator images"
     ops_info "  6. Run prisma migrate status/deploy via ops profile"
-    ops_info "  7. Restart production app container only"
+    ops_info "  7. Create/recreate production app container only"
     ops_info "  8. Wait for Docker health and HTTP /api/health"
   else
     ops_info "  2. Fast-forward main to origin/main"
     ops_info "  3. Create and verify PostgreSQL backup (atomic)"
-    ops_info "  4. Tag current app image for rollback"
+    if [[ "$IS_INITIAL_DEPLOY" -eq 1 ]]; then
+      ops_info "  4. Skip previous app image tag (initial deploy — no rollback image)"
+    else
+      ops_info "  4. Tag current app image for rollback"
+    fi
     ops_info "  5. Write initial deploy state manifest"
     ops_info "  6. Build app and migrator images"
     ops_info "  7. Run prisma migrate status/deploy via ops profile"
-    ops_info "  8. Restart production app container only"
+    ops_info "  8. Create/recreate production app container only"
     ops_info "  9. Wait for Docker health and HTTP /api/health"
   fi
   ops_info "Manifest directory: ${PRODUCTION_DEPLOY_STATE_DIR}"
@@ -531,9 +568,7 @@ main() {
   check_git_branch
   fetch_and_plan_git
 
-  if [[ "$DEPLOY_REDEPLOY_CURRENT" -eq 1 ]]; then
-    collect_app_image_state
-  fi
+  collect_app_image_state
 
   print_plan
 
@@ -553,7 +588,11 @@ main() {
   ops_info "Backup: ${BACKUP_PATH}"
 
   prepare_rollback_tag
-  ops_info "Rollback tag: ${ROLLBACK_IMAGE_TAG}"
+  if [[ "$IS_INITIAL_DEPLOY" -eq 1 ]]; then
+    ops_info "Rollback tag: (none — initial deploy)"
+  else
+    ops_info "Rollback tag: ${ROLLBACK_IMAGE_TAG}"
+  fi
 
   init_state_manifest
   ops_info "State manifest: ${MANIFEST_PATH}"
@@ -576,6 +615,9 @@ main() {
     ops_show_safe_app_logs "$PRODUCTION_APP_CONTAINER"
     rollback_app_image || true
     persist_state_manifest
+    if [[ "$IS_INITIAL_DEPLOY" -eq 1 ]]; then
+      ops_die "deploy failed after health check (initial deploy has no previous app image to roll back; manifest: ${MANIFEST_PATH})"
+    fi
     ops_die "deploy failed after health check (app rollback attempted; DB schema may differ; manifest: ${MANIFEST_PATH})"
   fi
 
@@ -586,6 +628,7 @@ main() {
   ops_info "=== Production deploy complete ==="
   ops_info "  commit: $(git rev-parse --short HEAD)"
   ops_info "  deploy mode: ${DEPLOY_MODE}"
+  ops_info "  deploy kind: $([[ "$IS_INITIAL_DEPLOY" -eq 1 ]] && echo initial || echo redeploy)"
   ops_info "  backup: ${BACKUP_PATH}"
   ops_info "  app image: ${NEW_APP_IMAGE_ID}"
   ops_info "  migration: ${MIGRATION_STATUS}"

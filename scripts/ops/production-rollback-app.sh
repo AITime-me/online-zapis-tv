@@ -71,21 +71,26 @@ load_manifest() {
 
 print_rollback_plan() {
   local previous target rollback_tag previous_image current_image migration_status
+  local is_initial rollback_available
 
   previous="$(ops_read_manifest_value "$ROLLBACK_MANIFEST" PREVIOUS_COMMIT_SHA || true)"
   target="$(ops_read_manifest_value "$ROLLBACK_MANIFEST" TARGET_COMMIT_SHA || true)"
   rollback_tag="$(ops_read_manifest_value "$ROLLBACK_MANIFEST" ROLLBACK_IMAGE_TAG || true)"
   previous_image="$(ops_read_manifest_value "$ROLLBACK_MANIFEST" PREVIOUS_APP_IMAGE_ID || true)"
   migration_status="$(ops_read_manifest_value "$ROLLBACK_MANIFEST" MIGRATION_STATUS || true)"
-  current_image="$(ops_get_container_image_id "$PRODUCTION_APP_CONTAINER" | ops_normalize_image_id)"
+  is_initial="$(ops_read_manifest_value "$ROLLBACK_MANIFEST" IS_INITIAL_DEPLOY || true)"
+  rollback_available="$(ops_read_manifest_value "$ROLLBACK_MANIFEST" APP_IMAGE_ROLLBACK_AVAILABLE || true)"
+  current_image="$(ops_get_container_image_id "$PRODUCTION_APP_CONTAINER" | ops_normalize_image_id || true)"
 
   ops_info "=== Production app rollback plan ==="
   ops_info "Manifest: ${ROLLBACK_MANIFEST}"
   ops_info "Previous commit: ${previous:-unknown}"
   ops_info "Target commit: ${target:-unknown}"
   ops_info "Migration status (from deploy): ${migration_status:-unknown}"
+  ops_info "Initial deploy (manifest): ${is_initial:-unknown}"
+  ops_info "App image rollback available: ${rollback_available:-unknown}"
   ops_info "Rollback image tag: ${rollback_tag:-missing}"
-  ops_info "Expected previous image: ${previous_image:-unknown}"
+  ops_info "Expected previous image: ${previous_image:-missing}"
   ops_info "Current app image: ${current_image:-unknown}"
   ops_info "PostgreSQL and database schema will NOT be restored."
   if [[ "$migration_status" == "applied" ]]; then
@@ -93,6 +98,19 @@ print_rollback_plan() {
   fi
   if [[ "$OPS_DRY_RUN" -eq 1 ]]; then
     ops_info "Mode: DRY-RUN"
+  fi
+}
+
+assert_previous_app_rollback_available() {
+  local rollback_tag previous_image is_initial rollback_available
+
+  rollback_tag="$(ops_read_manifest_value "$ROLLBACK_MANIFEST" ROLLBACK_IMAGE_TAG || true)"
+  previous_image="$(ops_read_manifest_value "$ROLLBACK_MANIFEST" PREVIOUS_APP_IMAGE_ID || true)"
+  is_initial="$(ops_read_manifest_value "$ROLLBACK_MANIFEST" IS_INITIAL_DEPLOY || true)"
+  rollback_available="$(ops_read_manifest_value "$ROLLBACK_MANIFEST" APP_IMAGE_ROLLBACK_AVAILABLE || true)"
+
+  if [[ "$is_initial" == "true" || "$rollback_available" == "false" || -z "$rollback_tag" || -z "$previous_image" ]]; then
+    ops_die "previous app rollback image is unavailable (initial deploy or incomplete deploy manifest); cannot roll back app image"
   fi
 }
 
@@ -121,15 +139,11 @@ write_rollback_manifest() {
 perform_rollback() {
   local rollback_tag expected_image_id
 
+  assert_previous_app_rollback_available
+
   rollback_tag="$(ops_read_manifest_value "$ROLLBACK_MANIFEST" ROLLBACK_IMAGE_TAG || true)"
   expected_image_id="$(ops_read_manifest_value "$ROLLBACK_MANIFEST" PREVIOUS_APP_IMAGE_ID || true)"
 
-  if [[ -z "$rollback_tag" ]]; then
-    ops_die "ROLLBACK_IMAGE_TAG missing in manifest"
-  fi
-  if [[ -z "$expected_image_id" ]]; then
-    ops_die "PREVIOUS_APP_IMAGE_ID missing in manifest"
-  fi
   if ! docker image inspect "$rollback_tag" >/dev/null 2>&1; then
     ops_die "rollback image not found: ${rollback_tag}"
   fi
@@ -164,6 +178,7 @@ main() {
   load_manifest
   ops_assess_rollback_migration_risk "$ROLLBACK_MANIFEST"
   print_rollback_plan
+  assert_previous_app_rollback_available
 
   if [[ "$OPS_DRY_RUN" -eq 1 ]]; then
     ops_info "Dry-run complete — no Docker changes were made."
