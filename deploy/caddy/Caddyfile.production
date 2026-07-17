@@ -1,0 +1,16 @@
+# Production reverse proxy «Твоё время» (Caddy на Ubuntu-хосте).
+# Автоматический HTTPS (Let's Encrypt): сертификаты выпускает и продлевает Caddy.
+# Проксирует только loopback production-app; staging :3000 и PostgreSQL снаружи недоступны.
+
+# www → канонический HTTPS-домен (URI сохраняется)
+www.tvoio-vremya.ru {
+	redir https://tvoio-vremya.ru{uri} permanent
+}
+
+tvoio-vremya.ru {
+	# Сжатие ответов (WebSocket/streaming Caddy не ломает)
+	encode zstd gzip
+
+	# Только production-приложение на loopback
+	reverse_proxy 127.0.0.1:3100
+}

@@ -57,7 +57,7 @@ function testEnvProductionExample(): void {
   assert.match(example, /APP_PORT=3100/);
   assert.match(example, /docker-compose\.production\.yml/);
   assert.match(example, /\.env\.production/);
-  assert.match(example, /AUTH_URL=https:\/\/your-domain\.example/);
+  assert.match(example, /AUTH_URL=https:\/\/tvoio-vremya\.ru/);
   assert.match(example, /generate-with-openssl-rand-base64-32-or-longer/);
   assert.match(example, /POSTGRES_PASSWORD=change-me-strong-password/);
   assert.doesNotMatch(example, /^POSTGRES_PASSWORD=password123/m);

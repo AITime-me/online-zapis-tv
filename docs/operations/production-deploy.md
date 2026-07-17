@@ -8,6 +8,7 @@
 - [Production backup](./production-backup.md) — ежедневный и ручной backup PostgreSQL
 - [Production restore](./production-restore.md) — ручное восстановление БД
 - [Production bootstrap](./production-bootstrap.md) — канонические рабочие данные (отдельный этап)
+- [Production HTTPS](./production-https.md) — Caddy reverse proxy / TLS
 - [Staging deploy](./staging-deploy.md) — отдельный staging-контур (`/opt/online-zapis-tv`)
 - [STAGING_PRODUCTION.md](../STAGING_PRODUCTION.md) — foundation seed и OWNER (отдельный этап)
 
@@ -118,11 +119,13 @@ Rollback пишет отдельный `*_rollback.env` manifest.
 
 ## HTTPS и reverse proxy
 
-Следующий инфраструктурный этап: TLS + reverse proxy на `127.0.0.1:3100`. `AUTH_URL` в `.env.production` должен совпасть с публичным HTTPS-доменом.
+Публичный TLS для `tvoio-vremya.ru`: [`production-https.md`](./production-https.md).  
+Caddy на хосте → `127.0.0.1:3100`. Deploy приложения reverse proxy **не** устанавливает.
 
 ## Что не входит в deploy
 
 - restore database (см. [`production-restore.md`](./production-restore.md));
+- HTTPS / Caddyfile install (см. [`production-https.md`](./production-https.md));
 - создание `.env.production` скриптами;
 - bootstrap/seed/OWNER;
 - реальный deploy из CI.
