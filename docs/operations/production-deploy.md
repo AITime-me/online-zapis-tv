@@ -76,14 +76,15 @@ bash scripts/ops/production-restore-database.sh --dry-run --backup backups/produ
 1. Production guard, env validation, compose preflight, git checks.
 2. `git fetch origin main` — показ current/target commits.
 3. Fast-forward `main` → `origin/main` (или `--redeploy-current` без изменения Git).
-4. **Pre-deploy backup** PostgreSQL (`pg_dump -Fc`, atomic verify, `chmod 600`).
+4. **Pre-deploy backup** PostgreSQL (`pg_dump -Fc`, atomic verify, `chmod 600`) — **обязателен**, если production PostgreSQL уже существует; **не применим** при clean initial bootstrap (нет БД).
 5. Tag текущего app image для rollback (**пропуск** при initial deploy — контейнера ещё нет).
-6. Initial deploy manifest (`IS_INITIAL_DEPLOY`, `APP_IMAGE_ROLLBACK_AVAILABLE`).
+6. Initial deploy manifest (`IS_INITIAL_DEPLOY`, `APP_IMAGE_ROLLBACK_AVAILABLE`, `IS_CLEAN_INITIAL_BOOTSTRAP`, `BACKUP_STATUS`).
 7. Build app + migrator images.
-8. `prisma migrate status` → `migrate deploy` (если pending).
-9. Create/recreate **только** production app (postgres и volumes не пересоздаются).
-10. Docker health + HTTP `/api/health` (`ok=true`, `status=healthy`).
-11. Manifest обновляется после каждого критического этапа.
+8. При clean initial bootstrap: создать и дождаться healthy production PostgreSQL.
+9. `prisma migrate status` → `migrate deploy` (если pending).
+10. Create/recreate **только** production app (volumes не удаляются; postgres не пересоздаётся, если уже был).
+11. Docker health + HTTP `/api/health` (`ok=true`, `status=healthy`).
+12. Manifest обновляется после каждого критического этапа.
 
 ### Initial deploy
 
@@ -93,6 +94,13 @@ bash scripts/ops/production-restore-database.sh --dry-run --backup backups/produ
 - в manifest: `IS_INITIAL_DEPLOY=true`, `APP_IMAGE_ROLLBACK_AVAILABLE=false`, пустые `PREVIOUS_APP_IMAGE_ID` / `ROLLBACK_IMAGE_TAG`;
 - dry-run показывает `Deploy kind: INITIAL` и полный план без изменений;
 - после первого успешного deploy последующие запуски снова tag'ают previous image для rollback.
+
+Два подсценария:
+
+| Состояние | Поведение |
+| --- | --- |
+| App нет, PostgreSQL **есть** | Pre-deploy backup **обязателен** (как при обычном deploy), затем build → migrate → app |
+| App нет, PostgreSQL **нет** (clean initial bootstrap) | Backup **не** создаётся (`BACKUP_STATUS=not_applicable_no_database`); порядок: build → start/wait postgres → migrate → app → health |
 
 При ошибке backup или миграций deploy останавливается **до** restart app. Автоматический DB restore **не** выполняется.
 
@@ -114,7 +122,7 @@ bash scripts/ops/production-restore-database.sh --dry-run --backup backups/produ
 
 Каталог: `backups/production/deploy-state/`. Права `600`. Symlink `latest` на последний deploy manifest.
 
-Поля (без секретов): `STATE_VERSION`, `TIMESTAMP_UTC`, `ENVIRONMENT=production`, commit SHA, `DEPLOY_MODE`, `IS_INITIAL_DEPLOY`, `APP_IMAGE_ROLLBACK_AVAILABLE`, `BACKUP_PATH`, `BACKUP_STATUS`, `ROLLBACK_IMAGE_TAG`, image IDs, `GIT_STATUS_STAGE`, `BUILD_STATUS`, `MIGRATION_STATUS`, `APP_RESTART_STATUS`, health statuses, `DEPLOY_STATUS`.
+Поля (без секретов): `STATE_VERSION`, `TIMESTAMP_UTC`, `ENVIRONMENT=production`, commit SHA, `DEPLOY_MODE`, `IS_INITIAL_DEPLOY`, `APP_IMAGE_ROLLBACK_AVAILABLE`, `IS_CLEAN_INITIAL_BOOTSTRAP`, `POSTGRES_EXISTED_AT_START`, `PRE_DEPLOY_BACKUP_APPLICABLE`, `BACKUP_PATH`, `BACKUP_STATUS` (в т.ч. `not_applicable_no_database`), `POSTGRES_START_STATUS`, `ROLLBACK_IMAGE_TAG`, image IDs, `GIT_STATUS_STAGE`, `BUILD_STATUS`, `MIGRATION_STATUS`, `APP_RESTART_STATUS`, health statuses, `DEPLOY_STATUS`.
 
 Rollback пишет отдельный `*_rollback.env` manifest.
 

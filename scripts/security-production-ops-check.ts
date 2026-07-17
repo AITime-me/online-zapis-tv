@@ -292,9 +292,11 @@ function assertDeployScript(): void {
   const mainBody = extractFunctionBodies(source, "main") || executable;
   const migrationsBody = extractFunctionBodies(source, "run_migrations");
   const collectBody = extractFunctionBodies(source, "collect_app_image_state");
+  const detectPostgresBody = extractFunctionBodies(source, "detect_postgres_deploy_state");
   const prepareRollbackBody = extractFunctionBodies(source, "prepare_rollback_tag");
   const printPlanBody = extractFunctionBodies(source, "print_plan");
   const rollbackAppBody = extractFunctionBodies(source, "rollback_app_image");
+  const startPostgresBody = extractFunctionBodies(source, "start_production_postgres_for_bootstrap");
 
   assert.match(executable, /ops_require_interactive_confirmation\s+"DEPLOY PRODUCTION"/);
   assert.match(executable, /git merge --ff-only origin\/main/);
@@ -310,12 +312,20 @@ function assertDeployScript(): void {
   assert.match(collectBody, /IS_INITIAL_DEPLOY=1/);
   assert.match(collectBody, /APP_IMAGE_ROLLBACK_AVAILABLE=0/);
   assert.match(collectBody, /Initial deploy:/);
+  assert.match(collectBody, /detect_postgres_deploy_state/);
   assert.doesNotMatch(
     collectBody,
     /ops_die "app container does not exist \(required to capture previous image for rollback\)"/,
   );
   assert.match(collectBody, /IS_INITIAL_DEPLOY=0/);
   assert.match(collectBody, /APP_IMAGE_ROLLBACK_AVAILABLE=1/);
+
+  assert.match(detectPostgresBody, /POSTGRES_EXISTED_AT_START=1/);
+  assert.match(detectPostgresBody, /PRE_DEPLOY_BACKUP_REQUIRED=1/);
+  assert.match(detectPostgresBody, /IS_CLEAN_INITIAL_BOOTSTRAP=1/);
+  assert.match(detectPostgresBody, /PRE_DEPLOY_BACKUP_REQUIRED=0/);
+  assert.match(detectPostgresBody, /pre-deploy backup is required/);
+  assert.match(detectPostgresBody, /pre-deploy backup is not applicable/);
 
   assert.match(prepareRollbackBody, /IS_INITIAL_DEPLOY.*-eq 1/);
   assert.match(prepareRollbackBody, /skipping previous app image capture/);
@@ -326,17 +336,34 @@ function assertDeployScript(): void {
   assert.match(prepareRollbackBody, /docker tag "\$PREVIOUS_APP_IMAGE_ID" "\$ROLLBACK_IMAGE_TAG"/);
 
   assert.match(printPlanBody, /Deploy kind: INITIAL/);
+  assert.match(printPlanBody, /PostgreSQL: EXISTS/);
+  assert.match(printPlanBody, /PostgreSQL: MISSING/);
+  assert.match(printPlanBody, /CLEAN INITIAL/);
+  assert.match(printPlanBody, /NOT APPLICABLE/);
+  assert.match(printPlanBody, /Create and wait for healthy production PostgreSQL/);
+  assert.match(printPlanBody, /Create and verify PostgreSQL backup \(atomic\)/);
   assert.match(printPlanBody, /Skip previous app image tag \(initial deploy/);
   assert.match(printPlanBody, /Tag current app image for rollback/);
+  assert.match(printPlanBody, /build → start\/wait postgres → migrate → app → health|Build app and migrator images/);
+
+  assert.match(startPostgresBody, /IS_CLEAN_INITIAL_BOOTSTRAP.*-ne 1/);
+  assert.match(startPostgresBody, /ops_compose up -d --no-deps --no-build postgres/);
+  assert.match(startPostgresBody, /ops_wait_for_docker_health "\$PRODUCTION_POSTGRES_CONTAINER"/);
+  assert.doesNotMatch(startPostgresBody, /pg_dump|ops_create_production_postgres_backup/);
 
   assert.match(rollbackAppBody, /APP_ROLLBACK_STATUS="unavailable"/);
   assert.match(rollbackAppBody, /no previous app image available for rollback/);
+
+  assert.match(mainBody, /PRE_DEPLOY_BACKUP_REQUIRED/);
+  assert.match(mainBody, /not_applicable_no_database/);
+  assert.match(mainBody, /start_production_postgres_for_bootstrap/);
 
   assertIndexOrder(mainBody, "collect_app_image_state", "print_plan", "detect initial/redeploy before plan");
   assertIndexOrder(mainBody, "ops_create_production_postgres_backup", "prepare_rollback_tag", "backup before rollback tag");
   assertIndexOrder(mainBody, "prepare_rollback_tag", "init_state_manifest", "rollback tag before manifest");
   assertIndexOrder(mainBody, "init_state_manifest", "build_images", "manifest before build");
-  assertIndexOrder(mainBody, "build_images", "run_migrations", "build before migrations");
+  assertIndexOrder(mainBody, "build_images", "start_production_postgres_for_bootstrap", "build before postgres bootstrap");
+  assertIndexOrder(mainBody, "start_production_postgres_for_bootstrap", "run_migrations", "postgres before migrations");
   assertIndexOrder(mainBody, "run_migrations", "restart_app_only", "migrations before restart");
 
   const dryRunExit = mainBody.indexOf('ops_info "Dry-run complete');
@@ -344,6 +371,7 @@ function assertDeployScript(): void {
     "ops_create_production_postgres_backup",
     "init_state_manifest",
     "build_images",
+    "start_production_postgres_for_bootstrap",
     "run_migrations",
     "restart_app_only",
     "fast_forward_git",
@@ -373,7 +401,9 @@ function assertAtomicBackup(): void {
   assert.match(body, /mv -f -- "\$tmp_path" "\$backup_path"/);
   assert.match(body, /pg_dump -U/);
   assert.match(body, /PRODUCTION_BACKUPS_POSTGRES_DIR/);
+  assert.match(body, /ops_die "postgres container does not exist"/);
   assert.doesNotMatch(body, /backups\/postgres\//);
+  assert.doesNotMatch(body, /not_applicable_no_database|IS_CLEAN_INITIAL_BOOTSTRAP/);
 }
 
 function assertHttpHealthContract(): void {
@@ -432,8 +462,12 @@ function assertManifestSafety(): void {
   assert.match(manifestBody, /ENVIRONMENT=production/);
   assert.match(manifestBody, /IS_INITIAL_DEPLOY=/);
   assert.match(manifestBody, /APP_IMAGE_ROLLBACK_AVAILABLE=/);
+  assert.match(manifestBody, /IS_CLEAN_INITIAL_BOOTSTRAP=/);
+  assert.match(manifestBody, /POSTGRES_EXISTED_AT_START=/);
+  assert.match(manifestBody, /PRE_DEPLOY_BACKUP_APPLICABLE=/);
   assert.match(manifestBody, /GIT_STATUS_STAGE=/);
   assert.match(manifestBody, /BACKUP_STATUS=/);
+  assert.match(manifestBody, /POSTGRES_START_STATUS=/);
   assert.match(manifestBody, /BUILD_STATUS=/);
   assert.match(manifestBody, /APP_RESTART_STATUS=/);
 
@@ -464,6 +498,8 @@ function assertDocumentation(): void {
   assert.match(runbook, /Initial deploy/);
   assert.match(runbook, /IS_INITIAL_DEPLOY/);
   assert.match(runbook, /APP_IMAGE_ROLLBACK_AVAILABLE/);
+  assert.match(runbook, /IS_CLEAN_INITIAL_BOOTSTRAP|clean initial bootstrap/i);
+  assert.match(runbook, /not_applicable_no_database/);
   assert.match(runbook, /previous rollback image отсутствует/i);
 }
 

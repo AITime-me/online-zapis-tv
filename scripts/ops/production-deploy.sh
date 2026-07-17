@@ -10,6 +10,9 @@ DEPLOY_REDEPLOY_CURRENT=0
 DEPLOY_MODE="fast_forward"
 IS_INITIAL_DEPLOY=0
 APP_IMAGE_ROLLBACK_AVAILABLE=0
+POSTGRES_EXISTED_AT_START=0
+IS_CLEAN_INITIAL_BOOTSTRAP=0
+PRE_DEPLOY_BACKUP_REQUIRED=1
 
 MANIFEST_PATH=""
 PREVIOUS_COMMIT_SHA=""
@@ -24,6 +27,7 @@ COMPOSE_APP_IMAGE_ID=""
 GIT_STATUS_STAGE="planned"
 BACKUP_STATUS="pending"
 BUILD_STATUS="pending"
+POSTGRES_START_STATUS="not_needed"
 MIGRATION_STATUS="pending"
 APP_RESTART_STATUS="pending"
 DEPLOY_STATUS="pending"
@@ -170,21 +174,45 @@ collect_app_image_state() {
     CURRENT_CONTAINER_IMAGE_ID=""
     CURRENT_CONTAINER_IMAGE_REF="(none — initial deploy)"
     ops_info "Initial deploy: app container ${PRODUCTION_APP_CONTAINER} does not exist yet"
+  else
+    IS_INITIAL_DEPLOY=0
+    APP_IMAGE_ROLLBACK_AVAILABLE=1
+
+    CURRENT_CONTAINER_IMAGE_ID="$(ops_get_container_image_id "$PRODUCTION_APP_CONTAINER" | ops_normalize_image_id)"
+    if [[ -z "$CURRENT_CONTAINER_IMAGE_ID" ]]; then
+      ops_die "cannot determine current app container image id"
+    fi
+
+    CURRENT_CONTAINER_IMAGE_REF="$(ops_get_container_image_reference "$PRODUCTION_APP_CONTAINER" || true)"
+    if [[ -z "$CURRENT_CONTAINER_IMAGE_REF" ]]; then
+      CURRENT_CONTAINER_IMAGE_REF="(image id ${CURRENT_CONTAINER_IMAGE_ID})"
+    fi
+  fi
+
+  detect_postgres_deploy_state
+}
+
+detect_postgres_deploy_state() {
+  if ops_container_exists "$PRODUCTION_POSTGRES_CONTAINER"; then
+    POSTGRES_EXISTED_AT_START=1
+    IS_CLEAN_INITIAL_BOOTSTRAP=0
+    PRE_DEPLOY_BACKUP_REQUIRED=1
+    ops_info "Production PostgreSQL container exists: pre-deploy backup is required"
     return 0
   fi
 
-  IS_INITIAL_DEPLOY=0
-  APP_IMAGE_ROLLBACK_AVAILABLE=1
+  POSTGRES_EXISTED_AT_START=0
 
-  CURRENT_CONTAINER_IMAGE_ID="$(ops_get_container_image_id "$PRODUCTION_APP_CONTAINER" | ops_normalize_image_id)"
-  if [[ -z "$CURRENT_CONTAINER_IMAGE_ID" ]]; then
-    ops_die "cannot determine current app container image id"
+  if [[ "$IS_INITIAL_DEPLOY" -eq 1 ]]; then
+    IS_CLEAN_INITIAL_BOOTSTRAP=1
+    PRE_DEPLOY_BACKUP_REQUIRED=0
+    ops_info "Clean initial bootstrap: PostgreSQL container does not exist; pre-deploy backup is not applicable"
+    return 0
   fi
 
-  CURRENT_CONTAINER_IMAGE_REF="$(ops_get_container_image_reference "$PRODUCTION_APP_CONTAINER" || true)"
-  if [[ -z "$CURRENT_CONTAINER_IMAGE_REF" ]]; then
-    CURRENT_CONTAINER_IMAGE_REF="(image id ${CURRENT_CONTAINER_IMAGE_ID})"
-  fi
+  IS_CLEAN_INITIAL_BOOTSTRAP=0
+  PRE_DEPLOY_BACKUP_REQUIRED=1
+  ops_warn "Production PostgreSQL container is missing while app container exists; deploy will fail closed at backup"
 }
 
 fast_forward_git() {
@@ -257,6 +285,9 @@ persist_state_manifest() {
     "DEPLOY_MODE=$(ops_escape_manifest_value "$DEPLOY_MODE")" \
     "IS_INITIAL_DEPLOY=$(ops_escape_manifest_value "$([[ "$IS_INITIAL_DEPLOY" -eq 1 ]] && echo true || echo false)")" \
     "APP_IMAGE_ROLLBACK_AVAILABLE=$(ops_escape_manifest_value "$([[ "$APP_IMAGE_ROLLBACK_AVAILABLE" -eq 1 ]] && echo true || echo false)")" \
+    "IS_CLEAN_INITIAL_BOOTSTRAP=$(ops_escape_manifest_value "$([[ "$IS_CLEAN_INITIAL_BOOTSTRAP" -eq 1 ]] && echo true || echo false)")" \
+    "POSTGRES_EXISTED_AT_START=$(ops_escape_manifest_value "$([[ "$POSTGRES_EXISTED_AT_START" -eq 1 ]] && echo true || echo false)")" \
+    "PRE_DEPLOY_BACKUP_APPLICABLE=$(ops_escape_manifest_value "$([[ "$PRE_DEPLOY_BACKUP_REQUIRED" -eq 1 ]] && echo true || echo false)")" \
     "PREVIOUS_COMMIT_SHA=$(ops_escape_manifest_value "$PREVIOUS_COMMIT_SHA")" \
     "TARGET_COMMIT_SHA=$(ops_escape_manifest_value "$TARGET_COMMIT_SHA")" \
     "GIT_STATUS_STAGE=$(ops_escape_manifest_value "$GIT_STATUS_STAGE")" \
@@ -266,6 +297,7 @@ persist_state_manifest() {
     "ROLLBACK_IMAGE_TAG=$(ops_escape_manifest_value "$ROLLBACK_IMAGE_TAG")" \
     "NEW_APP_IMAGE_ID=$(ops_escape_manifest_value "${NEW_APP_IMAGE_ID:-}")" \
     "BUILD_STATUS=$(ops_escape_manifest_value "$BUILD_STATUS")" \
+    "POSTGRES_START_STATUS=$(ops_escape_manifest_value "$POSTGRES_START_STATUS")" \
     "MIGRATION_STATUS=$(ops_escape_manifest_value "$MIGRATION_STATUS")" \
     "APP_RESTART_STATUS=$(ops_escape_manifest_value "$APP_RESTART_STATUS")" \
     "DEPLOY_STATUS=$(ops_escape_manifest_value "$DEPLOY_STATUS")" \
@@ -281,6 +313,11 @@ init_state_manifest() {
   DEPLOY_STATUS="started"
   BACKUP_STATUS="${BACKUP_STATUS:-pending}"
   BUILD_STATUS="pending"
+  if [[ "$IS_CLEAN_INITIAL_BOOTSTRAP" -eq 1 ]]; then
+    POSTGRES_START_STATUS="pending"
+  else
+    POSTGRES_START_STATUS="not_needed"
+  fi
   MIGRATION_STATUS="pending"
   APP_RESTART_STATUS="pending"
   APP_ROLLBACK_STATUS="not_needed"
@@ -322,6 +359,41 @@ build_images() {
 
   BUILD_STATUS="success"
   DEPLOY_STATUS="images_built"
+  persist_state_manifest
+}
+
+start_production_postgres_for_bootstrap() {
+  if [[ "$IS_CLEAN_INITIAL_BOOTSTRAP" -ne 1 ]]; then
+    return 0
+  fi
+
+  if [[ "$OPS_DRY_RUN" -eq 1 ]]; then
+    POSTGRES_START_STATUS="dry_run_skipped"
+    return 0
+  fi
+
+  ops_info "Clean initial bootstrap: creating production PostgreSQL container..."
+  POSTGRES_START_STATUS="starting"
+  persist_state_manifest
+
+  if ! ops_compose up -d --no-deps --no-build postgres; then
+    POSTGRES_START_STATUS="failed"
+    DEPLOY_STATUS="failed_postgres"
+    LAST_ERROR_SUMMARY="failed to create production PostgreSQL container"
+    persist_state_manifest
+    return 1
+  fi
+
+  if ! ops_wait_for_docker_health "$PRODUCTION_POSTGRES_CONTAINER"; then
+    POSTGRES_START_STATUS="unhealthy"
+    DEPLOY_STATUS="failed_postgres"
+    LAST_ERROR_SUMMARY="production PostgreSQL container did not become healthy"
+    persist_state_manifest
+    return 1
+  fi
+
+  POSTGRES_START_STATUS="healthy"
+  DEPLOY_STATUS="postgres_ready"
   persist_state_manifest
 }
 
@@ -497,6 +569,17 @@ print_plan() {
     ops_info "Deploy kind: REDEPLOY (existing app container will be replaced)"
     ops_info "App image rollback: AVAILABLE after tagging previous image"
   fi
+  if [[ "$POSTGRES_EXISTED_AT_START" -eq 1 ]]; then
+    ops_info "PostgreSQL: EXISTS (pre-deploy backup required)"
+  else
+    ops_info "PostgreSQL: MISSING"
+  fi
+  if [[ "$IS_CLEAN_INITIAL_BOOTSTRAP" -eq 1 ]]; then
+    ops_info "Bootstrap: CLEAN INITIAL (app + PostgreSQL absent)"
+    ops_info "Pre-deploy backup: NOT APPLICABLE (no production database yet)"
+  elif [[ "$PRE_DEPLOY_BACKUP_REQUIRED" -eq 1 ]]; then
+    ops_info "Pre-deploy backup: REQUIRED (verified pg_dump before migrations)"
+  fi
   if [[ "$DEPLOY_REDEPLOY_CURRENT" -eq 1 ]]; then
     ops_info "Deploy mode: redeploy-current (Git will not change)"
   else
@@ -519,7 +602,28 @@ print_plan() {
 
   ops_info "Steps:"
   ops_info "  1. Validate production checkout, env, compose, and git state"
-  if [[ "$DEPLOY_REDEPLOY_CURRENT" -eq 1 ]]; then
+  if [[ "$IS_CLEAN_INITIAL_BOOTSTRAP" -eq 1 ]]; then
+    if [[ "$DEPLOY_REDEPLOY_CURRENT" -eq 1 ]]; then
+      ops_info "  2. Skip pre-deploy backup (not applicable — production database absent)"
+      ops_info "  3. Skip previous app image tag (initial deploy — no rollback image)"
+      ops_info "  4. Write initial deploy state manifest"
+      ops_info "  5. Build app and migrator images"
+      ops_info "  6. Create and wait for healthy production PostgreSQL"
+      ops_info "  7. Run prisma migrate status/deploy via ops profile"
+      ops_info "  8. Create production app container"
+      ops_info "  9. Wait for Docker health and HTTP /api/health"
+    else
+      ops_info "  2. Fast-forward main to origin/main"
+      ops_info "  3. Skip pre-deploy backup (not applicable — production database absent)"
+      ops_info "  4. Skip previous app image tag (initial deploy — no rollback image)"
+      ops_info "  5. Write initial deploy state manifest"
+      ops_info "  6. Build app and migrator images"
+      ops_info "  7. Create and wait for healthy production PostgreSQL"
+      ops_info "  8. Run prisma migrate status/deploy via ops profile"
+      ops_info "  9. Create production app container"
+      ops_info " 10. Wait for Docker health and HTTP /api/health"
+    fi
+  elif [[ "$DEPLOY_REDEPLOY_CURRENT" -eq 1 ]]; then
     ops_info "  2. Create and verify PostgreSQL backup (atomic)"
     if [[ "$IS_INITIAL_DEPLOY" -eq 1 ]]; then
       ops_info "  3. Skip previous app image tag (initial deploy — no rollback image)"
@@ -583,9 +687,15 @@ main() {
 
   fast_forward_git
 
-  BACKUP_PATH="$(ops_create_production_postgres_backup "$(git rev-parse --short "$TARGET_COMMIT_SHA")")"
-  BACKUP_STATUS="verified"
-  ops_info "Backup: ${BACKUP_PATH}"
+  if [[ "$PRE_DEPLOY_BACKUP_REQUIRED" -eq 1 ]]; then
+    BACKUP_PATH="$(ops_create_production_postgres_backup "$(git rev-parse --short "$TARGET_COMMIT_SHA")")"
+    BACKUP_STATUS="verified"
+    ops_info "Backup: ${BACKUP_PATH}"
+  else
+    BACKUP_PATH=""
+    BACKUP_STATUS="not_applicable_no_database"
+    ops_info "Pre-deploy backup: not applicable (production database / PostgreSQL container was absent)"
+  fi
 
   prepare_rollback_tag
   if [[ "$IS_INITIAL_DEPLOY" -eq 1 ]]; then
@@ -601,8 +711,17 @@ main() {
     ops_die "build failed (manifest: ${MANIFEST_PATH})"
   fi
 
+  if [[ "$IS_CLEAN_INITIAL_BOOTSTRAP" -eq 1 ]]; then
+    if ! start_production_postgres_for_bootstrap; then
+      ops_die "failed to start production PostgreSQL (manifest: ${MANIFEST_PATH})"
+    fi
+  fi
+
   if ! run_migrations; then
-    ops_die "migration failed — app was not restarted; backup preserved at ${BACKUP_PATH} (manifest: ${MANIFEST_PATH})"
+    if [[ -n "$BACKUP_PATH" ]]; then
+      ops_die "migration failed — app was not restarted; backup preserved at ${BACKUP_PATH} (manifest: ${MANIFEST_PATH})"
+    fi
+    ops_die "migration failed — app was not restarted; no pre-deploy backup (clean initial bootstrap; manifest: ${MANIFEST_PATH})"
   fi
 
   if ! restart_app_only; then
@@ -629,7 +748,14 @@ main() {
   ops_info "  commit: $(git rev-parse --short HEAD)"
   ops_info "  deploy mode: ${DEPLOY_MODE}"
   ops_info "  deploy kind: $([[ "$IS_INITIAL_DEPLOY" -eq 1 ]] && echo initial || echo redeploy)"
-  ops_info "  backup: ${BACKUP_PATH}"
+  ops_info "  clean bootstrap: $([[ "$IS_CLEAN_INITIAL_BOOTSTRAP" -eq 1 ]] && echo yes || echo no)"
+  if [[ -n "$BACKUP_PATH" ]]; then
+    ops_info "  backup: ${BACKUP_PATH}"
+  else
+    ops_info "  backup: (not applicable — no production database at start)"
+  fi
+  ops_info "  backup status: ${BACKUP_STATUS}"
+  ops_info "  postgres start: ${POSTGRES_START_STATUS}"
   ops_info "  app image: ${NEW_APP_IMAGE_ID}"
   ops_info "  migration: ${MIGRATION_STATUS}"
   ops_info "  docker health: ${DOCKER_HEALTH_STATUS}"
