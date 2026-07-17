@@ -192,7 +192,8 @@ function assertDocumentation(): void {
   const doc = readFile("docs/operations/production-backup.md");
   assert.match(doc, /30 дней|30/);
   assert.match(doc, /PRODUCTION_BACKUP_RETENTION_DAYS|retention/i);
-  assert.match(doc, /restore базы в этой задаче не реализован/i);
+  assert.match(doc, /production-restore\.md/);
+  assert.match(doc, /Restore базы/i);
   assert.match(doc, /\.production-ops\.lock/);
   assert.match(doc, /Asia\/Yekaterinburg/);
   assert.match(doc, /02:30/);

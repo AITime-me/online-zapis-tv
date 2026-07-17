@@ -12,6 +12,7 @@ const PRODUCTION_OPS_SHELL_FILES = [
   "scripts/ops/production-deploy.sh",
   "scripts/ops/production-rollback-app.sh",
   "scripts/ops/production-backup.sh",
+  "scripts/ops/production-restore-database.sh",
   "scripts/ops/install-production-backup-timer.sh",
   "scripts/ops/lib/production-ops-common.sh",
 ] as const;
@@ -23,7 +24,11 @@ const SECRET_MANIFEST_KEYS = [
   "SMTP_PASSWORD",
 ] as const;
 
-const FORBIDDEN_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
+const FORBIDDEN_PATTERNS: Array<{
+  name: string;
+  pattern: RegExp;
+  excludeFiles?: readonly string[];
+}> = [
   { name: "set -x", pattern: /^\s*set\s+-x/m },
   { name: "docker compose down", pattern: /docker\s+compose\b[^;\n]*\bdown\b/ },
   { name: "git reset --hard", pattern: /git\s+reset\s+--hard/ },
@@ -32,7 +37,14 @@ const FORBIDDEN_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
   { name: "prisma db push", pattern: /prisma\s+db\s+push/ },
   { name: "prisma db seed", pattern: /prisma\s+db\s+seed|db:seed/ },
   { name: "owner:create", pattern: /owner:create/ },
-  { name: "pg_restore restore", pattern: /pg_restore\s+--exit-on-error/ },
+  {
+    name: "pg_restore restore",
+    pattern: /pg_restore\s+--exit-on-error/,
+    excludeFiles: [
+      "scripts/ops/lib/production-ops-common.sh",
+      "scripts/ops/production-restore-database.sh",
+    ],
+  },
   { name: "source .env.production", pattern: /\bsource\b[^;\n]*\.env\.production/ },
   { name: "cat .env.production", pattern: /\bcat\b[^;\n]*\.env\.production/ },
   { name: "staging checkout path", pattern: /\/opt\/online-zapis-tv[^-]/ },
@@ -195,6 +207,7 @@ function assertNoStagingContainerUsage(): void {
     "scripts/ops/production-deploy.sh",
     "scripts/ops/production-rollback-app.sh",
     "scripts/ops/production-backup.sh",
+    "scripts/ops/production-restore-database.sh",
     "scripts/ops/install-production-backup-timer.sh",
   ] as const) {
     const executable = stripBashComments(readFile(rel));
@@ -207,6 +220,9 @@ function assertForbiddenPatterns(): void {
   for (const rel of PRODUCTION_OPS_SHELL_FILES) {
     const executable = stripBashComments(readFile(rel));
     for (const rule of FORBIDDEN_PATTERNS) {
+      if (rule.excludeFiles?.includes(rel)) {
+        continue;
+      }
       if (rule.name === "staging checkout path") {
         if (rel === "scripts/ops/lib/production-ops-common.sh") {
           continue;
@@ -381,6 +397,7 @@ function assertShellSyntax(): void {
     "scripts/ops/production-deploy.sh",
     "scripts/ops/production-rollback-app.sh",
     "scripts/ops/production-backup.sh",
+    "scripts/ops/production-restore-database.sh",
     "scripts/ops/install-production-backup-timer.sh",
   ] as const) {
     const result = spawnSync(bash, ["-n", rel], { cwd: ROOT, encoding: "utf8" });

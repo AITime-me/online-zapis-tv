@@ -5,10 +5,11 @@
 Связанные документы:
 
 - [Production deploy](./production-deploy.md) — deploy, rollback, общий lock
+- [Production restore](./production-restore.md) — ручное восстановление БД (отдельная операция)
 - [Production compose](./production-compose.md) — контуры и env
 - [Staging backup](./staging-backup.md) — отдельный staging-контур
 
-> **Restore базы в этой задаче не реализован** — будет отдельным этапом.
+> **Restore базы** — отдельная ручная операция: [`production-restore.md`](./production-restore.md).
 
 ## Важно о рисках
 

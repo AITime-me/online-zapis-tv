@@ -952,6 +952,162 @@ ops_assess_rollback_migration_risk() {
   esac
 }
 
+ops_validate_postgres_identifier() {
+  local name="$1"
+  local label="${2:-identifier}"
+
+  if [[ -z "$name" ]]; then
+    ops_die "${label} must not be empty"
+  fi
+  if ((${#name} > 63)); then
+    ops_die "${label} exceeds PostgreSQL identifier limit (63)"
+  fi
+  if [[ ! "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+    ops_die "${label} contains unsafe characters for PostgreSQL identifier"
+  fi
+}
+
+ops_production_restore_generate_temp_db_name() {
+  local ts="${1:-$(date -u +%Y%m%dT%H%M%SZ)}"
+  local name="tv_restore_tmp_${ts,,}"
+  ops_validate_postgres_identifier "$name" "temporary restore database"
+  printf '%s' "$name"
+}
+
+ops_production_restore_generate_rollback_db_name() {
+  local ts="${1:-$(date -u +%Y%m%dT%H%M%SZ)}"
+  local name="tv_restore_rb_${ts,,}"
+  ops_validate_postgres_identifier "$name" "rollback database"
+  printf '%s' "$name"
+}
+
+ops_production_restore_verify_source_dump() {
+  local dump_path="$1"
+  local saved_dry_run="$OPS_DRY_RUN"
+  OPS_DRY_RUN=0
+  if ! ops_verify_pg_dump_file "$dump_path"; then
+    OPS_DRY_RUN="$saved_dry_run"
+    return 1
+  fi
+  OPS_DRY_RUN="$saved_dry_run"
+  return 0
+}
+
+ops_production_restore_drop_database() {
+  local pg_user="$1"
+  local pg_password="$2"
+  local db_name="$3"
+  local quoted_db="\"${db_name}\""
+
+  docker exec -e PGPASSWORD="$pg_password" "$PRODUCTION_POSTGRES_CONTAINER" \
+    psql -v ON_ERROR_STOP=1 -U "$pg_user" -d postgres \
+    -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${db_name}' AND pid <> pg_backend_pid();" \
+    -c "DROP DATABASE IF EXISTS ${quoted_db} WITH (FORCE);"
+}
+
+ops_production_restore_create_database() {
+  local pg_user="$1"
+  local pg_password="$2"
+  local db_name="$3"
+  local quoted_db="\"${db_name}\""
+  local quoted_user="\"${pg_user}\""
+
+  docker exec -e PGPASSWORD="$pg_password" "$PRODUCTION_POSTGRES_CONTAINER" \
+    psql -v ON_ERROR_STOP=1 -U "$pg_user" -d postgres \
+    -c "CREATE DATABASE ${quoted_db} OWNER ${quoted_user};"
+}
+
+ops_production_restore_terminate_db_connections() {
+  local pg_user="$1"
+  local pg_password="$2"
+  local db_name="$3"
+
+  docker exec -e PGPASSWORD="$pg_password" "$PRODUCTION_POSTGRES_CONTAINER" \
+    psql -v ON_ERROR_STOP=1 -U "$pg_user" -d postgres -c \
+    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${db_name}' AND pid <> pg_backend_pid();"
+}
+
+ops_production_restore_rename_database() {
+  local pg_user="$1"
+  local pg_password="$2"
+  local from_name="$3"
+  local to_name="$4"
+  local quoted_from="\"${from_name}\""
+  local quoted_to="\"${to_name}\""
+
+  ops_production_restore_terminate_db_connections "$pg_user" "$pg_password" "$from_name"
+  docker exec -e PGPASSWORD="$pg_password" "$PRODUCTION_POSTGRES_CONTAINER" \
+    psql -v ON_ERROR_STOP=1 -U "$pg_user" -d postgres \
+    -c "ALTER DATABASE ${quoted_from} RENAME TO ${quoted_to};"
+}
+
+ops_production_restore_pg_restore_into_db() {
+  local pg_user="$1"
+  local pg_password="$2"
+  local db_name="$3"
+  local host_dump_path="$4"
+  local remote_dump="/tmp/ops-restore-$$.dump"
+  local copied=0
+  local status=0
+
+  ops_production_restore_remove_remote_dump() {
+    if (( copied )); then
+      docker exec "$PRODUCTION_POSTGRES_CONTAINER" rm -f -- "$remote_dump" >/dev/null 2>&1 || true
+      copied=0
+    fi
+  }
+
+  ops_production_restore_on_signal() {
+    ops_production_restore_remove_remote_dump
+    trap - INT TERM
+    exit "$1"
+  }
+
+  trap 'ops_production_restore_on_signal 130' INT
+  trap 'ops_production_restore_on_signal 143' TERM
+
+  if ! docker cp "$host_dump_path" "${PRODUCTION_POSTGRES_CONTAINER}:${remote_dump}"; then
+    trap - INT TERM
+    return 1
+  fi
+  copied=1
+
+  set +e
+  docker exec -e PGPASSWORD="$pg_password" "$PRODUCTION_POSTGRES_CONTAINER" \
+    pg_restore --exit-on-error --no-owner --no-acl -U "$pg_user" -d "$db_name" "$remote_dump"
+  status=$?
+  set -e
+
+  ops_production_restore_remove_remote_dump
+  trap - INT TERM
+
+  set +e
+  return "$status"
+}
+
+ops_production_restore_verify_temp_database() {
+  local pg_user="$1"
+  local pg_password="$2"
+  local db_name="$3"
+  local table_count
+
+  # PostgreSQL table names from prisma @@map / Prisma migrate (not Prisma model names):
+  # User → users, Appointment → appointments, StudioSettings → studio_settings.
+  ops_validate_postgres_identifier "$pg_user" "POSTGRES_USER"
+  ops_validate_postgres_identifier "$db_name" "temporary restore database"
+
+  docker exec -e PGPASSWORD="$pg_password" "$PRODUCTION_POSTGRES_CONTAINER" \
+    psql -v ON_ERROR_STOP=1 -U "$pg_user" -d "$db_name" -c "SELECT 1;" >/dev/null
+
+  table_count="$(docker exec -e PGPASSWORD="$pg_password" "$PRODUCTION_POSTGRES_CONTAINER" \
+    psql -v ON_ERROR_STOP=1 -U "$pg_user" -d "$db_name" -At -c \
+    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('users', 'appointments', 'studio_settings', '_prisma_migrations');")"
+
+  if [[ "$table_count" != "4" ]]; then
+    ops_die "temporary database verification failed: expected 4 key tables, found ${table_count:-0}"
+  fi
+}
+
 ops_validate_retention_days() {
   local value="$1"
   if [[ -z "$value" || ! "$value" =~ ^[1-9][0-9]*$ ]]; then

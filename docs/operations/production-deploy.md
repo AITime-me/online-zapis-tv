@@ -6,6 +6,7 @@
 
 - [Production Docker Compose](./production-compose.md) — compose, env, первый запуск контуров
 - [Production backup](./production-backup.md) — ежедневный и ручной backup PostgreSQL
+- [Production restore](./production-restore.md) — ручное восстановление БД
 - [Staging deploy](./staging-deploy.md) — отдельный staging-контур (`/opt/online-zapis-tv`)
 - [STAGING_PRODUCTION.md](../STAGING_PRODUCTION.md) — bootstrap БД и OWNER (отдельный этап)
 
@@ -63,6 +64,9 @@ bash scripts/ops/production-rollback-app.sh --manifest latest --dry-run
 # Ручной backup PostgreSQL (см. production-backup.md)
 bash scripts/ops/production-backup.sh --dry-run
 bash scripts/ops/production-backup.sh
+
+# Ручной restore БД (см. production-restore.md)
+bash scripts/ops/production-restore-database.sh --dry-run --backup backups/production/postgres/YYYYMMDDTHHMMSSZ_<sha>.dump
 ```
 
 ## Последовательность deploy
@@ -115,9 +119,9 @@ Rollback пишет отдельный `*_rollback.env` manifest.
 
 Следующий инфраструктурный этап: TLS + reverse proxy на `127.0.0.1:3100`. `AUTH_URL` в `.env.production` должен совпасть с публичным HTTPS-доменом.
 
-## Что не входит в этот этап
+## Что не входит в deploy
 
-- restore database (см. будущий этап);
+- restore database (см. [`production-restore.md`](./production-restore.md));
 - создание `.env.production` скриптами;
 - bootstrap/seed/OWNER;
 - реальный deploy из CI.
