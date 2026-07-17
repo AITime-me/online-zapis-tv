@@ -25,6 +25,8 @@ readonly PRODUCTION_HTTP_HEALTH_TIMEOUT_SEC=10
 readonly PRODUCTION_APP_IMAGE_REF="online-zapis-tv-production-app:current"
 readonly PRODUCTION_MIGRATOR_TSX="/app/node_modules/.bin/tsx"
 readonly PRODUCTION_CLASSIFIER_CLI="/app/scripts/ops/lib/classify-migrate-status-cli.ts"
+readonly PRODUCTION_BACKUP_RETENTION_DAYS=30
+readonly PRODUCTION_BACKUP_DUMP_NAME_RE='^[0-9]{8}T[0-9]{6}Z_[A-Za-z0-9._-]+\.dump$'
 
 OPS_REPO_ROOT=""
 OPS_DRY_RUN=0
@@ -948,4 +950,104 @@ ops_assess_rollback_migration_risk() {
       ops_warn "deploy failed during migrations; app rollback alone may not restore service."
       ;;
   esac
+}
+
+ops_validate_retention_days() {
+  local value="$1"
+  if [[ -z "$value" || ! "$value" =~ ^[1-9][0-9]*$ ]]; then
+    ops_die "--retention-days must be a positive integer"
+  fi
+  if (( value > 3650 )); then
+    ops_die "--retention-days exceeds safe maximum (3650)"
+  fi
+}
+
+ops_is_production_backup_dump_basename() {
+  local name="$1"
+  [[ "$name" =~ $PRODUCTION_BACKUP_DUMP_NAME_RE ]]
+}
+
+ops_production_backup_epoch() {
+  local basename="$1"
+  local ts="${basename%%_*}"
+  if [[ ! "$ts" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
+    return 1
+  fi
+  date -u -d \
+    "${ts:0:4}-${ts:4:2}-${ts:6:2} ${ts:9:2}:${ts:11:2}:${ts:13:2}" \
+    +%s 2>/dev/null
+}
+
+ops_purge_expired_production_backups() {
+  local retention_days="${1:-$PRODUCTION_BACKUP_RETENTION_DAYS}"
+  local dir resolved cutoff_epoch purged=0 basename file file_epoch file_resolved
+
+  ops_validate_retention_days "$retention_days"
+  dir="${OPS_REPO_ROOT}/${PRODUCTION_BACKUPS_POSTGRES_DIR}"
+  if [[ ! -d "$dir" ]]; then
+    if [[ "$OPS_DRY_RUN" -eq 1 ]]; then
+      printf '%s' "0"
+      return 0
+    fi
+    ops_die "production backup directory does not exist: ${dir}"
+  fi
+  resolved="$(cd "$dir" && pwd)"
+  cutoff_epoch="$(date -u -d "${retention_days} days ago" +%s)"
+
+  shopt -s nullglob
+  for file in "${resolved}"/*.dump; do
+    [[ -f "$file" ]] || continue
+    [[ -L "$file" ]] && continue
+    basename="$(basename "$file")"
+    if ! ops_is_production_backup_dump_basename "$basename"; then
+      ops_warn "skipping non-production backup filename: ${basename}"
+      continue
+    fi
+    file_epoch="$(ops_production_backup_epoch "$basename" || true)"
+    if [[ -z "$file_epoch" ]]; then
+      ops_warn "skipping backup with unparseable timestamp: ${basename}"
+      continue
+    fi
+    if (( file_epoch >= cutoff_epoch )); then
+      continue
+    fi
+    file_resolved="$(readlink -f "$file" 2>/dev/null || realpath "$file" 2>/dev/null || true)"
+    if [[ -z "$file_resolved" || "$file_resolved" != "${resolved}/"* ]]; then
+      ops_die "retention safety: file is outside ${PRODUCTION_BACKUPS_POSTGRES_DIR}"
+    fi
+    if [[ "$OPS_DRY_RUN" -eq 1 ]]; then
+      ops_info "  retention: would remove ${basename}"
+    else
+      rm -f -- "$file_resolved"
+    fi
+    purged=$((purged + 1))
+  done
+  shopt -u nullglob
+
+  printf '%s' "$purged"
+}
+
+ops_write_production_backup_manifest() {
+  local backup_path="$1"
+  local retention_days="$2"
+  local purged_count="$3"
+  local status="$4"
+  local ts manifest_path commit_sha
+
+  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+  commit_sha="$(git -C "$OPS_REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  manifest_path="${PRODUCTION_DEPLOY_STATE_DIR}/${ts}_backup.env"
+
+  ops_write_manifest_file "$manifest_path" \
+    "STATE_VERSION=${PRODUCTION_STATE_VERSION}" \
+    "TIMESTAMP_UTC=${ts}" \
+    "ENVIRONMENT=production" \
+    "BACKUP_KIND=manual_or_scheduled" \
+    "COMMIT_SHA=$(ops_escape_manifest_value "$commit_sha")" \
+    "BACKUP_PATH=$(ops_escape_manifest_value "$backup_path")" \
+    "BACKUP_STATUS=$(ops_escape_manifest_value "$status")" \
+    "RETENTION_DAYS=${retention_days}" \
+    "PURGED_COUNT=${purged_count}"
+
+  printf '%s' "$manifest_path"
 }

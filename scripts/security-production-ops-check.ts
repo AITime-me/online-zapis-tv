@@ -11,6 +11,8 @@ const ROOT = process.cwd();
 const PRODUCTION_OPS_SHELL_FILES = [
   "scripts/ops/production-deploy.sh",
   "scripts/ops/production-rollback-app.sh",
+  "scripts/ops/production-backup.sh",
+  "scripts/ops/install-production-backup-timer.sh",
   "scripts/ops/lib/production-ops-common.sh",
 ] as const;
 
@@ -155,6 +157,7 @@ function assertProductionCommonConstants(): void {
   assert.match(common, /PRODUCTION_LOCK_FILE="backups\/production\/deploy-state\/\.production-ops\.lock"/);
   assert.match(common, /PRODUCTION_HEALTH_URL="http:\/\/127\.0\.0\.1:3100\/api\/health"/);
   assert.match(common, /PRODUCTION_APP_IMAGE_REF="online-zapis-tv-production-app:current"/);
+  assert.match(common, /PRODUCTION_BACKUP_RETENTION_DAYS=30/);
   assert.doesNotMatch(stripBashComments(common), /source[^;\n]*staging-ops-common/);
   assert.doesNotMatch(common, /tvoe-vremya-staging-app/);
   assert.doesNotMatch(common, /\.env\.staging/);
@@ -191,6 +194,8 @@ function assertNoStagingContainerUsage(): void {
   for (const rel of [
     "scripts/ops/production-deploy.sh",
     "scripts/ops/production-rollback-app.sh",
+    "scripts/ops/production-backup.sh",
+    "scripts/ops/install-production-backup-timer.sh",
   ] as const) {
     const executable = stripBashComments(readFile(rel));
     assert.doesNotMatch(executable, /tvoe-vremya-staging/);
@@ -375,6 +380,8 @@ function assertShellSyntax(): void {
   for (const rel of [
     "scripts/ops/production-deploy.sh",
     "scripts/ops/production-rollback-app.sh",
+    "scripts/ops/production-backup.sh",
+    "scripts/ops/install-production-backup-timer.sh",
   ] as const) {
     const result = spawnSync(bash, ["-n", rel], { cwd: ROOT, encoding: "utf8" });
     assert.equal(result.status, 0, `bash -n ${rel} failed:\n${result.stderr}`);
@@ -386,6 +393,7 @@ function assertHelpWorks(): void {
   for (const [script, marker] of [
     ["scripts/ops/production-deploy.sh", "deploy production"],
     ["scripts/ops/production-rollback-app.sh", "Roll back only the production app"],
+    ["scripts/ops/production-backup.sh", "production-backup.sh"],
   ] as const) {
     const result = spawnSync(bash, [script, "--help"], { cwd: ROOT, encoding: "utf8" });
     assert.equal(result.status, 0, `${script} --help failed:\n${result.stderr}`);

@@ -1,0 +1,16 @@
+[Unit]
+Description=Daily PostgreSQL backup for online-zapis-tv production
+Documentation=file:/opt/online-zapis-tv-production/docs/operations/production-backup.md
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=deploy
+Group=deploy
+WorkingDirectory=/opt/online-zapis-tv-production
+UMask=0077
+ExecStart=/usr/bin/bash /opt/online-zapis-tv-production/scripts/ops/production-backup.sh
+
+[Install]
+WantedBy=multi-user.target

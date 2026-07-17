@@ -5,10 +5,11 @@
 Связанные документы:
 
 - [Production Docker Compose](./production-compose.md) — compose, env, первый запуск контуров
+- [Production backup](./production-backup.md) — ежедневный и ручной backup PostgreSQL
 - [Staging deploy](./staging-deploy.md) — отдельный staging-контур (`/opt/online-zapis-tv`)
 - [STAGING_PRODUCTION.md](../STAGING_PRODUCTION.md) — bootstrap БД и OWNER (отдельный этап)
 
-> Скрипты **не являются разрешением** на публичный production-запуск. HTTPS reverse proxy, scheduled backup, restore БД и bootstrap — следующие этапы.
+> Скрипты **не являются разрешением** на публичный production-запуск. HTTPS reverse proxy, restore БД и bootstrap — следующие этапы. Scheduled backup: [production-backup.md](./production-backup.md).
 
 ## Размещение
 
@@ -58,6 +59,10 @@ bash scripts/ops/production-deploy.sh --redeploy-current
 # Откат только app (интерактивно: ROLLBACK PRODUCTION APP)
 bash scripts/ops/production-rollback-app.sh
 bash scripts/ops/production-rollback-app.sh --manifest latest --dry-run
+
+# Ручной backup PostgreSQL (см. production-backup.md)
+bash scripts/ops/production-backup.sh --dry-run
+bash scripts/ops/production-backup.sh
 ```
 
 ## Последовательность deploy
@@ -88,7 +93,7 @@ bash scripts/ops/production-rollback-app.sh --manifest latest --dry-run
 
 ## Lock
 
-`backups/production/deploy-state/.production-ops.lock` — единый lock для всех production DB/ops операций (`flock -n`). `--dry-run` lock не берёт. Staging lock не используется.
+`backups/production/deploy-state/.production-ops.lock` — единый lock для deploy, rollback и backup (`flock -n`). `--dry-run` lock не берёт. Staging lock не используется.
 
 ## Manifest
 
@@ -112,9 +117,7 @@ Rollback пишет отдельный `*_rollback.env` manifest.
 
 ## Что не входит в этот этап
 
-- scheduled backup timer;
-- отдельный ручной backup-скрипт;
-- restore database;
+- restore database (см. будущий этап);
 - создание `.env.production` скриптами;
 - bootstrap/seed/OWNER;
 - реальный deploy из CI.

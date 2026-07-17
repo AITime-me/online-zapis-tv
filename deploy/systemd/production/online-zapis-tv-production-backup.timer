@@ -1,0 +1,13 @@
+[Unit]
+Description=Daily timer for online-zapis-tv production PostgreSQL backup
+Documentation=file:/opt/online-zapis-tv-production/docs/operations/production-backup.md
+
+[Timer]
+# 02:30 studio local time (Kurgan, UTC+5). Requires systemd with timezone-aware OnCalendar.
+OnCalendar=*-*-* 02:30:00 Asia/Yekaterinburg
+Persistent=true
+RandomizedDelaySec=900
+Unit=online-zapis-tv-production-backup.service
+
+[Install]
+WantedBy=timers.target
