@@ -134,7 +134,14 @@ ops_assert_production_checkout() {
   local resolved
 
   ops_find_repo_root "$(pwd)"
-  resolved="$(cd "$OPS_REPO_ROOT" && pwd -P 2>/dev/null || cd "$OPS_REPO_ROOT" && pwd)"
+  # pwd -P в отдельной подстановке: при успехе fallback pwd не выполняется
+  # (иначе из-за приоритета &&/|| путь дублируется через перевод строки).
+  resolved="$(cd "$OPS_REPO_ROOT" && pwd -P 2>/dev/null)" || \
+    resolved="$(cd "$OPS_REPO_ROOT" && pwd)"
+
+  if [[ "$resolved" == *$'\n'* ]]; then
+    ops_die "production checkout path resolution returned multiple lines"
+  fi
 
   if [[ "$resolved" == "$PRODUCTION_STAGING_REPO_ROOT" ]]; then
     ops_die "staging checkout detected (${PRODUCTION_STAGING_REPO_ROOT}); production ops are forbidden here"

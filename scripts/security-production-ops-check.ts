@@ -178,8 +178,9 @@ function assertProductionCommonConstants(): void {
 }
 
 function assertProductionGuard(): void {
+  const common = readFile("scripts/ops/lib/production-ops-common.sh");
   const guardBody = extractFunctionBodies(
-    readFile("scripts/ops/lib/production-ops-common.sh"),
+    common,
     "ops_assert_production_checkout",
   );
   const deploy = stripBashComments(readFile("scripts/ops/production-deploy.sh"));
@@ -191,6 +192,21 @@ function assertProductionGuard(): void {
   assert.match(guardBody, /PRODUCTION_ENV_FILE/);
   assert.match(deploy, /ops_assert_production_checkout/);
   assert.match(rollback, /ops_assert_production_checkout/);
+
+  // Регрессия: pwd -P и fallback pwd не должны жить в одной &&/|| цепочке внутри одной
+  // подстановки — иначе при успехе pwd выполняется дважды и путь дублируется через \n.
+  assert.doesNotMatch(
+    guardBody,
+    /resolved="\$\(cd "\$OPS_REPO_ROOT" && pwd -P 2>\/dev\/null \|\| cd "\$OPS_REPO_ROOT" && pwd\)"/,
+  );
+  assert.match(
+    guardBody,
+    /resolved="\$\(cd "\$OPS_REPO_ROOT" && pwd -P 2>\/dev\/null\)" \|\|\s*\\\r?\n\s*resolved="\$\(cd "\$OPS_REPO_ROOT" && pwd\)"/,
+  );
+  assert.match(
+    guardBody,
+    /resolved" == \*\$'\\n'\*/,
+  );
 }
 
 function assertProductionEnvValidation(): void {
