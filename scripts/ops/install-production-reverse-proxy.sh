@@ -15,7 +15,11 @@ readonly PRODUCTION_CADDYFILE_SRC="deploy/caddy/Caddyfile.production"
 readonly PRODUCTION_CADDYFILE_DST="/etc/caddy/Caddyfile"
 readonly PRODUCTION_CADDY_BACKUP_DIR="/var/backups/online-zapis-tv-production-caddy"
 readonly PRODUCTION_HTTPS_HEALTH_URL="https://tvoio-vremya.ru/api/health"
+readonly PRODUCTION_HTTPS_WWW_HEALTH_URL="https://www.tvoio-vremya.ru/api/health"
 readonly PRODUCTION_HTTPS_RUNBOOK="docs/operations/production-https.md"
+readonly PRODUCTION_HTTPS_HEALTH_DEADLINE_SEC=180
+readonly PRODUCTION_HTTPS_HEALTH_INTERVAL_SEC=3
+readonly PRODUCTION_HTTPS_CURL_TIMEOUT_SEC=10
 
 CADDY_BACKUP_PATH=""
 HAD_PREVIOUS_CADDYFILE=0
@@ -134,13 +138,73 @@ local_app_health_ok() {
   ops_check_http_health_production
 }
 
+# Одна попытка HTTPS health (ожидаемый JSON ok=true, status=healthy).
 https_health_ok() {
   local body
-  body="$(curl -fsS --max-time 20 "$PRODUCTION_HTTPS_HEALTH_URL" 2>/dev/null || true)"
+  body="$(curl -fsS --max-time "$PRODUCTION_HTTPS_CURL_TIMEOUT_SEC" "$PRODUCTION_HTTPS_HEALTH_URL" 2>/dev/null || true)"
   if [[ -z "$body" ]]; then
     return 1
   fi
   grep -q '"ok":true' <<<"$body" && grep -q '"status":"healthy"' <<<"$body"
+}
+
+# Ждёт первый успешный HTTPS health до deadline (ACME/TLS может занять минуты).
+# Не вызывает rollback — только return 0/1.
+wait_for_https_health() {
+  local deadline_at attempt=0 remaining
+
+  deadline_at=$((SECONDS + PRODUCTION_HTTPS_HEALTH_DEADLINE_SEC))
+  ops_info "Waiting for HTTPS health at ${PRODUCTION_HTTPS_HEALTH_URL} (deadline ${PRODUCTION_HTTPS_HEALTH_DEADLINE_SEC}s, every ${PRODUCTION_HTTPS_HEALTH_INTERVAL_SEC}s)..."
+
+  while (( SECONDS < deadline_at )); do
+    attempt=$((attempt + 1))
+    if https_health_ok; then
+      ops_info "HTTPS health OK (attempt ${attempt})"
+      return 0
+    fi
+
+    remaining=$((deadline_at - SECONDS))
+    if (( remaining <= 0 )); then
+      break
+    fi
+
+    ops_info "HTTPS not ready yet (attempt ${attempt}, ~${remaining}s left) — waiting for TLS certificate..."
+    if (( remaining < PRODUCTION_HTTPS_HEALTH_INTERVAL_SEC )); then
+      sleep "$remaining"
+    else
+      sleep "$PRODUCTION_HTTPS_HEALTH_INTERVAL_SEC"
+    fi
+  done
+
+  ops_warn "HTTPS health deadline exceeded after ${attempt} attempt(s)"
+  return 1
+}
+
+# www → apex permanent redirect на канонический https://tvoio-vremya.ru{uri}.
+assert_www_canonical_redirect() {
+  local code location expected_prefix
+
+  expected_prefix="https://${PRODUCTION_PUBLIC_DOMAIN}/"
+  ops_info "Checking www permanent redirect to ${expected_prefix}..."
+
+  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time "$PRODUCTION_HTTPS_CURL_TIMEOUT_SEC" "$PRODUCTION_HTTPS_WWW_HEALTH_URL" 2>/dev/null || true)"
+  location="$(
+    curl -sSI --max-time "$PRODUCTION_HTTPS_CURL_TIMEOUT_SEC" "$PRODUCTION_HTTPS_WWW_HEALTH_URL" 2>/dev/null \
+      | tr -d '\r' \
+      | awk 'BEGIN{IGNORECASE=1} /^[Ll]ocation:/ {print $2; exit}'
+  )"
+
+  if [[ "$code" != "301" ]]; then
+    ops_warn "www redirect expected HTTP 301, got '${code:-empty}'"
+    return 1
+  fi
+  if [[ -z "$location" || "$location" != "${expected_prefix}"* ]]; then
+    ops_warn "www Location must start with ${expected_prefix} (got '${location:-empty}')"
+    return 1
+  fi
+
+  ops_info "www canonical redirect OK (${code} → ${location})"
+  return 0
 }
 
 # Извлекает имена процессов из вывода `ss -p` (Ubuntu: users:(("caddy",pid=…,fd=…))).
@@ -360,8 +424,12 @@ apply_install() {
     fail_after_install "local health failed after reload"
   fi
 
-  if ! https_health_ok; then
-    fail_after_install "HTTPS health failed after reload"
+  if ! wait_for_https_health; then
+    fail_after_install "HTTPS health failed after reload (TLS wait deadline exceeded)"
+  fi
+
+  if ! assert_www_canonical_redirect; then
+    fail_after_install "www canonical redirect check failed after HTTPS health"
   fi
 
   ops_info "Production reverse proxy install complete"

@@ -190,6 +190,57 @@ function assertHelper(): void {
   const reloadIdx = applyBody.indexOf("systemctl reload caddy");
   assert.ok(validateSrcIdx >= 0 && reloadIdx > validateSrcIdx, "validate before reload");
 
+  const localAfterReload = applyBody.indexOf('fail_after_install "local health failed after reload"');
+  const httpsWaitIdx = applyBody.indexOf("wait_for_https_health");
+  const wwwIdx = applyBody.indexOf("assert_www_canonical_redirect");
+  const httpsFailIdx = applyBody.indexOf(
+    'fail_after_install "HTTPS health failed after reload (TLS wait deadline exceeded)"',
+  );
+  assert.ok(localAfterReload > reloadIdx, "local upstream checked immediately after reload");
+  assert.ok(httpsWaitIdx > localAfterReload, "HTTPS wait runs after local upstream OK");
+  assert.ok(httpsFailIdx > httpsWaitIdx, "HTTPS deadline failure triggers rollback path");
+  assert.ok(wwwIdx > httpsWaitIdx, "www redirect checked after HTTPS health wait");
+  assert.doesNotMatch(
+    applyBody,
+    /if ! https_health_ok; then\s*\n\s*fail_after_install/,
+  );
+
+  const waitBody = (() => {
+    const start = source.indexOf("wait_for_https_health()");
+    const end = source.indexOf("assert_www_canonical_redirect()");
+    assert.ok(start >= 0 && end > start, "wait_for_https_health must exist");
+    return stripBashComments(source.slice(start, end));
+  })();
+  assert.match(waitBody, /PRODUCTION_HTTPS_HEALTH_DEADLINE_SEC/);
+  assert.match(waitBody, /PRODUCTION_HTTPS_HEALTH_INTERVAL_SEC/);
+  assert.match(executable, /PRODUCTION_HTTPS_HEALTH_DEADLINE_SEC=180/);
+  assert.match(executable, /PRODUCTION_HTTPS_HEALTH_INTERVAL_SEC=3/);
+  assert.match(waitBody, /https_health_ok/);
+  assert.match(waitBody, /sleep/);
+  assert.match(waitBody, /waiting for TLS certificate/);
+  assert.doesNotMatch(waitBody, /restore_previous_caddyfile|fail_after_install/);
+  assert.doesNotMatch(waitBody, /sudo |systemctl/);
+
+  const wwwBody = (() => {
+    const start = source.indexOf("assert_www_canonical_redirect()");
+    const end = source.indexOf("ss_extract_listener_process_names()");
+    assert.ok(start >= 0 && end > start, "assert_www_canonical_redirect must exist");
+    return stripBashComments(source.slice(start, end));
+  })();
+  assert.match(wwwBody, /www\.tvoio-vremya\.ru|PRODUCTION_HTTPS_WWW_HEALTH_URL/);
+  assert.match(wwwBody, /301/);
+  assert.match(wwwBody, /[Ll]ocation/);
+  assert.match(wwwBody, /https:\/\/\$\{PRODUCTION_PUBLIC_DOMAIN\}\//);
+  assert.doesNotMatch(wwwBody, /restore_previous_caddyfile/);
+
+  const failBody = (() => {
+    const start = source.indexOf("fail_after_install()");
+    const end = source.indexOf("apply_install()");
+    assert.ok(start >= 0 && end > start, "fail_after_install must exist");
+    return stripBashComments(source.slice(start, end));
+  })();
+  assert.match(failBody, /restore_previous_caddyfile/);
+
   const dryIdx = executable.indexOf('ops_info "Dry-run complete');
   const lockIdx = executable.indexOf("ops_acquire_production_ops_lock");
   assert.ok(dryIdx >= 0 && lockIdx > dryIdx, "dry-run must exit before lock");
@@ -202,6 +253,7 @@ function assertHelper(): void {
   assert.doesNotMatch(dryMatch[1], /ops_acquire_production_ops_lock|systemctl|mkdir|install -m/);
   assert.doesNotMatch(dryMatch[1], /\bsudo\b/);
   assert.doesNotMatch(dryMatch[1], /ensure_sudo_authenticated|assert_http_ports_safe/);
+  assert.doesNotMatch(dryMatch[1], /wait_for_https_health|sleep |assert_www_canonical_redirect/);
 }
 
 function assertExecutableBit(): void {
