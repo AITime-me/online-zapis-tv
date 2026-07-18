@@ -44,6 +44,9 @@ COPY scripts/ops/lib/staging-restore-game-promotions-cli.ts ./scripts/ops/lib/st
 COPY scripts/data/import-services-data.ts ./scripts/data/import-services-data.ts
 COPY scripts/ops/lib/production-bootstrap-canonical.ts ./scripts/ops/lib/production-bootstrap-canonical.ts
 COPY scripts/ops/lib/production-bootstrap-data-cli.ts ./scripts/ops/lib/production-bootstrap-data-cli.ts
+COPY scripts/create-owner.ts ./scripts/create-owner.ts
+COPY scripts/lib/prompt.ts ./scripts/lib/prompt.ts
+COPY src/lib/auth/password-policy.ts ./src/lib/auth/password-policy.ts
 
 FROM base AS runner
 WORKDIR /app

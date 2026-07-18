@@ -534,6 +534,35 @@ function assertMigratorProductionSeedRuntime(): void {
   assert.doesNotMatch(migrator, /COPY \. \./);
 }
 
+function assertMigratorCreateOwnerRuntime(): void {
+  const dockerfile = readFile("Dockerfile");
+  const migrator = dockerfile.match(/FROM deps AS migrator[\s\S]*?(?=\nFROM |\z)/)?.[0] ?? "";
+  assert.ok(migrator.length > 0, "Dockerfile must define migrator stage");
+
+  const createOwner = readFile("scripts/create-owner.ts");
+  assert.match(createOwner, /from ["']\.\.\/src\/lib\/auth\/password-policy["']/);
+  assert.match(createOwner, /from ["']\.\/lib\/prompt["']/);
+  assert.match(createOwner, /from ["']bcryptjs["']/);
+  assert.match(createOwner, /from ["']@prisma\/client["']/);
+
+  const passwordPolicy = readFile("src/lib/auth/password-policy.ts");
+  assert.doesNotMatch(passwordPolicy, /^import\s/m);
+
+  const prompt = readFile("scripts/lib/prompt.ts");
+  assert.match(prompt, /node:readline|node:process/);
+  assert.doesNotMatch(prompt, /from ["']@\//);
+  assert.doesNotMatch(prompt, /from ["']\.\.\//);
+
+  assert.match(migrator, /COPY scripts\/create-owner\.ts \.\/scripts\/create-owner\.ts/);
+  assert.match(migrator, /COPY scripts\/lib\/prompt\.ts \.\/scripts\/lib\/prompt\.ts/);
+  assert.match(
+    migrator,
+    /COPY src\/lib\/auth\/password-policy\.ts \.\/src\/lib\/auth\/password-policy\.ts/,
+  );
+  assert.doesNotMatch(migrator, /COPY src \.\/src\b/);
+  assert.doesNotMatch(migrator, /COPY scripts \.\/scripts\b/);
+}
+
 function assertShellSyntax(): void {
   const bash = resolveBashExecutable();
   for (const rel of [
@@ -578,6 +607,7 @@ function run(): void {
   assertGitignoreProductionEnv();
   assertDocumentation();
   assertMigratorProductionSeedRuntime();
+  assertMigratorCreateOwnerRuntime();
   assertShellSyntax();
   assertHelpWorks();
   console.log("security-production-ops-check: OK");

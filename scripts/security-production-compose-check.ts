@@ -154,6 +154,17 @@ function collectLocalSeedRuntimeFiles(entryRel: string, seen = new Set<string>()
   return seen;
 }
 
+function assertMigratorCopiesLocalFiles(migrator: string, files: Iterable<string>): void {
+  for (const rel of files) {
+    const escaped = rel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    assert.match(
+      migrator,
+      new RegExp(`COPY ${escaped} \\.\\/${escaped}`),
+      `migrator must COPY runtime dependency ${rel}`,
+    );
+  }
+}
+
 function extractMigratorStage(dockerfile: string): string {
   const block = dockerfile.match(/FROM deps AS migrator[\s\S]*?(?=\nFROM |\z)/)?.[0] ?? "";
   assert.ok(block.length > 0, "Dockerfile must define migrator stage");
@@ -182,14 +193,24 @@ function testMigratorIncludesProductionSeedRuntime(): void {
   assert.doesNotMatch(migrator, /COPY src \.\/src\b/);
   assert.doesNotMatch(migrator, /COPY \. \./);
 
-  for (const rel of required) {
-    const escaped = rel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    assert.match(
-      migrator,
-      new RegExp(`COPY ${escaped} \\.\\/${escaped}`),
-      `migrator must COPY seed runtime dependency ${rel}`,
-    );
-  }
+  assertMigratorCopiesLocalFiles(migrator, required);
+}
+
+function testMigratorIncludesCreateOwnerRuntime(): void {
+  const closure = collectLocalSeedRuntimeFiles("scripts/create-owner.ts");
+  assert.ok(closure.has("scripts/create-owner.ts"));
+  assert.ok(closure.has("scripts/lib/prompt.ts"));
+  assert.ok(closure.has("src/lib/auth/password-policy.ts"));
+  assert.equal(
+    [...closure].filter((f) => f.startsWith("src/")).length,
+    1,
+    "create-owner must not pull extra src modules",
+  );
+
+  const migrator = extractMigratorStage(read("Dockerfile"));
+  assert.doesNotMatch(migrator, /COPY src \.\/src\b/);
+  assert.doesNotMatch(migrator, /COPY scripts \.\/scripts\b/);
+  assertMigratorCopiesLocalFiles(migrator, closure);
 }
 
 function main(): void {
@@ -199,6 +220,7 @@ function main(): void {
   testEnvProductionExample();
   testRunbookDocumentsIsolation();
   testMigratorIncludesProductionSeedRuntime();
+  testMigratorIncludesCreateOwnerRuntime();
   testDockerComposeConfig();
   console.log("security-production-compose-check: OK");
 }

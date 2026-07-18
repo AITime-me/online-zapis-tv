@@ -309,7 +309,11 @@ function assertDockerfileAndDeployIsolation(): void {
   assert.match(migrator, /COPY src\/lib\/legal-document\/content-hash\.ts/);
   assert.match(migrator, /COPY src\/lib\/legal-document\/defaults\.ts/);
   assert.match(migrator, /COPY src\/lib\/studio-settings\/defaults\.ts/);
+  assert.match(migrator, /COPY scripts\/create-owner\.ts \.\/scripts\/create-owner\.ts/);
+  assert.match(migrator, /COPY scripts\/lib\/prompt\.ts \.\/scripts\/lib\/prompt\.ts/);
+  assert.match(migrator, /COPY src\/lib\/auth\/password-policy\.ts \.\/src\/lib\/auth\/password-policy\.ts/);
   assert.doesNotMatch(migrator, /COPY src \.\/src\b/);
+  assert.doesNotMatch(migrator, /COPY scripts \.\/scripts\b/);
   assert.doesNotMatch(dockerfile, /prisma\/seed\.ts/);
   assert.doesNotMatch(dockerfile, /CMD.*seed|ENTRYPOINT.*seed/i);
 
