@@ -126,10 +126,47 @@ function collectBookingRequestOriginGuardIssues(): CoverageIssue[] {
   return [];
 }
 
+function collectManageOriginGuardIssues(): CoverageIssue[] {
+  const routes = [
+    {
+      file: "src/app/api/booking/manage/cancel/route.ts",
+      pathname: "/api/booking/manage/cancel",
+    },
+    {
+      file: "src/app/api/booking/manage/reschedule-request/route.ts",
+      pathname: "/api/booking/manage/reschedule-request",
+    },
+  ] as const;
+
+  const issues: CoverageIssue[] = [];
+  for (const route of routes) {
+    if (!fs.existsSync(route.file)) {
+      issues.push({
+        file: route.file,
+        method: "POST",
+        pathname: route.pathname,
+        reason: "manage mutation route file is missing",
+      });
+      continue;
+    }
+    const source = fs.readFileSync(route.file, "utf8");
+    if (!source.includes("enforceSameOriginForMutatingRequest")) {
+      issues.push({
+        file: route.file,
+        method: "POST",
+        pathname: route.pathname,
+        reason: "manage mutation route must call enforceSameOriginForMutatingRequest",
+      });
+    }
+  }
+  return issues;
+}
+
 export function assertCsrfRouteCoverage(apiRoot?: string): void {
   const issues = [
     ...collectCsrfCoverageIssues(apiRoot),
     ...collectBookingRequestOriginGuardIssues(),
+    ...collectManageOriginGuardIssues(),
   ];
   if (issues.length > 0) {
     const details = issues

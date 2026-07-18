@@ -238,6 +238,11 @@ function runLogRedactionTests(): void {
   assert.equal(redacted.password, "[REDACTED]");
   assert.equal(redacted.authorization, "[REDACTED]");
   assert.equal(redacted.manageToken, "[REDACTED]");
+  assert.equal(
+    (redactForLog({ manageTokenHash: "abc" }) as Record<string, unknown>)
+      .manageTokenHash,
+    "[REDACTED]",
+  );
   assert.equal(redacted.email, "[REDACTED]");
   assert.equal(redacted.phone, "[REDACTED]");
   assert.equal(redacted.DATABASE_URL, "[REDACTED]");

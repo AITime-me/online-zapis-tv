@@ -28,6 +28,11 @@ export const RATE_LIMIT_POLICIES: Record<RateLimitPolicyId, RateLimitPolicy> = {
     windowMs: 10 * 60 * 1000,
     maxRequests: 30,
   },
+  bookingManage: {
+    id: "bookingManage",
+    windowMs: 15 * 60 * 1000,
+    maxRequests: 40,
+  },
   gamePlay: {
     id: "gamePlay",
     windowMs: 10 * 60 * 1000,

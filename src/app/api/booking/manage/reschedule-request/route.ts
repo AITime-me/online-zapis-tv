@@ -1,4 +1,10 @@
-import { NextResponse } from "next/server";
+import {
+  manageJsonResponse,
+  manageUnauthorizedResponse,
+} from "@/lib/booking/manage-response";
+import { manageTokenRateLimitFingerprint } from "@/lib/booking/manage-token";
+import { enforceSameOriginForMutatingRequest } from "@/lib/security/csrf";
+import { enforceRequestRateLimit } from "@/lib/security/rate-limit/enforce-policy";
 import {
   BookingManageError,
   requestRescheduleByManageToken,
@@ -13,27 +19,40 @@ type RescheduleBody = {
 };
 
 export async function POST(request: Request) {
+  const originResponse = enforceSameOriginForMutatingRequest(request);
+  if (originResponse) {
+    return originResponse;
+  }
+
   try {
     const body = (await request.json()) as RescheduleBody;
     const token = typeof body.token === "string" ? body.token.trim() : "";
     const message = typeof body.message === "string" ? body.message : "";
 
+    const rateLimitResponse = enforceRequestRateLimit(
+      request,
+      token ? [manageTokenRateLimitFingerprint(token)] : [],
+    );
+    if (rateLimitResponse) {
+      return rateLimitResponse;
+    }
+
     if (!token) {
-      return NextResponse.json(
-        { ok: false, error: "Ссылка на запись недействительна" },
-        { status: 400 },
-      );
+      return manageUnauthorizedResponse();
     }
 
     const appointment = await requestRescheduleByManageToken(token, message);
 
-    return NextResponse.json({
+    return manageJsonResponse({
       ok: true,
       appointment,
     });
   } catch (error) {
     if (error instanceof BookingManageError) {
-      return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
+      if (error.message === "UNAUTHORIZED") {
+        return manageUnauthorizedResponse();
+      }
+      return manageJsonResponse({ ok: false, error: error.message }, { status: 400 });
     }
     throw error;
   }

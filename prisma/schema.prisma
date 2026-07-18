@@ -344,7 +344,13 @@ model Appointment {
   promoCode                 String?           @map("promo_code")
   appliedPromotions         Json?             @map("applied_promotions")
   botSessionId              String?           @map("bot_session_id")
+  /**
+   * Phase A EXPAND: plaintext dual-write for rollback to pre-hash app images.
+   * Phase B CONTRACT (follow-up): stop writing plaintext, then drop column.
+   */
   manageToken               String?           @unique @map("manage_token")
+  /** SHA-256 hex of manage bearer. Primary lookup key in Phase A+ apps. */
+  manageTokenHash           String?           @unique @map("manage_token_hash")
   cancelledBy               String?           @map("cancelled_by")
   cancelReason              String?           @map("cancel_reason")
   rescheduleRequestText     String?           @map("reschedule_request_text")

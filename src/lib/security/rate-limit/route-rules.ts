@@ -45,6 +45,14 @@ export const API_RATE_LIMIT_RULES: ApiRateLimitRouteRule[] = [
       method === "POST" && exactPath(pathname, "/api/booking/client-context"),
   },
   {
+    policyId: "bookingManage",
+    match: (pathname, method) =>
+      (method === "GET" && exactPath(pathname, "/api/booking/manage")) ||
+      (method === "POST" &&
+        (exactPath(pathname, "/api/booking/manage/cancel") ||
+          exactPath(pathname, "/api/booking/manage/reschedule-request"))),
+  },
+  {
     policyId: "gamePlay",
     match: (pathname, method) =>
       method === "POST" &&
@@ -88,6 +96,12 @@ export const RATE_LIMITED_API_PATHS = API_RATE_LIMIT_RULES.flatMap((rule) => {
       return [{ method: "POST", pathname: "/api/booking/request" }];
     case "bookingClientContext":
       return [{ method: "POST", pathname: "/api/booking/client-context" }];
+    case "bookingManage":
+      return [
+        { method: "GET", pathname: "/api/booking/manage" },
+        { method: "POST", pathname: "/api/booking/manage/cancel" },
+        { method: "POST", pathname: "/api/booking/manage/reschedule-request" },
+      ];
     case "gamePlay":
       return [
         { method: "POST", pathname: "/api/game/play" },

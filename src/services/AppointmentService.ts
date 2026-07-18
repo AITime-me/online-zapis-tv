@@ -34,7 +34,7 @@ import {
   calculateAppointmentEndsAt,
   resolveServiceTimingForMaster,
 } from "@/services/ServiceTimingService";
-import { createManageToken } from "@/services/BookingManageService";
+import { createManageToken, createPublicRequestReference, hashManageToken } from "@/lib/booking/manage-token";
 import { recordRequiredPublicFormAcceptances } from "@/services/LegalAcceptanceService";
 import type { AppliedPromotionRecord } from "@/types/applied-promotion";
 
@@ -137,8 +137,13 @@ export type AppointmentDto = {
   source: string;
   statusCode: AppointmentStatus;
   sourceCode: AppointmentSource;
-  manageToken?: string | null;
   appliedPromotions: AppliedPromotionRecord[];
+};
+
+/** Результат ONLINE create: DTO без секрета + одноразовая выдача raw token клиенту. */
+export type OnlineAppointmentCreateResult = {
+  appointment: AppointmentDto;
+  issuedManageToken: string;
 };
 
 function mapAppointment(
@@ -160,7 +165,6 @@ function mapAppointment(
     source: APPOINTMENT_SOURCE_LABELS[appointment.source],
     statusCode: appointment.status,
     sourceCode: appointment.source,
-    manageToken: appointment.manageToken,
     appliedPromotions: parseAppliedPromotions(appointment.appliedPromotions),
   };
 }
@@ -372,15 +376,16 @@ export async function createAppointment(
   input: AppointmentWriteInput,
   createdByUserId: string,
 ): Promise<AppointmentDto> {
-  return createAppointmentRecord(input, createdByUserId);
+  const result = await createAppointmentRecord(input, createdByUserId);
+  return result.appointment;
 }
 
 export async function createOnlineAppointment(
   input: Omit<AppointmentWriteInput, "status" | "source"> & {
     serviceId: string;
   },
-): Promise<AppointmentDto> {
-  return createAppointmentRecord(
+): Promise<OnlineAppointmentCreateResult> {
+  const result = await createAppointmentRecord(
     {
       ...input,
       status: "SCHEDULED",
@@ -389,12 +394,28 @@ export async function createOnlineAppointment(
     },
     null,
   );
+
+  if (!result.issuedManageToken) {
+    throw new AppointmentValidationError(
+      "Запись создана без manage token — проверьте миграцию appointments.manage_token_hash",
+    );
+  }
+
+  return {
+    appointment: result.appointment,
+    issuedManageToken: result.issuedManageToken,
+  };
 }
+
+type AppointmentCreateRecordResult = {
+  appointment: AppointmentDto;
+  issuedManageToken: string | null;
+};
 
 async function createAppointmentRecord(
   input: AppointmentWriteInput,
   createdByUserId: string | null,
-): Promise<AppointmentDto> {
+): Promise<AppointmentCreateRecordResult> {
   try {
     if (!input.masterId?.trim()) {
       throw new AppointmentValidationError("Не указан мастер");
@@ -428,12 +449,20 @@ async function createAppointmentRecord(
       resolveBreakAfterMinutesForInput(input),
     ]);
 
-    const manageToken =
+    const issuedManageToken =
       input.source === "ONLINE" ? createManageToken() : null;
+    const manageTokenHash = issuedManageToken
+      ? hashManageToken(issuedManageToken)
+      : null;
 
-    if (input.source === "ONLINE" && !manageToken) {
-      throw new AppointmentValidationError("Не удалось сгенерировать manageToken");
+    if (input.source === "ONLINE" && (!issuedManageToken || !manageTokenHash)) {
+      throw new AppointmentValidationError("Не удалось сгенерировать manage token");
     }
+
+    const publicRequestReference =
+      input.recordPublicLegalAcceptances && input.source === "ONLINE"
+        ? createPublicRequestReference()
+        : null;
 
     const createPayload: Prisma.AppointmentCreateInput = {
       master: { connect: { id: input.masterId } },
@@ -447,7 +476,9 @@ async function createAppointmentRecord(
       isBold: input.isBold ?? false,
       status: input.status,
       source: input.source,
-      manageToken,
+      // Phase A EXPAND dual-write: plaintext kept so rollback image (pre-hash) can still resolve manage-link.
+      manageToken: issuedManageToken,
+      manageTokenHash,
       ...(createdByUserId
         ? { createdByUser: { connect: { id: createdByUserId } } }
         : {}),
@@ -473,6 +504,8 @@ async function createAppointmentRecord(
         appliedPromotionsCount: input.appliedPromotions?.length ?? 0,
         serviceDurationMinutes: timingFields.serviceDurationMinutes,
         breakAfterMinutes: timingFields.breakAfterMinutes,
+        hasManageTokenHash: Boolean(manageTokenHash),
+        // Never log issuedManageToken / raw manageToken
       });
     }
 
@@ -493,20 +526,26 @@ async function createAppointmentRecord(
           source: "ONLINE_BOOKING",
           appointmentId: created.id,
           clientId: input.clientId ?? null,
-          requestReference: created.manageToken,
+          requestReference: publicRequestReference,
         });
       }
 
       return created;
     });
 
-    if (input.source === "ONLINE" && !appointment.manageToken) {
+    if (
+      input.source === "ONLINE" &&
+      (!appointment.manageTokenHash || !appointment.manageToken)
+    ) {
       throw new AppointmentValidationError(
-        "Запись создана без manageToken — проверьте миграцию appointments.manage_token",
+        "Запись создана без Phase A dual-write manage token — проверьте миграцию appointments.manage_token_hash",
       );
     }
 
-    return mapAppointment(appointment);
+    return {
+      appointment: mapAppointment(appointment),
+      issuedManageToken,
+    };
   } catch (error) {
     logServiceError("appointment.create", error);
     throw error;

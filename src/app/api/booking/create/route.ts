@@ -20,7 +20,7 @@ import {
   createOnlineBooking,
   OnlineServiceUnavailableError,
 } from "@/services/BookingService";
-import { buildManageUrl } from "@/services/BookingManageService";
+import { buildManageUrl } from "@/lib/booking/manage-token";
 import { LegalDocumentsNotReadyError } from "@/services/LegalDocumentService";
 
 export const dynamic = "force-dynamic";
@@ -40,7 +40,7 @@ type CreateBookingBody = {
 
 function toPublicCreatedAppointment(appointment: Awaited<
   ReturnType<typeof createOnlineBooking>
->) {
+>["appointment"]) {
   return {
     serviceName: appointment.serviceName,
     startsAt: appointment.startsAt,
@@ -133,7 +133,7 @@ export async function POST(request: Request) {
       return errorResponse("Некорректная дата", 400, { code: "INVALID_DATE" });
     }
 
-    const appointment = await createOnlineBooking({
+    const created = await createOnlineBooking({
       serviceId: body.serviceId,
       masterId: body.masterId,
       date: body.date,
@@ -145,23 +145,28 @@ export async function POST(request: Request) {
       offerAcknowledgement: true,
     });
 
-    if (!appointment.manageToken) {
+    if (!created.issuedManageToken) {
       return errorResponse(
-        "Запись создана без manageToken. Примените миграцию manage_token и перезапустите сервер.",
+        "Запись создана без manage token. Примените миграцию manage_token_hash и перезапустите сервер.",
         500,
         { code: "MANAGE_TOKEN_MISSING" },
       );
     }
 
-    const manageUrl = buildManageUrl(appointment.manageToken);
+    const manageUrl = buildManageUrl(created.issuedManageToken);
 
     return NextResponse.json(
       {
         ok: true as const,
-        appointment: toPublicCreatedAppointment(appointment),
+        appointment: toPublicCreatedAppointment(created.appointment),
         manageUrl,
       },
-      { headers: { "Content-Type": "application/json; charset=utf-8" } },
+      {
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store",
+        },
+      },
     );
   } catch (error) {
     if (error instanceof LegalDocumentsNotReadyError) {

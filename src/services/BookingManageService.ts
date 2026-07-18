@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import type { Appointment, AppointmentSource } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import {
@@ -7,6 +6,11 @@ import {
   formatStudioTimeInput,
   getStudioNow,
 } from "@/lib/datetime/date-layer";
+import {
+  buildManageUrl,
+  createManageToken,
+  hashManageToken,
+} from "@/lib/booking/manage-token";
 
 export type PublicManageAppointmentStatus = "active" | "cancelled" | "completed";
 
@@ -32,18 +36,21 @@ export class BookingManageError extends Error {
   }
 }
 
-export function createManageToken(): string {
-  return randomBytes(32).toString("base64url");
-}
-
-export function buildManageUrl(token: string): string {
-  return `/booking/manage?token=${encodeURIComponent(token)}`;
-}
+export {
+  buildManageUrl,
+  createManageToken,
+  hashManageToken,
+} from "@/lib/booking/manage-token";
 
 type AppointmentWithRelations = Appointment & {
   master: { publicName: string };
   service: { publicName: string; durationMinutes: number } | null;
 };
+
+const manageInclude = {
+  master: { select: { publicName: true } },
+  service: { select: { publicName: true, durationMinutes: true } },
+} as const;
 
 function resolvePublicStatus(
   appointment: Appointment,
@@ -161,6 +168,13 @@ function mapPublicManageView(appointment: AppointmentWithRelations): PublicManag
   };
 }
 
+/**
+ * Lookup by hash first; legacy plaintext dual-read for pre-migration / pre-Phase-B rows.
+ * Lazy-fills manageTokenHash when found only via plaintext (Phase A).
+ *
+ * Phase A writers dual-write plaintext+hash so a rollback to a pre-hash app image
+ * can still resolve manage-link via manage_token.
+ */
 async function findAppointmentByManageToken(
   token: string,
 ): Promise<AppointmentWithRelations | null> {
@@ -169,13 +183,37 @@ async function findAppointmentByManageToken(
     return null;
   }
 
-  return prisma.appointment.findUnique({
-    where: { manageToken: normalizedToken },
-    include: {
-      master: { select: { publicName: true } },
-      service: { select: { publicName: true, durationMinutes: true } },
-    },
+  const tokenHash = hashManageToken(normalizedToken);
+
+  const byHash = await prisma.appointment.findUnique({
+    where: { manageTokenHash: tokenHash },
+    include: manageInclude,
   });
+  if (byHash) {
+    return byHash;
+  }
+
+  const byLegacyPlaintext = await prisma.appointment.findUnique({
+    where: { manageToken: normalizedToken },
+    include: manageInclude,
+  });
+  if (!byLegacyPlaintext) {
+    return null;
+  }
+
+  if (!byLegacyPlaintext.manageTokenHash) {
+    try {
+      await prisma.appointment.update({
+        where: { id: byLegacyPlaintext.id },
+        data: { manageTokenHash: tokenHash },
+      });
+      byLegacyPlaintext.manageTokenHash = tokenHash;
+    } catch {
+      // Concurrent backfill / unique race — ignore; lookup already succeeded.
+    }
+  }
+
+  return byLegacyPlaintext;
 }
 
 export async function getPublicManageAppointmentByToken(
@@ -195,7 +233,7 @@ export async function cancelAppointmentByManageToken(
 ): Promise<{ view: PublicManageAppointmentView; alreadyCancelled: boolean }> {
   const appointment = await findAppointmentByManageToken(token);
   if (!appointment) {
-    throw new BookingManageError("Запись не найдена");
+    throw new BookingManageError("UNAUTHORIZED");
   }
 
   if (appointment.status === "CANCELLED" || appointment.status === "RESCHEDULED") {
@@ -218,10 +256,7 @@ export async function cancelAppointmentByManageToken(
       cancelledBy: "CLIENT",
       cancelReason: reason?.trim() || null,
     },
-    include: {
-      master: { select: { publicName: true } },
-      service: { select: { publicName: true, durationMinutes: true } },
-    },
+    include: manageInclude,
   });
 
   return {
@@ -241,7 +276,7 @@ export async function requestRescheduleByManageToken(
 
   const appointment = await findAppointmentByManageToken(token);
   if (!appointment) {
-    throw new BookingManageError("Запись не найдена");
+    throw new BookingManageError("UNAUTHORIZED");
   }
 
   if (appointment.status === "CANCELLED") {
@@ -262,10 +297,7 @@ export async function requestRescheduleByManageToken(
         rescheduleRequestText: trimmedMessage,
         rescheduleRequestedAt: now,
       },
-      include: {
-        master: { select: { publicName: true } },
-        service: { select: { publicName: true, durationMinutes: true } },
-      },
+      include: manageInclude,
     });
 
     const existingRequest = await tx.bookingRequest.findFirst({

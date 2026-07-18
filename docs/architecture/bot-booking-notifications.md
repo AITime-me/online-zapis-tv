@@ -72,16 +72,17 @@
 
 ### Требуется до подключения бота
 
-Минимальный hardening manage-link (можно частично параллельно с foundation доставки):
+Manage-link hardening идёт expand/contract — см. [manage-token-expand-contract.md](./manage-token-expand-contract.md).
 
-1. `Referrer-Policy: no-referrer` (+ по возможности `Cache-Control: no-store`) для `/booking/manage` и manage API.
-2. Rate limiting на GET/POST manage.
-3. Same-origin (или эквивалент) для manage mutations.
-4. Политика: не писать полный manage URL / raw token в application logs и audit (legal `requestReference` — заменить на несекретный reference id).
-5. Убрать `manageToken` из штатных schedule/list DTO; для staff — отдельное явное действие «выдать/ротировать ссылку» с audit без секрета.
-6. Ротация/отзыв токена при утечке; решение по TTL (см. Open decisions).
-7. Automated tests manage-flow + запрет утечки токена.
-8. Абсолютный HTTPS manage URL (или внутренний short redirect) для вставки в MAX/SMS/VK — строить на сервере из канонического origin, **не** через сторонний публичный URL-shortener с секретом в path.
+**Phase A (текущий код):** dual-read + **временный dual-write** plaintext+hash ради rollback; DTO/API без raw token; legal `requestReference` независимый; rate limit; same-origin POST; no-store; Referrer-Policy. Plaintext в БД **ещё не устранён**.
+
+**Phase B (TODO):** hash-only write → отключить plaintext fallback → `DROP manage_token` (отдельные релизы после того, как rollback image = Phase A).
+
+Дополнительно до бота:
+
+1. TTL / ротация / manager reissue — open decisions.
+2. e2e manage-flow — расширять; regression: `npm run test:security:manage-link-hardening`.
+3. Абсолютный HTTPS manage URL / short redirect для бота — на этапе доставки.
 
 Бот **не** дублирует бизнес-логику расписания: отмена/перенос остаются на существующей веб-странице.
 

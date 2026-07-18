@@ -6,6 +6,7 @@ const FORBIDDEN_MASTER_APPOINTMENT_KEYS = [
   "comment",
   "email",
   "manageToken",
+  "manageTokenHash",
   "clientId",
   "importantNote",
   "appliedPromotions",
