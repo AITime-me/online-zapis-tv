@@ -297,10 +297,19 @@ function assertPromoEngineUntouched(): void {
 
 function assertDockerfileAndDeployIsolation(): void {
   const dockerfile = read("Dockerfile");
-  assert.match(dockerfile, /game-promotions-canonical\.ts/);
-  assert.match(dockerfile, /production-bootstrap-data-cli\.ts/);
-  assert.match(dockerfile, /production-bootstrap-canonical\.ts/);
-  assert.match(dockerfile, /import-services-data\.ts/);
+  const migrator = dockerfile.match(/FROM deps AS migrator[\s\S]*?(?=\nFROM |\z)/)?.[0] ?? "";
+  assert.ok(migrator.length > 0, "Dockerfile must define migrator stage");
+
+  assert.match(migrator, /game-promotions-canonical\.ts/);
+  assert.match(migrator, /production-bootstrap-data-cli\.ts/);
+  assert.match(migrator, /production-bootstrap-canonical\.ts/);
+  assert.match(migrator, /import-services-data\.ts/);
+  assert.match(migrator, /COPY tsconfig\.json \.\/tsconfig\.json/);
+  assert.match(migrator, /COPY src\/lib\/bot-settings\/defaults\.ts/);
+  assert.match(migrator, /COPY src\/lib\/legal-document\/content-hash\.ts/);
+  assert.match(migrator, /COPY src\/lib\/legal-document\/defaults\.ts/);
+  assert.match(migrator, /COPY src\/lib\/studio-settings\/defaults\.ts/);
+  assert.doesNotMatch(migrator, /COPY src \.\/src\b/);
   assert.doesNotMatch(dockerfile, /prisma\/seed\.ts/);
   assert.doesNotMatch(dockerfile, /CMD.*seed|ENTRYPOINT.*seed/i);
 

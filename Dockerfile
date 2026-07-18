@@ -25,10 +25,16 @@ RUN npx prisma generate
 RUN npm run build
 
 # Минимальный образ только для prisma migrate status/deploy и ручных ops CLI (profile ops).
-# Без исходников приложения и без runtime secrets.
+# Без исходников приложения целиком и без runtime secrets.
+# Foundation seed (prisma/seed.production.ts) нуждается в @/ alias + узком наборе src/lib defaults.
 FROM deps AS migrator
 WORKDIR /app
 COPY prisma ./prisma
+COPY tsconfig.json ./tsconfig.json
+COPY src/lib/bot-settings/defaults.ts ./src/lib/bot-settings/defaults.ts
+COPY src/lib/legal-document/content-hash.ts ./src/lib/legal-document/content-hash.ts
+COPY src/lib/legal-document/defaults.ts ./src/lib/legal-document/defaults.ts
+COPY src/lib/studio-settings/defaults.ts ./src/lib/studio-settings/defaults.ts
 RUN npx prisma generate
 COPY scripts/ops/lib/prisma-migrate-status.ts ./scripts/ops/lib/prisma-migrate-status.ts
 COPY scripts/ops/lib/classify-migrate-status-cli.ts ./scripts/ops/lib/classify-migrate-status-cli.ts

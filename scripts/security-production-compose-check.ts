@@ -109,12 +109,96 @@ function testDockerComposeConfig(): void {
   assert.match(rendered, /target:\s*3000/);
 }
 
+function resolveTsModule(fromRel: string, spec: string): string | null {
+  if (spec.startsWith("@/")) {
+    const base = path.join("src", spec.slice(2));
+    for (const candidate of [`${base}.ts`, `${base}.tsx`, path.join(base, "index.ts")]) {
+      if (fs.existsSync(path.join(ROOT, candidate))) {
+        return candidate.replace(/\\/g, "/");
+      }
+    }
+    return null;
+  }
+
+  if (!spec.startsWith(".")) {
+    return null;
+  }
+
+  const fromDir = path.posix.dirname(fromRel.replace(/\\/g, "/"));
+  const joined = path.posix.normalize(path.posix.join(fromDir, spec));
+  for (const candidate of [`${joined}.ts`, `${joined}.tsx`, path.posix.join(joined, "index.ts")]) {
+    if (fs.existsSync(path.join(ROOT, candidate))) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function collectLocalSeedRuntimeFiles(entryRel: string, seen = new Set<string>()): Set<string> {
+  const normalized = entryRel.replace(/\\/g, "/");
+  if (seen.has(normalized)) {
+    return seen;
+  }
+  seen.add(normalized);
+
+  const source = read(normalized);
+  const importRe = /from\s+["']([^"']+)["']/g;
+  for (const match of source.matchAll(importRe)) {
+    const resolved = resolveTsModule(normalized, match[1]!);
+    if (!resolved) {
+      continue;
+    }
+    collectLocalSeedRuntimeFiles(resolved, seen);
+  }
+
+  return seen;
+}
+
+function extractMigratorStage(dockerfile: string): string {
+  const block = dockerfile.match(/FROM deps AS migrator[\s\S]*?(?=\nFROM |\z)/)?.[0] ?? "";
+  assert.ok(block.length > 0, "Dockerfile must define migrator stage");
+  return block;
+}
+
+function testMigratorIncludesProductionSeedRuntime(): void {
+  const required = new Set<string>();
+  for (const entry of ["prisma/seed.production.ts", "prisma/lib/production-seed-plan.ts"] as const) {
+    for (const file of collectLocalSeedRuntimeFiles(entry)) {
+      if (file.startsWith("src/")) {
+        required.add(file);
+      }
+    }
+  }
+
+  assert.ok(required.size > 0, "production seed must import src/ modules via @/");
+  assert.ok(required.has("src/lib/bot-settings/defaults.ts"));
+  assert.ok(required.has("src/lib/legal-document/content-hash.ts"));
+  assert.ok(required.has("src/lib/legal-document/defaults.ts"));
+  assert.ok(required.has("src/lib/studio-settings/defaults.ts"));
+
+  const migrator = extractMigratorStage(read("Dockerfile"));
+  assert.match(migrator, /COPY prisma \.\/prisma/);
+  assert.match(migrator, /COPY tsconfig\.json \.\/tsconfig\.json/);
+  assert.doesNotMatch(migrator, /COPY src \.\/src\b/);
+  assert.doesNotMatch(migrator, /COPY \. \./);
+
+  for (const rel of required) {
+    const escaped = rel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    assert.match(
+      migrator,
+      new RegExp(`COPY ${escaped} \\.\\/${escaped}`),
+      `migrator must COPY seed runtime dependency ${rel}`,
+    );
+  }
+}
+
 function main(): void {
   testProductionComposeStructure();
   testNoStagingLeakage();
   testPostgresNotPublished();
   testEnvProductionExample();
   testRunbookDocumentsIsolation();
+  testMigratorIncludesProductionSeedRuntime();
   testDockerComposeConfig();
   console.log("security-production-compose-check: OK");
 }

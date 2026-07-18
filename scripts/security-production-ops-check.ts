@@ -503,6 +503,37 @@ function assertDocumentation(): void {
   assert.match(runbook, /previous rollback image отсутствует/i);
 }
 
+function assertMigratorProductionSeedRuntime(): void {
+  const dockerfile = readFile("Dockerfile");
+  const migrator = dockerfile.match(/FROM deps AS migrator[\s\S]*?(?=\nFROM |\z)/)?.[0] ?? "";
+  assert.ok(migrator.length > 0, "Dockerfile must define migrator stage");
+
+  const seed = readFile("prisma/seed.production.ts");
+  const plan = readFile("prisma/lib/production-seed-plan.ts");
+  const seedSources = `${seed}\n${plan}`;
+
+  const atImports = [...seedSources.matchAll(/from\s+["'](@\/[^"']+)["']/g)].map((m) => m[1]!);
+  assert.ok(atImports.includes("@/lib/bot-settings/defaults"));
+  assert.ok(atImports.includes("@/lib/legal-document/content-hash"));
+  assert.ok(atImports.includes("@/lib/legal-document/defaults"));
+  assert.ok(atImports.includes("@/lib/studio-settings/defaults"));
+
+  assert.match(migrator, /COPY prisma \.\/prisma/);
+  assert.match(migrator, /COPY tsconfig\.json \.\/tsconfig\.json/);
+  assert.match(migrator, /COPY src\/lib\/bot-settings\/defaults\.ts \.\/src\/lib\/bot-settings\/defaults\.ts/);
+  assert.match(
+    migrator,
+    /COPY src\/lib\/legal-document\/content-hash\.ts \.\/src\/lib\/legal-document\/content-hash\.ts/,
+  );
+  assert.match(migrator, /COPY src\/lib\/legal-document\/defaults\.ts \.\/src\/lib\/legal-document\/defaults\.ts/);
+  assert.match(
+    migrator,
+    /COPY src\/lib\/studio-settings\/defaults\.ts \.\/src\/lib\/studio-settings\/defaults\.ts/,
+  );
+  assert.doesNotMatch(migrator, /COPY src \.\/src\b/);
+  assert.doesNotMatch(migrator, /COPY \. \./);
+}
+
 function assertShellSyntax(): void {
   const bash = resolveBashExecutable();
   for (const rel of [
@@ -546,6 +577,7 @@ function run(): void {
   assertManifestSafety();
   assertGitignoreProductionEnv();
   assertDocumentation();
+  assertMigratorProductionSeedRuntime();
   assertShellSyntax();
   assertHelpWorks();
   console.log("security-production-ops-check: OK");
