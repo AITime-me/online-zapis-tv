@@ -143,22 +143,120 @@ https_health_ok() {
   grep -q '"ok":true' <<<"$body" && grep -q '"status":"healthy"' <<<"$body"
 }
 
-# Возвращает имя процесса, слушающего TCP-порт (пусто — никто).
+# Извлекает имена процессов из вывода `ss -p` (Ubuntu: users:(("caddy",pid=…,fd=…))).
+# Чистый bash-парсинг: без [[ =~ ]] с кавычками и без хрупкого sed BRE.
+ss_extract_listener_process_names() {
+  local text="$1"
+  local remaining="$text"
+  local marker='users:(("'
+  local name
+  local -a names=()
+
+  while [[ "$remaining" == *"$marker"* ]]; do
+    remaining="${remaining#*"$marker"}"
+    name="${remaining%%\"*}"
+    if [[ -n "$name" ]]; then
+      names+=("$name")
+    fi
+    if [[ "$remaining" == *\"* ]]; then
+      remaining="${remaining#*\"}"
+    else
+      break
+    fi
+  done
+
+  if ((${#names[@]} == 0)); then
+    return 0
+  fi
+  printf '%s\n' "${names[@]}" | sort -u
+}
+
+ss_output_has_listen() {
+  local text="$1"
+  grep -qE '^LISTEN|[[:space:]]LISTEN[[:space:]]' <<<"$text"
+}
+
+# True, если systemd unit caddy активен и его MainPID фигурирует в выводе ss для порта.
+port_owned_by_active_caddy_service() {
+  local ss_out="$1"
+  local main_pid state
+
+  if ! command -v systemctl >/dev/null 2>&1; then
+    return 1
+  fi
+
+  state="$(systemctl is-active caddy 2>/dev/null || true)"
+  if [[ "$state" != "active" && "$state" != "reloading" ]]; then
+    return 1
+  fi
+
+  main_pid="$(systemctl show -p MainPID --value caddy 2>/dev/null || true)"
+  if [[ -z "$main_pid" || "$main_pid" == "0" ]]; then
+    return 1
+  fi
+
+  grep -qE "pid=${main_pid}[,)]" <<<"$ss_out"
+}
+
+ss_port_listen_output() {
+  local port="$1"
+  local out=""
+
+  out="$(ss -ltnp "( sport = :${port} )" 2>/dev/null || true)"
+
+  # Без привилегий ss часто скрывает users:(("…")) / pid= — тогда порт «занят unknown».
+  # Повторяем с sudo -n (без пароля); если sudo недоступен, остаёмся на текущем выводе.
+  if ss_output_has_listen "$out" && ! grep -q 'users:(("' <<<"$out"; then
+    if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+      out="$(sudo -n ss -ltnp "( sport = :${port} )" 2>/dev/null || true)"
+    fi
+  fi
+
+  printf '%s' "$out"
+}
+
+# Возвращает: пусто (свободно), caddy, имя чужого процесса, либо unknown (fail-closed).
 listener_process_for_port() {
   local port="$1"
-  local line
+  local out names name foreign=""
+
   if ! command -v ss >/dev/null 2>&1; then
     ops_die "ss command is required to inspect port ${port}"
   fi
-  line="$(ss -ltnp "( sport = :${port} )" 2>/dev/null | tail -n +2 | head -n 1 || true)"
-  if [[ -z "$line" ]]; then
+
+  out="$(ss_port_listen_output "$port")"
+  if ! ss_output_has_listen "$out"; then
     printf ''
     return 0
   fi
-  if [[ "$line" =~ users:\(\(\"([^\"]+)\" ]]; then
-    printf '%s' "${BASH_REMATCH[1]}"
+
+  names="$(ss_extract_listener_process_names "$out")"
+  if [[ -n "$names" ]]; then
+    while IFS= read -r name; do
+      [[ -z "$name" ]] && continue
+      if [[ "$name" == "caddy" ]]; then
+        continue
+      fi
+      foreign="$name"
+      break
+    done <<<"$names"
+
+    if [[ -n "$foreign" ]]; then
+      printf '%s' "$foreign"
+      return 0
+    fi
+
+    printf 'caddy'
     return 0
   fi
+
+  # Имя процесса не распарсилось, но порт слушается — разрешаем только при
+  # положительной идентификации активного caddy.service (ожидаемо после apt install).
+  if port_owned_by_active_caddy_service "$out"; then
+    printf 'caddy'
+    return 0
+  fi
+
   printf 'unknown'
 }
 

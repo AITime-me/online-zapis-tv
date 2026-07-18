@@ -118,6 +118,45 @@ function assertHelper(): void {
   assert.match(executable, /AAAA not required/);
   assert.match(executable, /does not install packages/i);
 
+  assert.match(executable, /ss_extract_listener_process_names/);
+  assert.match(executable, /port_owned_by_active_caddy_service/);
+  assert.match(executable, /sudo -n ss -ltnp/);
+  assert.match(executable, /systemctl show -p MainPID --value caddy/);
+  assert.match(executable, /marker='users:\(\(\"'/);
+  assert.match(executable, /Ports 80\/443: free or owned by caddy/);
+  assert.match(
+    executable,
+    /port 80 is used by '\$\{proc80\}' \(not caddy\)\. Refusing to change anything automatically/,
+  );
+  assert.match(
+    executable,
+    /port 443 is used by '\$\{proc443\}' \(not caddy\)\. Refusing to change anything automatically/,
+  );
+  assert.doesNotMatch(executable, /\$line" =~ users:/);
+  assert.doesNotMatch(executable, /sed -n 's\/\.\*users:/);
+
+  const listenerBody = (() => {
+    const start = source.indexOf("listener_process_for_port()");
+    const end = source.indexOf("assert_http_ports_safe()");
+    assert.ok(start >= 0 && end > start, "listener_process_for_port must precede assert_http_ports_safe");
+    return stripBashComments(source.slice(start, end));
+  })();
+  assert.match(listenerBody, /printf 'caddy'/);
+  assert.match(listenerBody, /printf 'unknown'/);
+  assert.match(listenerBody, /port_owned_by_active_caddy_service/);
+  assert.match(listenerBody, /foreign=/);
+
+  const portsBody = (() => {
+    const start = source.indexOf("assert_http_ports_safe()");
+    const end = source.indexOf("resolve_ipv4_addresses()");
+    assert.ok(start >= 0 && end > start, "assert_http_ports_safe must exist");
+    return stripBashComments(source.slice(start, end));
+  })();
+  assert.match(portsBody, /"\$proc80" != "caddy"/);
+  assert.match(portsBody, /"\$proc443" != "caddy"/);
+  assert.doesNotMatch(portsBody, /systemctl\s+stop/);
+  assert.doesNotMatch(portsBody, /fuser\s+-k|kill\s+-9/);
+
   const dryIdx = executable.indexOf('ops_info "Dry-run complete');
   const lockIdx = executable.indexOf("ops_acquire_production_ops_lock");
   assert.ok(dryIdx >= 0 && lockIdx > dryIdx, "dry-run must exit before lock");
