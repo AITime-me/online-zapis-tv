@@ -282,6 +282,7 @@ model Service {
   masterServices MasterService[]
   appointments   Appointment[]
   bookingLinks   BookingLink[]
+  bookingRequests BookingRequest[]
   promotions     PromotionService[]
 
   @@map("services")
@@ -449,6 +450,8 @@ model BookingRequest {
   clientPhone String               @map("client_phone")
   comment     String?
   masterId    String?              @map("master_id") @db.Uuid
+  serviceId   String?              @map("service_id") @db.Uuid
+  serviceNameSnapshot String?      @map("service_name_snapshot")
   status      BookingRequestStatus @default(NEW)
   source      BookingRequestSource @default(ONLINE)
   type        BookingRequestType
@@ -461,6 +464,7 @@ model BookingRequest {
   idempotencyPayloadHash String? @map("idempotency_payload_hash") @db.VarChar(64)
 
   master       Master?       @relation(fields: [masterId], references: [id], onDelete: SetNull)
+  service      Service?      @relation(fields: [serviceId], references: [id], onDelete: SetNull)
   client       Client?       @relation(fields: [clientId], references: [id], onDelete: SetNull)
   appointment  Appointment?  @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
   botEventLogs BotEventLog[]
@@ -470,6 +474,7 @@ model BookingRequest {
   @@index([status, createdAt(sort: Desc)])
   @@index([clientId])
   @@index([appointmentId])
+  @@index([serviceId])
   @@map("booking_requests")
 }
 

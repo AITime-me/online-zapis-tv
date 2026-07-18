@@ -31,6 +31,7 @@ export type BookingIdempotencyPayload = {
   type: BookingRequestType;
   comment: string | null;
   masterId: string | null;
+  serviceId: string | null;
   personalDataConsent: boolean;
   offerAcknowledgement: boolean;
   gamePlayId: string | null;
@@ -51,6 +52,7 @@ export function buildBookingIdempotencyPayload(input: {
   type: BookingRequestType;
   comment: string | null;
   masterId: string | null;
+  serviceId?: string | null;
   personalDataConsent: boolean;
   offerAcknowledgement: boolean;
   gamePlayId: string | null;
@@ -62,6 +64,7 @@ export function buildBookingIdempotencyPayload(input: {
     type: input.type,
     comment: input.comment?.trim() || null,
     masterId: input.masterId?.trim() || null,
+    serviceId: input.serviceId?.trim() || null,
     personalDataConsent: input.personalDataConsent === true,
     offerAcknowledgement: input.offerAcknowledgement === true,
     gamePlayId: input.gamePlayId?.trim() || null,
@@ -79,6 +82,7 @@ function canonicalizePayload(payload: BookingIdempotencyPayload): string {
     masterId: payload.masterId,
     offerAcknowledgement: payload.offerAcknowledgement,
     personalDataConsent: payload.personalDataConsent,
+    serviceId: payload.serviceId,
     type: payload.type,
   };
 

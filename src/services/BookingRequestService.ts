@@ -50,6 +50,7 @@ import {
   computeIdempotencyPayloadHash,
   idempotencyPayloadHashesEqual,
 } from "@/lib/booking-requests/idempotency-server";
+import { isCanonicalUuid } from "@/lib/booking-requests/idempotency-contract";
 import {
   buildServerGameBookingComment,
   extractGameBookingCommentForPayload,
@@ -91,14 +92,83 @@ export type CreateBookingRequestInput = {
   clientPhone: string;
   comment?: string | null;
   masterId?: string | null;
+  serviceId?: string | null;
   type: BookingRequestType;
   personalDataConsent: boolean;
   offerAcknowledgement: boolean;
   gamePlayId?: string | null;
+  /** @deprecated Not trusted from clients; resolved server-side from serviceId when present. */
   serviceName?: string | null;
   idempotencyKey: string;
   request?: Request;
 };
+
+type ResolvedBookingRequestService = {
+  serviceId: string;
+  serviceNameSnapshot: string;
+};
+
+/**
+ * Resolves a public booking-request service by stable id.
+ * Does not trust client-provided display names.
+ */
+async function resolveRequestedService(input: {
+  serviceId: string | null | undefined;
+  masterId: string | null | undefined;
+}): Promise<ResolvedBookingRequestService | null> {
+  const rawServiceId =
+    typeof input.serviceId === "string" ? input.serviceId.trim() : "";
+  if (!rawServiceId) {
+    return null;
+  }
+
+  if (!isCanonicalUuid(rawServiceId)) {
+    throw new BookingRequestValidationError("Услуга недоступна");
+  }
+
+  const service = await prisma.service.findUnique({
+    where: { id: rawServiceId },
+    select: {
+      id: true,
+      publicName: true,
+      isActive: true,
+      isPublic: true,
+    },
+  });
+
+  if (!service?.isActive || !service.isPublic) {
+    throw new BookingRequestValidationError("Услуга недоступна");
+  }
+
+  const masterId =
+    typeof input.masterId === "string" ? input.masterId.trim() : "";
+  if (masterId) {
+    if (!isCanonicalUuid(masterId)) {
+      throw new BookingRequestValidationError("Мастер недоступен");
+    }
+
+    const link = await prisma.masterService.findUnique({
+      where: {
+        masterId_serviceId: {
+          masterId,
+          serviceId: service.id,
+        },
+      },
+      select: { isEnabled: true, isPublic: true },
+    });
+
+    if (!link?.isEnabled || !link.isPublic) {
+      throw new BookingRequestValidationError(
+        "Выбранная услуга недоступна у этого мастера",
+      );
+    }
+  }
+
+  return {
+    serviceId: service.id,
+    serviceNameSnapshot: service.publicName,
+  };
+}
 
 const bookingRequestInclude = {
   master: { select: { publicName: true } },
@@ -250,6 +320,8 @@ async function mapBookingRequest(
     comment: request.comment,
     masterId: request.masterId,
     masterName: request.master?.publicName ?? null,
+    serviceId: request.serviceId ?? null,
+    serviceNameSnapshot: request.serviceNameSnapshot ?? null,
     status: request.status,
     source: request.source,
     type: request.type,
@@ -539,6 +611,7 @@ async function createGameBookingRequest(
 async function createRegularBookingRequest(
   input: CreateBookingRequestInput,
   payloadHash: string,
+  resolvedService: ResolvedBookingRequestService | null,
 ): Promise<BookingRequestDto> {
   const clientName = input.clientName.trim();
   const clientPhone = input.clientPhone.trim();
@@ -548,7 +621,7 @@ async function createRegularBookingRequest(
     fullName: clientName,
     phone: clientPhone,
     source: resolveLeadSource(null),
-    serviceName: input.serviceName,
+    serviceName: resolvedService?.serviceNameSnapshot ?? null,
   });
 
   const requestComment = clientLink.duplicateNote
@@ -584,6 +657,8 @@ async function createRegularBookingRequest(
           clientPhone,
           comment: requestComment,
           masterId: input.masterId ?? null,
+          serviceId: resolvedService?.serviceId ?? null,
+          serviceNameSnapshot: resolvedService?.serviceNameSnapshot ?? null,
           type: input.type,
           source: "ONLINE",
           status: "NEW",
@@ -688,6 +763,11 @@ export async function createBookingRequest(
     }
   }
 
+  const resolvedService = await resolveRequestedService({
+    serviceId: input.serviceId,
+    masterId: input.masterId,
+  });
+
   let gameSessionId: string | null = null;
   if (resolvedGamePlayId) {
     const play = await loadGamePlayForBooking(resolvedGamePlayId);
@@ -704,6 +784,7 @@ export async function createBookingRequest(
     type: input.type,
     comment: payloadComment,
     masterId: input.masterId ?? null,
+    serviceId: resolvedService?.serviceId ?? null,
     personalDataConsent: input.personalDataConsent,
     offerAcknowledgement: input.offerAcknowledgement,
     gamePlayId: resolvedGamePlayId,
@@ -746,7 +827,7 @@ export async function createBookingRequest(
     );
   }
 
-  return createRegularBookingRequest(input, payloadHash);
+  return createRegularBookingRequest(input, payloadHash, resolvedService);
 }
 
 async function findExactClientMatchesForBookingRequest(
@@ -981,6 +1062,8 @@ export async function listActiveBookingRequestsForRange(
       type: request.type,
       isFromGame: gameLeadIds.has(request.id),
       masterName: request.master?.publicName ?? null,
+      serviceId: request.serviceId ?? null,
+      serviceNameSnapshot: request.serviceNameSnapshot ?? null,
       appointmentId: request.appointment?.id ?? null,
       appointmentStartsAt: request.appointment?.startsAt.toISOString() ?? null,
       appointmentServiceName: request.appointment?.service?.publicName ?? null,

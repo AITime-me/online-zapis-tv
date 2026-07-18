@@ -138,6 +138,7 @@ export async function getClientDetailsForAdmin(
         status: true,
         type: true,
         source: true,
+        serviceNameSnapshot: true,
         master: { select: { publicName: true } },
       },
     }),
@@ -249,6 +250,7 @@ export async function getClientDetailsForAdmin(
       type: row.type,
       source: row.source,
       masterName: row.master?.publicName ?? null,
+      serviceNameSnapshot: row.serviceNameSnapshot ?? null,
     })),
     bookingRequestsTruncated,
     appointments: appointmentRows.slice(0, HISTORY_LIMIT).map((row) => ({

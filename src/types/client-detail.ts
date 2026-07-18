@@ -57,6 +57,7 @@ export type ClientDetailBookingRequestDto = {
   type: BookingRequestType;
   source: BookingRequestSource;
   masterName: string | null;
+  serviceNameSnapshot: string | null;
 };
 
 export type ClientDetailAppointmentDto = {

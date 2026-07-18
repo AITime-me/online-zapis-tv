@@ -29,11 +29,11 @@ type CreateBookingRequestBody = {
   clientPhone?: string;
   comment?: string;
   masterId?: string | null;
+  serviceId?: string | null;
   type?: BookingRequestType;
   personalDataConsent?: boolean;
   offerAcknowledgement?: boolean;
   gamePlayId?: string | null;
-  serviceName?: string | null;
 };
 
 export async function POST(request: Request) {
@@ -113,6 +113,10 @@ export async function POST(request: Request) {
       clientPhone,
       comment: body.comment,
       masterId: body.masterId ?? null,
+      serviceId:
+        typeof body.serviceId === "string"
+          ? body.serviceId
+          : body.serviceId ?? null,
       type: body.type,
       personalDataConsent: true,
       offerAcknowledgement: true,

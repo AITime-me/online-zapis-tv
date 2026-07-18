@@ -200,6 +200,7 @@ export function ClientDetailView({
                   <th className="px-3 py-2 font-medium">Телефон</th>
                   <th className="px-3 py-2 font-medium">Тип / источник</th>
                   <th className="px-3 py-2 font-medium">Мастер</th>
+                  <th className="px-3 py-2 font-medium">Процедура</th>
                   <th className="px-3 py-2 font-medium">Статус</th>
                   <th className="px-3 py-2 font-medium">Комментарий</th>
                   <th className="px-3 py-2 font-medium">Обновлена</th>
@@ -222,6 +223,9 @@ export function ClientDetailView({
                       </span>
                     </td>
                     <td className="px-3 py-2 text-zinc-700">{request.masterName ?? "—"}</td>
+                    <td className="px-3 py-2 text-zinc-700">
+                      {request.serviceNameSnapshot ?? "—"}
+                    </td>
                     <td className="px-3 py-2 text-zinc-700">
                       {getBookingRequestStatusLabel(request.status)}
                     </td>

@@ -29,6 +29,8 @@ export type BookingRequestDto = {
   comment: string | null;
   masterId: string | null;
   masterName: string | null;
+  serviceId: string | null;
+  serviceNameSnapshot: string | null;
   status: BookingRequestStatus;
   source: BookingRequestSource;
   type: BookingRequestType;

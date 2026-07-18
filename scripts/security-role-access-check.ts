@@ -310,6 +310,8 @@ function testMasterDtoAndScheduleOptions(): void {
     type: "MANAGER_REQUEST",
     isFromGame: false,
     masterName: "Мастер",
+    serviceId: null,
+    serviceNameSnapshot: null,
     appointmentId: null,
     appointmentStartsAt: null,
     appointmentServiceName: null,

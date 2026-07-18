@@ -169,6 +169,7 @@ export function BookingWizard() {
   const [requestForm, setRequestForm] = useState<{
     type: BookingRequestFormType;
     master: BookingCatalogMaster | null;
+    service: { id: string; publicName: string } | null;
   } | null>(null);
   const [selection, setSelection] = useState<BookingSelection>({
     service: null,
@@ -450,7 +451,11 @@ export function BookingWizard() {
 
   const openManagerOnlyServiceRequest = (service: BookingCatalogService) => {
     if (!service.managerMasterId) {
-      setRequestForm({ type: "CONSULTATION_REQUEST", master: null });
+      setRequestForm({
+        type: "CONSULTATION_REQUEST",
+        master: null,
+        service: { id: service.id, publicName: service.publicName },
+      });
       return;
     }
 
@@ -458,11 +463,12 @@ export function BookingWizard() {
       type: "MANAGER_REQUEST",
       master: {
         id: service.managerMasterId,
-        publicName: service.managerMasterName ?? service.publicName,
+        publicName: service.managerMasterName ?? "Мастер",
         clientDescription: null,
         photoUrl: null,
         isOnlineBookingEnabled: false,
       },
+      service: { id: service.id, publicName: service.publicName },
     });
   };
 
@@ -925,6 +931,7 @@ export function BookingWizard() {
         open={requestForm != null}
         type={requestForm?.type ?? "MANAGER_REQUEST"}
         master={requestForm?.master}
+        service={requestForm?.service}
         onClose={() => setRequestForm(null)}
       />
       <nav className="booking-step-nav" aria-label="Шаги записи">
@@ -1004,7 +1011,11 @@ export function BookingWizard() {
                   setMasterServices([]);
                 }}
                 onManagerRequest={(master) =>
-                  setRequestForm({ type: "MANAGER_REQUEST", master })
+                  setRequestForm({
+                    type: "MANAGER_REQUEST",
+                    master,
+                    service: null,
+                  })
                 }
               />
             )}
@@ -1013,6 +1024,7 @@ export function BookingWizard() {
                 setRequestForm({
                   type: "CONSULTATION_REQUEST",
                   master: null,
+                  service: null,
                 })
               }
             />

@@ -33,6 +33,7 @@ type BookingManagerRequestFormProps = {
   open: boolean;
   type: BookingRequestFormType;
   master?: BookingCatalogMaster | null;
+  service?: { id: string; publicName: string } | null;
   onClose: () => void;
 };
 
@@ -40,6 +41,7 @@ export function BookingManagerRequestForm({
   open,
   type,
   master,
+  service = null,
   onClose,
 }: BookingManagerRequestFormProps) {
   const [name, setName] = useState("");
@@ -142,7 +144,7 @@ export function BookingManagerRequestForm({
 
     setSubmitting(true);
     setError(null);
-    const idempotencyScope = `booking:manager:${type}:${master?.id ?? "none"}`;
+    const idempotencyScope = `booking:manager:${type}:${master?.id ?? "none"}:${service?.id ?? "none"}`;
     try {
       const response = await fetch("/api/booking/request", {
         method: "POST",
@@ -155,6 +157,7 @@ export function BookingManagerRequestForm({
           clientPhone: fullPhone,
           comment: comment || null,
           masterId: master?.id ?? null,
+          serviceId: service?.id ?? null,
           type,
           personalDataConsent,
           offerAcknowledgement,
@@ -217,9 +220,14 @@ export function BookingManagerRequestForm({
             >
               {title}
             </h2>
+            {!success && service ? (
+              <p className="font-body mt-1 text-sm" style={{ color: studioBrand.inkMuted }}>
+                Процедура: {service.publicName}
+              </p>
+            ) : null}
             {!success && master && (
               <p className="font-body mt-1 text-sm" style={{ color: studioBrand.inkMuted }}>
-                {master.publicName}
+                {service ? `Мастер: ${master.publicName}` : master.publicName}
               </p>
             )}
           </div>

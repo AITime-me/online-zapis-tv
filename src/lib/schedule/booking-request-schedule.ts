@@ -8,6 +8,8 @@ export type MasterScheduleBookingRequestDto = {
   type: BookingRequestType;
   isFromGame: boolean;
   masterName: string | null;
+  serviceId: string | null;
+  serviceNameSnapshot: string | null;
   appointmentId: string | null;
   appointmentStartsAt: string | null;
   appointmentServiceName: string | null;
@@ -40,6 +42,8 @@ export function toMasterScheduleBookingRequest(
     type: request.type,
     isFromGame: request.isFromGame,
     masterName: request.masterName,
+    serviceId: request.serviceId,
+    serviceNameSnapshot: request.serviceNameSnapshot,
     appointmentId: request.appointmentId,
     appointmentStartsAt: request.appointmentStartsAt,
     appointmentServiceName: request.appointmentServiceName,

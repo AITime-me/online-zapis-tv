@@ -332,6 +332,7 @@ function RequestTable({
             <th className="px-3 py-2 font-medium">Имя</th>
             <th className="px-3 py-2 font-medium">Телефон</th>
             <th className="px-3 py-2 font-medium">Мастер</th>
+            <th className="px-3 py-2 font-medium">Процедура</th>
             <th className="px-3 py-2 font-medium">Тип</th>
             <th className="px-3 py-2 font-medium">Исходная запись</th>
             <th className="px-3 py-2 font-medium">Клиент CRM</th>
@@ -351,6 +352,9 @@ function RequestTable({
               </td>
               <td className="px-3 py-2 break-words">
                 {request.masterName ?? "—"}
+              </td>
+              <td className="px-3 py-2 break-words">
+                {request.serviceNameSnapshot ?? "—"}
               </td>
               <td className="px-3 py-2 whitespace-nowrap">
                 {getBookingRequestTypeLabel(request.type)}

@@ -132,6 +132,13 @@ export function ScheduleBookingRequestSafeDetailModal({
             </div>
           </div>
 
+          {request.serviceNameSnapshot ? (
+            <div>
+              <div className="text-xs text-zinc-500">Процедура</div>
+              <div className="text-zinc-900">{request.serviceNameSnapshot}</div>
+            </div>
+          ) : null}
+
           <BookingRequestAppointmentContext request={request} />
 
           <div>
@@ -272,6 +279,13 @@ export function ScheduleBookingRequestDetailModal({
             </div>
           </div>
 
+          {request.serviceNameSnapshot ? (
+            <div>
+              <div className="text-xs text-zinc-500">Процедура</div>
+              <div className="text-zinc-900">{request.serviceNameSnapshot}</div>
+            </div>
+          ) : null}
+
           <BookingRequestAppointmentContext request={request} />
 
           <div>
@@ -402,7 +416,11 @@ function ScheduleBookingRequestMonthCard({
           <span className="ml-1">· {shortSource}</span>
         </div>
         <div className="truncate">{request.clientName}</div>
-        {request.type === "RESCHEDULE_REQUEST" && request.appointmentServiceName ? (
+        {request.serviceNameSnapshot ? (
+          <div className="truncate text-[#2a5648]">
+            {truncateScheduleText(request.serviceNameSnapshot, 28)}
+          </div>
+        ) : request.type === "RESCHEDULE_REQUEST" && request.appointmentServiceName ? (
           <div className="truncate text-[#2a5648]">{request.appointmentServiceName}</div>
         ) : (
           <div className="truncate">{shortSource}</div>
@@ -449,7 +467,11 @@ function ScheduleBookingRequestDayCard({
           <span className="ml-1.5">· {sourceLabel}</span>
         </div>
         <div className="mt-0.5 truncate">{request.clientName}</div>
-        {request.type === "RESCHEDULE_REQUEST" && request.appointmentServiceName ? (
+        {request.serviceNameSnapshot ? (
+          <div className="mt-0.5 truncate text-[#2a5648]">
+            Процедура: {request.serviceNameSnapshot}
+          </div>
+        ) : request.type === "RESCHEDULE_REQUEST" && request.appointmentServiceName ? (
           <div className="mt-0.5 truncate text-[#2a5648]">
             {request.appointmentServiceName}
           </div>

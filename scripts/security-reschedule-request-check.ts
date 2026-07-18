@@ -101,6 +101,8 @@ function assertMasterSanitization(): void {
     type: "RESCHEDULE_REQUEST",
     isFromGame: false,
     masterName: "Мастер",
+    serviceId: null,
+    serviceNameSnapshot: null,
     appointmentId: "appt-1",
     appointmentStartsAt: "2026-07-20T12:00:00.000Z",
     appointmentServiceName: "Массаж",
