@@ -119,32 +119,36 @@ function assertHelper(): void {
   assert.match(executable, /does not install packages/i);
 
   assert.match(executable, /ss_extract_listener_process_names/);
-  assert.match(executable, /port_owned_by_active_caddy_service/);
-  assert.match(executable, /sudo -n ss -ltnp/);
-  assert.match(executable, /systemctl show -p MainPID --value caddy/);
+  assert.match(executable, /ensure_sudo_authenticated/);
+  assert.match(executable, /sudo -v/);
+  assert.match(executable, /sudo -n ss -H -ltnp/);
+  assert.match(executable, /sport = :80 or sport = :443/);
   assert.match(executable, /marker='users:\(\(\"'/);
   assert.match(executable, /Ports 80\/443: free or owned by caddy/);
   assert.match(
     executable,
-    /port 80 is used by '\$\{proc80\}' \(not caddy\)\. Refusing to change anything automatically/,
+    /port 80\/443 is used by '\$\{name\}' \(not caddy\)\. Refusing to change anything automatically/,
   );
   assert.match(
     executable,
-    /port 443 is used by '\$\{proc443\}' \(not caddy\)\. Refusing to change anything automatically/,
+    /port 80\/443 listener has no process info after privileged ss \(unknown\)/,
   );
+  assert.match(executable, /privileged ss failed while inspecting ports 80\/443/);
+  assert.doesNotMatch(executable, /port_owned_by_active_caddy_service/);
+  assert.doesNotMatch(executable, /MainPID/);
+  assert.doesNotMatch(executable, /listener_process_for_port/);
   assert.doesNotMatch(executable, /\$line" =~ users:/);
   assert.doesNotMatch(executable, /sed -n 's\/\.\*users:/);
 
-  const listenerBody = (() => {
-    const start = source.indexOf("listener_process_for_port()");
+  const ensureSudoBody = (() => {
+    const start = source.indexOf("ensure_sudo_authenticated()");
     const end = source.indexOf("assert_http_ports_safe()");
-    assert.ok(start >= 0 && end > start, "listener_process_for_port must precede assert_http_ports_safe");
+    assert.ok(start >= 0 && end > start, "ensure_sudo_authenticated must precede assert_http_ports_safe");
     return stripBashComments(source.slice(start, end));
   })();
-  assert.match(listenerBody, /printf 'caddy'/);
-  assert.match(listenerBody, /printf 'unknown'/);
-  assert.match(listenerBody, /port_owned_by_active_caddy_service/);
-  assert.match(listenerBody, /foreign=/);
+  assert.match(ensureSudoBody, /sudo -v/);
+  assert.match(ensureSudoBody, /sudo -n true/);
+  assert.match(ensureSudoBody, /sudo authentication failed/);
 
   const portsBody = (() => {
     const start = source.indexOf("assert_http_ports_safe()");
@@ -152,14 +156,24 @@ function assertHelper(): void {
     assert.ok(start >= 0 && end > start, "assert_http_ports_safe must exist");
     return stripBashComments(source.slice(start, end));
   })();
-  assert.match(portsBody, /"\$proc80" != "caddy"/);
-  assert.match(portsBody, /"\$proc443" != "caddy"/);
+  assert.match(portsBody, /sudo -n ss -H -ltnp/);
+  assert.match(portsBody, /"\$name" != "caddy"/);
+  assert.match(portsBody, /no process info after privileged ss \(unknown\)/);
   assert.doesNotMatch(portsBody, /systemctl\s+stop/);
   assert.doesNotMatch(portsBody, /fuser\s+-k|kill\s+-9/);
+  assert.doesNotMatch(portsBody, /MainPID|systemctl show/);
+  assert.doesNotMatch(portsBody, /\bss -ltnp\b/);
 
-  const dryIdx = executable.indexOf('ops_info "Dry-run complete');
-  const lockIdx = executable.indexOf("ops_acquire_production_ops_lock");
-  assert.ok(dryIdx >= 0 && lockIdx > dryIdx, "dry-run must exit before lock");
+  const mainBody = (() => {
+    const start = source.indexOf("\nmain()");
+    assert.ok(start >= 0, "main must exist");
+    return stripBashComments(source.slice(start));
+  })();
+  const confirmIdx = mainBody.indexOf("ops_require_interactive_confirmation");
+  const sudoIdx = mainBody.indexOf("ensure_sudo_authenticated");
+  const applyIdx = mainBody.indexOf("apply_install");
+  assert.ok(confirmIdx >= 0 && sudoIdx > confirmIdx, "sudo -v must run after confirmation");
+  assert.ok(applyIdx > sudoIdx, "apply_install must run after ensure_sudo_authenticated");
 
   const applyInstallIdx = executable.indexOf("apply_install()");
   assert.ok(applyInstallIdx >= 0, "apply_install must exist");
@@ -168,10 +182,17 @@ function assertHelper(): void {
     applyInstallIdx,
     mainIdx > applyInstallIdx ? mainIdx : executable.length,
   );
+  const portsIdx = applyBody.indexOf("assert_http_ports_safe");
+  const writeIdx = applyBody.indexOf("sudo install -m 644");
+  assert.ok(portsIdx >= 0 && writeIdx > portsIdx, "port check must run before Caddyfile write");
+  assert.match(applyBody, /assert_dns_points_to_production/);
   const validateSrcIdx = applyBody.indexOf("validate_caddyfile \"$src\"");
   const reloadIdx = applyBody.indexOf("systemctl reload caddy");
   assert.ok(validateSrcIdx >= 0 && reloadIdx > validateSrcIdx, "validate before reload");
-  assert.match(applyBody, /assert_dns_points_to_production/);
+
+  const dryIdx = executable.indexOf('ops_info "Dry-run complete');
+  const lockIdx = executable.indexOf("ops_acquire_production_ops_lock");
+  assert.ok(dryIdx >= 0 && lockIdx > dryIdx, "dry-run must exit before lock");
 
   const dryMatch = executable.match(
     /if \[\[ "\$OPS_DRY_RUN" -eq 1 \]\]; then([\s\S]*?)exit 0/,
@@ -179,6 +200,8 @@ function assertHelper(): void {
   assert.ok(dryMatch, "dry-run early-exit block required");
   assert.doesNotMatch(dryMatch[1], /assert_dns_points_to_production/);
   assert.doesNotMatch(dryMatch[1], /ops_acquire_production_ops_lock|systemctl|mkdir|install -m/);
+  assert.doesNotMatch(dryMatch[1], /\bsudo\b/);
+  assert.doesNotMatch(dryMatch[1], /ensure_sudo_authenticated|assert_http_ports_safe/);
 }
 
 function assertExecutableBit(): void {

@@ -144,7 +144,7 @@ https_health_ok() {
 }
 
 # Извлекает имена процессов из вывода `ss -p` (Ubuntu: users:(("caddy",pid=…,fd=…))).
-# Чистый bash-парсинг: без [[ =~ ]] с кавычками и без хрупкого sed BRE.
+# Чистый bash-парсинг: без [[ =~ ]] с кавычками.
 ss_extract_listener_process_names() {
   local text="$1"
   local remaining="$text"
@@ -171,106 +171,56 @@ ss_extract_listener_process_names() {
   printf '%s\n' "${names[@]}" | sort -u
 }
 
-ss_output_has_listen() {
-  local text="$1"
-  grep -qE '^LISTEN|[[:space:]]LISTEN[[:space:]]' <<<"$text"
+# Интерактивная авторизация sudo для --install (не зависит от старого timestamp).
+ensure_sudo_authenticated() {
+  if ! command -v sudo >/dev/null 2>&1; then
+    ops_die "sudo is required for --install"
+  fi
+
+  ops_info "Refreshing sudo credentials (password may be required)..."
+  if ! sudo -v; then
+    ops_die "sudo authentication failed; refusing to continue"
+  fi
+  if ! sudo -n true >/dev/null 2>&1; then
+    ops_die "sudo non-interactive check failed after sudo -v"
+  fi
 }
 
-# True, если systemd unit caddy активен и его MainPID фигурирует в выводе ss для порта.
-port_owned_by_active_caddy_service() {
-  local ss_out="$1"
-  local main_pid state
-
-  if ! command -v systemctl >/dev/null 2>&1; then
-    return 1
-  fi
-
-  state="$(systemctl is-active caddy 2>/dev/null || true)"
-  if [[ "$state" != "active" && "$state" != "reloading" ]]; then
-    return 1
-  fi
-
-  main_pid="$(systemctl show -p MainPID --value caddy 2>/dev/null || true)"
-  if [[ -z "$main_pid" || "$main_pid" == "0" ]]; then
-    return 1
-  fi
-
-  grep -qE "pid=${main_pid}[,)]" <<<"$ss_out"
-}
-
-ss_port_listen_output() {
-  local port="$1"
-  local out=""
-
-  out="$(ss -ltnp "( sport = :${port} )" 2>/dev/null || true)"
-
-  # Без привилегий ss часто скрывает users:(("…")) / pid= — тогда порт «занят unknown».
-  # Повторяем с sudo -n (без пароля); если sudo недоступен, остаёмся на текущем выводе.
-  if ss_output_has_listen "$out" && ! grep -q 'users:(("' <<<"$out"; then
-    if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
-      out="$(sudo -n ss -ltnp "( sport = :${port} )" 2>/dev/null || true)"
-    fi
-  fi
-
-  printf '%s' "$out"
-}
-
-# Возвращает: пусто (свободно), caddy, имя чужого процесса, либо unknown (fail-closed).
-listener_process_for_port() {
-  local port="$1"
-  local out names name foreign=""
+# Fail-closed проверка 80/443 через привилегированный ss после ensure_sudo_authenticated.
+# Порт свободен или каждый listener — caddy. Иначе отказ до записи Caddyfile.
+assert_http_ports_safe() {
+  local out line names name
 
   if ! command -v ss >/dev/null 2>&1; then
-    ops_die "ss command is required to inspect port ${port}"
+    ops_die "ss command is required to inspect ports 80/443"
+  fi
+  if ! sudo -n true >/dev/null 2>&1; then
+    ops_die "sudo is not authenticated; cannot inspect privileged port listeners"
   fi
 
-  out="$(ss_port_listen_output "$port")"
-  if ! ss_output_has_listen "$out"; then
-    printf ''
-    return 0
+  if ! out="$(sudo -n ss -H -ltnp '( sport = :80 or sport = :443 )' 2>/dev/null)"; then
+    ops_die "privileged ss failed while inspecting ports 80/443; refusing to change anything"
   fi
 
-  names="$(ss_extract_listener_process_names "$out")"
-  if [[ -n "$names" ]]; then
-    while IFS= read -r name; do
-      [[ -z "$name" ]] && continue
-      if [[ "$name" == "caddy" ]]; then
-        continue
-      fi
-      foreign="$name"
-      break
-    done <<<"$names"
-
-    if [[ -n "$foreign" ]]; then
-      printf '%s' "$foreign"
-      return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "${line//[[:space:]]/}" ]] && continue
+    if ! grep -qE '(^|[[:space:]])LISTEN([[:space:]]|$)' <<<"$line"; then
+      continue
     fi
 
-    printf 'caddy'
-    return 0
-  fi
+    names="$(ss_extract_listener_process_names "$line")"
+    if [[ -z "$names" ]]; then
+      ops_die "port 80/443 listener has no process info after privileged ss (unknown). Refusing to change anything automatically — free the port manually."
+    fi
 
-  # Имя процесса не распарсилось, но порт слушается — разрешаем только при
-  # положительной идентификации активного caddy.service (ожидаемо после apt install).
-  if port_owned_by_active_caddy_service "$out"; then
-    printf 'caddy'
-    return 0
-  fi
+    while IFS= read -r name || [[ -n "$name" ]]; do
+      [[ -z "$name" ]] && continue
+      if [[ "$name" != "caddy" ]]; then
+        ops_die "port 80/443 is used by '${name}' (not caddy). Refusing to change anything automatically — free the port manually."
+      fi
+    done <<<"$names"
+  done <<<"$out"
 
-  printf 'unknown'
-}
-
-assert_http_ports_safe() {
-  local proc80 proc443
-  proc80="$(listener_process_for_port 80)"
-  proc443="$(listener_process_for_port 443)"
-
-  if [[ -n "$proc80" && "$proc80" != "caddy" ]]; then
-    ops_die "port 80 is used by '${proc80}' (not caddy). Refusing to change anything automatically — free the port manually."
-  fi
-  if [[ -n "$proc443" && "$proc443" != "caddy" ]]; then
-    ops_die "port 443 is used by '${proc443}' (not caddy). Refusing to change anything automatically — free the port manually."
-  fi
   ops_info "Ports 80/443: free or owned by caddy"
 }
 
@@ -323,9 +273,9 @@ print_plan() {
   ops_info "  DNS expected A: ${PRODUCTION_PUBLIC_IPV4}"
   ops_info "  does NOT: package install, DNS edits, firewall, stop foreign processes"
   if [[ "$OPS_DRY_RUN" -eq 1 ]]; then
-    ops_info "Mode: DRY-RUN (no backup, lock, file writes, or systemctl)"
+    ops_info "Mode: DRY-RUN (no sudo, backup, lock, file writes, or systemctl)"
   else
-    ops_info "Mode: INSTALL (confirmation + lock + backup + reload)"
+    ops_info "Mode: INSTALL (confirmation + sudo -v + lock + backup + reload)"
   fi
 }
 
@@ -432,7 +382,7 @@ main() {
 
   if [[ "$OPS_DRY_RUN" -eq 1 ]]; then
     validate_caddyfile "${OPS_REPO_ROOT}/${PRODUCTION_CADDYFILE_SRC}"
-    ops_info "Dry-run complete — no lock, backup, file writes, or systemctl."
+    ops_info "Dry-run complete — no sudo, lock, backup, file writes, or systemctl."
     exit 0
   fi
 
@@ -440,6 +390,7 @@ main() {
   ops_require_interactive_confirmation "INSTALL PRODUCTION REVERSE PROXY" \
     "Type INSTALL PRODUCTION REVERSE PROXY to continue:"
 
+  ensure_sudo_authenticated
   apply_install
 }
 
