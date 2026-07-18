@@ -1,13 +1,24 @@
-import { Suspense } from "react";
+import { connection } from "next/server";
 import { BookingManageClient } from "@/components/booking/booking-manage-client";
 import { bookingTheme } from "@/components/booking/booking-theme";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export const metadata = {
   title: "Управление записью — Твоё время",
   description: "Отмена или перенос онлайн-записи в студии «Твоё время»",
 };
 
-export default function BookingManagePage() {
+/**
+ * Bearer manage-link UI. Dynamic + no-store.
+ * Deep links keep `?token=` for SMS/share; middleware moves the bearer into an
+ * httpOnly cookie and redirects to `/booking/manage` without the query, so the
+ * rendered RSC/HTML flight does not embed the secret.
+ */
+export default async function BookingManagePage() {
+  await connection();
+
   return (
     <main
       className="min-h-screen px-3 py-6 md:px-6"
@@ -29,13 +40,7 @@ export default function BookingManagePage() {
             backgroundColor: bookingTheme.card,
           }}
         >
-          <Suspense
-            fallback={
-              <p className="text-center text-base text-[#6b7280]">Загрузка…</p>
-            }
-          >
-            <BookingManageClient />
-          </Suspense>
+          <BookingManageClient />
         </div>
       </div>
     </main>

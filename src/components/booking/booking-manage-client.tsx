@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
 import { bookingStudioTelHref } from "@/components/booking/booking-config";
 import { bookingTheme } from "@/components/booking/booking-theme";
 import type { PublicManageAppointmentView } from "@/services/BookingManageService";
@@ -34,37 +33,29 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 }
 
 export function BookingManageClient() {
-  const searchParams = useSearchParams();
-  const token = searchParams.get("token")?.trim() ?? "";
-
   const [appointment, setAppointment] = useState<PublicManageAppointmentView | null>(
     null,
   );
-  const [loading, setLoading] = useState(Boolean(token));
-  const [error, setError] = useState<string | null>(
-    token ? null : "Ссылка на запись недействительна",
-  );
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showRescheduleForm, setShowRescheduleForm] = useState(false);
   const [rescheduleMessage, setRescheduleMessage] = useState("");
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  /** True after a successful session bootstrap (httpOnly cookie set by middleware). */
+  const [hasManageSession, setHasManageSession] = useState(false);
 
   const loadAppointment = useCallback(async () => {
-    if (!token) {
-      setLoading(false);
-      return;
-    }
-
     setLoading(true);
     setError(null);
 
     try {
-      const response = await fetch(
-        `/api/booking/manage?token=${encodeURIComponent(token)}`,
-        { cache: "no-store" },
-      );
+      const response = await fetch("/api/booking/manage", {
+        cache: "no-store",
+        credentials: "same-origin",
+      });
       const data = (await response.json()) as {
         ok?: boolean;
         error?: string;
@@ -72,11 +63,13 @@ export function BookingManageClient() {
       };
 
       if (!response.ok || !data.ok || !data.appointment) {
-        throw new Error(data.error ?? "Запись не найдена");
+        throw new Error(data.error ?? "Ссылка на запись недействительна");
       }
 
+      setHasManageSession(true);
       setAppointment(data.appointment);
     } catch (loadError) {
+      setHasManageSession(false);
       setAppointment(null);
       setError(
         loadError instanceof Error
@@ -86,14 +79,14 @@ export function BookingManageClient() {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     void loadAppointment();
   }, [loadAppointment]);
 
   const handleCancel = async () => {
-    if (!token) {
+    if (!hasManageSession) {
       return;
     }
 
@@ -104,8 +97,9 @@ export function BookingManageClient() {
     try {
       const response = await fetch("/api/booking/manage/cancel", {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, reason: cancelReason }),
+        body: JSON.stringify({ reason: cancelReason }),
       });
       const data = (await response.json()) as {
         ok?: boolean;
@@ -138,7 +132,7 @@ export function BookingManageClient() {
   };
 
   const handleRescheduleRequest = async () => {
-    if (!token) {
+    if (!hasManageSession) {
       return;
     }
 
@@ -149,8 +143,9 @@ export function BookingManageClient() {
     try {
       const response = await fetch("/api/booking/manage/reschedule-request", {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, message: rescheduleMessage }),
+        body: JSON.stringify({ message: rescheduleMessage }),
       });
       const data = (await response.json()) as {
         ok?: boolean;
@@ -178,21 +173,6 @@ export function BookingManageClient() {
       setSubmitting(false);
     }
   };
-
-  if (!token) {
-    return (
-      <div className="space-y-4 text-center">
-        <p className="text-base text-[#6b7280]">Ссылка на запись недействительна</p>
-        <Link
-          href="/booking"
-          className="inline-flex min-h-12 items-center justify-center rounded-xl px-6 py-3 text-base font-medium text-white"
-          style={{ backgroundColor: bookingTheme.green }}
-        >
-          Записаться онлайн
-        </Link>
-      </div>
-    );
-  }
 
   if (loading) {
     return (

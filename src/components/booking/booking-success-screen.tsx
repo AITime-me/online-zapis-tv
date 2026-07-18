@@ -129,6 +129,7 @@ export function BookingSuccessScreen({
           {manageUrl ? (
             <Link
               href={manageUrl}
+              prefetch={false}
               className="home-btn home-btn-primary font-body flex min-h-12 w-full items-center justify-center rounded-2xl px-5 py-3 text-base font-medium text-white transition duration-300 ease-out"
             >
               Отменить или перенести запись

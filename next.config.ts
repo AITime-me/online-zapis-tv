@@ -32,6 +32,15 @@ const viewOnlyReferrerPolicy = [
   { key: "Referrer-Policy", value: "no-referrer" },
 ];
 
+const manageLinkNoStoreHeaders = [
+  {
+    key: "Cache-Control",
+    value: "private, no-store, max-age=0, must-revalidate",
+  },
+  { key: "Pragma", value: "no-cache" },
+  { key: "Referrer-Policy", value: "no-referrer" },
+];
+
 const nextConfig: NextConfig = {
   output: "standalone",
   async headers() {
@@ -47,6 +56,19 @@ const nextConfig: NextConfig = {
       {
         source: "/api/view/schedule/:path*",
         headers: viewOnlyReferrerPolicy,
+      },
+      // After global headers so Referrer-Policy / Cache-Control override defaults.
+      {
+        source: "/booking/manage",
+        headers: manageLinkNoStoreHeaders,
+      },
+      {
+        source: "/api/booking/manage",
+        headers: manageLinkNoStoreHeaders,
+      },
+      {
+        source: "/api/booking/manage/:path*",
+        headers: manageLinkNoStoreHeaders,
       },
     ];
   },

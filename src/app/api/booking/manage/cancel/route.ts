@@ -1,7 +1,9 @@
 import {
+  applyManageSecurityHeaders,
   manageJsonResponse,
   manageUnauthorizedResponse,
 } from "@/lib/booking/manage-response";
+import { resolveManageBearerToken } from "@/lib/booking/manage-session-cookie";
 import { manageTokenRateLimitFingerprint } from "@/lib/booking/manage-token";
 import { enforceSameOriginForMutatingRequest } from "@/lib/security/csrf";
 import { enforceRequestRateLimit } from "@/lib/security/rate-limit/enforce-policy";
@@ -21,12 +23,15 @@ type CancelBody = {
 export async function POST(request: Request) {
   const originResponse = enforceSameOriginForMutatingRequest(request);
   if (originResponse) {
-    return originResponse;
+    return applyManageSecurityHeaders(originResponse);
   }
 
   try {
     const body = (await request.json()) as CancelBody;
-    const token = typeof body.token === "string" ? body.token.trim() : "";
+    const token = resolveManageBearerToken({
+      request,
+      bodyToken: body.token,
+    });
     const reason = typeof body.reason === "string" ? body.reason : undefined;
 
     const rateLimitResponse = enforceRequestRateLimit(
@@ -34,7 +39,7 @@ export async function POST(request: Request) {
       token ? [manageTokenRateLimitFingerprint(token)] : [],
     );
     if (rateLimitResponse) {
-      return rateLimitResponse;
+      return applyManageSecurityHeaders(rateLimitResponse);
     }
 
     if (!token) {

@@ -153,7 +153,7 @@ function assertManageRoutesHardened(): void {
     const source = read(rel);
     assert.match(source, /enforceRequestRateLimit/);
     assert.match(source, /manageTokenRateLimitFingerprint|manageUnauthorizedResponse/);
-    assert.match(source, /no-store|MANAGE_SECURITY_HEADERS|manageJsonResponse/);
+    assert.match(source, /applyManageSecurityHeaders|manageJsonResponse|MANAGE_SECURITY_HEADERS/);
   }
 
   const cancel = read("src/app/api/booking/manage/cancel/route.ts");
@@ -161,12 +161,51 @@ function assertManageRoutesHardened(): void {
     "src/app/api/booking/manage/reschedule-request/route.ts",
   );
   assert.match(cancel, /enforceSameOriginForMutatingRequest/);
+  assert.match(cancel, /applyManageSecurityHeaders\(originResponse\)/);
   assert.match(reschedule, /enforceSameOriginForMutatingRequest/);
+  assert.match(reschedule, /applyManageSecurityHeaders\(originResponse\)/);
 
   const middleware = read("src/middleware.ts");
   assert.match(middleware, /\/booking\/manage/);
   assert.match(middleware, /Referrer-Policy.*no-referrer|no-referrer/);
-  assert.match(middleware, /no-store/);
+  assert.match(middleware, /private, no-store, max-age=0, must-revalidate/);
+  assert.match(
+    middleware,
+    /matcher:\s*\[[\s\S]*"\/booking\/manage"/,
+    "middleware matcher must include /booking/manage (otherwise headers never run)",
+  );
+  assert.match(middleware, /MANAGE_SESSION_COOKIE|tv_manage_bearer/);
+  assert.match(middleware, /searchParams\.delete\(["']token["']\)/);
+  assert.match(middleware, /isPlausibleManageBearerToken/);
+  assert.match(middleware, /shouldUseSecureManageCookie/);
+
+  const cookieHelper = read("src/lib/booking/manage-session-cookie.ts");
+  assert.match(cookieHelper, /sameSite:\s*["']strict["']/);
+  assert.match(cookieHelper, /httpOnly:\s*true/);
+  assert.match(cookieHelper, /isPlausibleManageBearerToken/);
+  assert.doesNotMatch(cookieHelper, /domain:/i);
+
+  const page = read("src/app/booking/manage/page.tsx");
+  assert.match(page, /force-dynamic/);
+  assert.match(page, /connection\(/);
+
+  const client = read("src/components/booking/booking-manage-client.tsx");
+  assert.doesNotMatch(client, /useSearchParams/);
+  assert.doesNotMatch(client, /window\.location\.search/);
+  assert.match(client, /credentials:\s*["']same-origin["']/);
+
+  const nextConfig = read("next.config.ts");
+  assert.match(nextConfig, /source:\s*"\/booking\/manage"/);
+  assert.match(nextConfig, /private, no-store, max-age=0, must-revalidate/);
+
+  const success = read("src/components/booking/booking-success-screen.tsx");
+  assert.match(success, /prefetch=\{false\}/);
+
+  const responseHelper = read("src/lib/booking/manage-response.ts");
+  assert.match(
+    responseHelper,
+    /private, no-store, max-age=0, must-revalidate/,
+  );
 }
 
 function assertRateLimitPolicyWired(): void {
