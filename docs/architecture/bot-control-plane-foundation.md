@@ -12,6 +12,8 @@
 
 Не создаём: второй каталог, второе расписание, копию Booking Service, runtime LLM/каналов/очереди в Next.js.
 
+Транзакционные уведомления о записи (MAX + SMS fallback + VK, manage-link) описаны отдельно: [bot-booking-notifications.md](./bot-booking-notifications.md). Это не AI Bot Core и не marketing communications; приоритет каналов для сервисных сообщений о записи задаётся там владельцем (MAX → SMS → VK).
+
 ## Канонический порядок подключения
 
 0. Внутренние API-контракты  

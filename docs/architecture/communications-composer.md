@@ -17,6 +17,8 @@
 
 При появлении S3/object storage миграция должна вынести бинари из Postgres.
 
+Сервисные сообщения о записи и manage-link бота уведомлений описаны в [bot-booking-notifications.md](./bot-booking-notifications.md) и не являются частью редактора рекламных рассылок.
+
 ## Provider boundary
 
 `CommunicationDeliveryProvider` + текущая реализация `DisabledCommunicationDeliveryProvider`:
