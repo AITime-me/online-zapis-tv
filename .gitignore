@@ -49,6 +49,7 @@ yarn-error.log*
 /backups/
 *.sql
 !prisma/migrations/**/*.sql
+!scripts/ops/lib/*.sql
 *.dump
 *.backup
 /prisma/dumps

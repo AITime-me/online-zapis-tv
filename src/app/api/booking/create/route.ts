@@ -12,6 +12,7 @@ import {
 } from "@/lib/errors/format-service-error";
 import { enforceRequestRateLimit } from "@/lib/security/rate-limit/enforce-policy";
 import { enforceValidatedPhoneRateLimit } from "@/lib/security/rate-limit/booking-phone";
+import { enforceSameOriginForMutatingRequest } from "@/lib/security/csrf";
 import {
   AppointmentConflictError,
   AppointmentValidationError,
@@ -70,6 +71,11 @@ function errorResponse(
 }
 
 export async function POST(request: Request) {
+  const originResponse = enforceSameOriginForMutatingRequest(request);
+  if (originResponse) {
+    return originResponse;
+  }
+
   const rateLimitResponse = enforceRequestRateLimit(request);
   if (rateLimitResponse) {
     return rateLimitResponse;

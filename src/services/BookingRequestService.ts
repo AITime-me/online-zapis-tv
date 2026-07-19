@@ -63,6 +63,13 @@ import {
   validateGameBookingForIdempotentRetry,
 } from "@/lib/game/game-booking-consume";
 import {
+  GAME_OPEN_REQUEST_EXISTS_CODE,
+  GAME_OPEN_REQUEST_EXISTS_MESSAGE,
+  normalizeGameBookingPhoneKey,
+  OPEN_GAME_BOOKING_REQUEST_STATUSES,
+  resolveGameBookingCreateP2002Plan,
+} from "@/lib/game/game-open-request-policy";
+import {
   recordRequiredPublicFormAcceptances,
   resolveAcceptanceSourceForBookingRequestType,
 } from "@/services/LegalAcceptanceService";
@@ -369,11 +376,61 @@ function gameBookingPublicMessage(code: string): string {
   if (code === "GAME_SESSION_EXPIRED") {
     return "Срок получения подарка истёк. Пожалуйста, пройдите игру ещё раз.";
   }
+  if (
+    code === "GAME_BOOKING_ALREADY_SUBMITTED" ||
+    code === GAME_OPEN_REQUEST_EXISTS_CODE
+  ) {
+    return GAME_OPEN_REQUEST_EXISTS_MESSAGE;
+  }
   return GAME_BOOKING_UNAVAILABLE_MESSAGE;
 }
 
 function throwGameBookingError(code: string): never {
   throw new BookingRequestPublicError(gameBookingPublicMessage(code), code, 400);
+}
+
+function throwOpenGameRequestExists(): never {
+  throw new BookingRequestPublicError(
+    GAME_OPEN_REQUEST_EXISTS_MESSAGE,
+    GAME_OPEN_REQUEST_EXISTS_CODE,
+    400,
+  );
+}
+
+async function assertNoOpenGameBookingForPhoneCatalog(
+  tx: Prisma.TransactionClient,
+  input: {
+    phoneKey: string;
+    gameCatalogId: string;
+  },
+): Promise<void> {
+  const existing = await tx.bookingRequest.findFirst({
+    where: {
+      clientPhoneNormalized: input.phoneKey,
+      gameCatalogId: input.gameCatalogId,
+      status: { in: [...OPEN_GAME_BOOKING_REQUEST_STATUSES] },
+    },
+    select: { id: true },
+  });
+
+  if (existing) {
+    throwOpenGameRequestExists();
+  }
+}
+
+async function findOpenGameBookingIdForPhoneCatalog(input: {
+  phoneKey: string;
+  gameCatalogId: string;
+}): Promise<string | null> {
+  const existing = await prisma.bookingRequest.findFirst({
+    where: {
+      clientPhoneNormalized: input.phoneKey,
+      gameCatalogId: input.gameCatalogId,
+      status: { in: [...OPEN_GAME_BOOKING_REQUEST_STATUSES] },
+    },
+    select: { id: true },
+  });
+  return existing?.id ?? null;
 }
 
 async function findIdempotentBookingRequest(
@@ -383,6 +440,68 @@ async function findIdempotentBookingRequest(
     where: { idempotencyKey },
     include: bookingRequestInclude,
   });
+}
+
+async function handleGameBookingCreateUniqueViolation(input: {
+  error: Prisma.PrismaClientKnownRequestError;
+  idempotencyKey: string;
+  payloadHash: string;
+  phoneKey: string;
+  gameCatalogId: string;
+  gamePlayId: string;
+  request: Request;
+}): Promise<BookingRequestDto> {
+  const plan = resolveGameBookingCreateP2002Plan(input.error.meta?.target);
+
+  if (plan.action === "open_game_exists") {
+    throwOpenGameRequestExists();
+  }
+
+  if (
+    plan.action === "try_idempotent_retry" ||
+    plan.action === "requery_open_then_maybe_open_or_rethrow"
+  ) {
+    const existing = await findIdempotentBookingRequest(input.idempotencyKey);
+    if (existing) {
+      if (
+        !idempotencyPayloadHashesEqual(
+          existing.idempotencyPayloadHash,
+          input.payloadHash,
+        )
+      ) {
+        throw new BookingRequestPublicError(
+          "Idempotency-Key уже использован с другими данными заявки",
+          "IDEMPOTENCY_CONFLICT",
+          409,
+        );
+      }
+      await assertIdempotentGameRetryAllowed({
+        request: input.request,
+        gamePlayId: input.gamePlayId,
+        bookingRequestId: existing.id,
+      });
+      return mapBookingRequest(existing);
+    }
+  }
+
+  if (plan.action === "try_idempotent_retry") {
+    // Idempotency unique fired but row is not visible — do not invent a game error.
+    throw input.error;
+  }
+
+  if (plan.action === "requery_open_then_maybe_open_or_rethrow") {
+    const openId = await findOpenGameBookingIdForPhoneCatalog({
+      phoneKey: input.phoneKey,
+      gameCatalogId: input.gameCatalogId,
+    });
+    if (openId) {
+      throwOpenGameRequestExists();
+    }
+    throw input.error;
+  }
+
+  // Reliable foreign unique target.
+  throw input.error;
 }
 
 async function assertIdempotentGameRetryAllowed(input: {
@@ -414,10 +533,11 @@ async function createGameBookingRequest(
   if (!input.request) {
     throwGameBookingError("GAME_RESULT_UNAVAILABLE");
   }
+  const httpRequest = input.request;
 
   const play = await loadGamePlayForBooking(resolvedGamePlayId);
   const catalogSlug = play?.gameCatalog?.slug ?? "";
-  const sessionToken = readGameSessionTokenFromRequest(input.request, catalogSlug);
+  const sessionToken = readGameSessionTokenFromRequest(httpRequest, catalogSlug);
   const validation = validateGameBookingForFirstSubmit(play, sessionToken, now);
   if (!validation.ok) {
     throwGameBookingError(validation.code);
@@ -426,6 +546,19 @@ async function createGameBookingRequest(
   const { context } = validation;
   const clientName = input.clientName.trim();
   const clientPhone = input.clientPhone.trim();
+  const phoneKey = normalizeGameBookingPhoneKey(clientPhone);
+  if (!phoneKey) {
+    throw new BookingRequestValidationError("Некорректный телефон");
+  }
+
+  const gameCatalogId = context.play.gameCatalogId?.trim() || null;
+  if (!gameCatalogId || !isCanonicalUuid(gameCatalogId)) {
+    throwGameBookingError("GAME_RESULT_UNAVAILABLE");
+  }
+  if (gameCatalogId !== context.session.gameCatalogId) {
+    throwGameBookingError("GAME_RESULT_UNAVAILABLE");
+  }
+
   const userMessage = extractGameBookingCommentForPayload(input.comment);
   const managerComment = buildServerGameBookingComment({
     play: context.play,
@@ -469,6 +602,11 @@ async function createGameBookingRequest(
         return duplicate;
       }
 
+      await assertNoOpenGameBookingForPhoneCatalog(tx, {
+        phoneKey,
+        gameCatalogId,
+      });
+
       const session = await tx.gameSession.findUnique({
         where: { id: gameSessionId },
         select: {
@@ -502,6 +640,7 @@ async function createGameBookingRequest(
         !currentPlay ||
         currentPlay.gameSessionId !== gameSessionId ||
         currentPlay.gameCatalogId !== session.gameCatalogId ||
+        currentPlay.gameCatalogId !== gameCatalogId ||
         currentPlay.leadId !== null ||
         currentPlay.consumedAt !== null ||
         !currentPlay.selectedGiftId
@@ -513,6 +652,8 @@ async function createGameBookingRequest(
         data: {
           clientName,
           clientPhone,
+          clientPhoneNormalized: phoneKey,
+          gameCatalogId,
           comment: requestComment,
           masterId: input.masterId ?? null,
           type: input.type,
@@ -578,31 +719,22 @@ async function createGameBookingRequest(
 
     return mapBookingRequest(request);
   } catch (error) {
+    if (error instanceof BookingRequestPublicError) {
+      throw error;
+    }
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
     ) {
-      const existing = await findIdempotentBookingRequest(input.idempotencyKey);
-      if (existing) {
-        if (
-          !idempotencyPayloadHashesEqual(
-            existing.idempotencyPayloadHash,
-            payloadHash,
-          )
-        ) {
-          throw new BookingRequestPublicError(
-            "Idempotency-Key уже использован с другими данными заявки",
-            "IDEMPOTENCY_CONFLICT",
-            409,
-          );
-        }
-        await assertIdempotentGameRetryAllowed({
-          request: input.request,
-          gamePlayId: resolvedGamePlayId,
-          bookingRequestId: existing.id,
-        });
-        return mapBookingRequest(existing);
-      }
+      return handleGameBookingCreateUniqueViolation({
+        error,
+        idempotencyKey: input.idempotencyKey,
+        payloadHash,
+        phoneKey,
+        gameCatalogId,
+        gamePlayId: resolvedGamePlayId,
+        request: httpRequest,
+      });
     }
     throw error;
   }
@@ -655,6 +787,7 @@ async function createRegularBookingRequest(
         data: {
           clientName,
           clientPhone,
+          clientPhoneNormalized: normalizeGameBookingPhoneKey(clientPhone),
           comment: requestComment,
           masterId: input.masterId ?? null,
           serviceId: resolvedService?.serviceId ?? null,

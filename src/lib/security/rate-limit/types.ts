@@ -7,7 +7,8 @@ export type RateLimitPolicyId =
   | "gamePlay"
   | "gameSessionRead"
   | "availabilityCatalog"
-  | "health";
+  | "health"
+  | "passwordResetRequest";
 
 export type RateLimitPolicy = {
   id: RateLimitPolicyId;

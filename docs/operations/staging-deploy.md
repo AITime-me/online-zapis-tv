@@ -174,6 +174,21 @@ bash scripts/ops/staging-deploy.sh --yes
 5. При `pending` — `migrator migrate deploy`; при connection/failed/diverged/unknown — deploy останавливается.
 6. Повторный `migrate status` + классификация; post-deploy принимает только `up_to_date`.
 
+### Open-game phone+catalog (2026-07-19)
+
+Перед deploy миграции `20260719120000_booking_request_open_game_phone_catalog` на staging:
+
+1. Backup (как обычно в deploy).
+2. Read-only preflight на **старой** схеме:
+   `bash scripts/ops/staging-preflight-open-game-phone-catalog.sh`
+   (счётчики: `conflict_group_count`, `conflict_row_count`, `open_game_rows_missing_catalog_count`, `open_game_rows_invalid_phone_count`).
+3. Все четыре счётчика должны быть `0`. Иначе — ручной разбор; скрипт ничего не закрывает и не удаляет.
+4. Затем обычный `migrate deploy` + restart app + smoke.
+
+Production: тот же порядок только после успешного staging
+(`scripts/ops/production-preflight-open-game-phone-catalog.sh`).
+Детали: `docs/architecture/security-hardening-2026-07-19.md`.
+
 `MIGRATION_STATUS` в manifest и итоговом summary:
 
 - `up_to_date` — pending migrations не было, `migrate deploy` не запускался;

@@ -131,6 +131,8 @@ function assertHmacPayloadHash(): void {
     masterId: left.masterId,
     offerAcknowledgement: left.offerAcknowledgement,
     personalDataConsent: left.personalDataConsent,
+    // Must match canonicalizePayload key order in idempotency-server.ts
+    serviceId: left.serviceId,
     type: left.type,
   });
   const expected = createHmac("sha256", secret).update(canonical, "utf8").digest("hex");

@@ -45,6 +45,11 @@ export const API_RATE_LIMIT_RULES: ApiRateLimitRouteRule[] = [
       method === "POST" && exactPath(pathname, "/api/booking/client-context"),
   },
   {
+    policyId: "passwordResetRequest",
+    match: (pathname, method) =>
+      method === "POST" && exactPath(pathname, "/api/auth/forgot-password"),
+  },
+  {
     policyId: "bookingManage",
     match: (pathname, method) =>
       (method === "GET" && exactPath(pathname, "/api/booking/manage")) ||
@@ -96,6 +101,8 @@ export const RATE_LIMITED_API_PATHS = API_RATE_LIMIT_RULES.flatMap((rule) => {
       return [{ method: "POST", pathname: "/api/booking/request" }];
     case "bookingClientContext":
       return [{ method: "POST", pathname: "/api/booking/client-context" }];
+    case "passwordResetRequest":
+      return [{ method: "POST", pathname: "/api/auth/forgot-password" }];
     case "bookingManage":
       return [
         { method: "GET", pathname: "/api/booking/manage" },

@@ -313,29 +313,30 @@ async function assertVisitorCanStartNewGameAttempt(
   gameCatalogId: string,
   now: Date = new Date(),
 ): Promise<void> {
-  const since = new Date(now.getTime() - SESSION_LIMIT_WINDOW_MS);
+  void now;
 
-  const submittedSession = await prisma.gameSession.findFirst({
+  // Block only while THIS visitor still has an OPEN game booking for the catalog.
+  // CLOSED leads free the visitor to play again. Phone-wide uniqueness is enforced
+  // at booking submit time (partial unique index), not at session start.
+  const openSubmittedSession = await prisma.gameSession.findFirst({
     where: {
       browserVisitorHash,
       gameCatalogId,
-      startedAt: { gte: since },
-      OR: [
-        {
-          status: "CONSUMED",
-          consumedAt: { gte: since },
-          gamePlay: { is: { leadId: { not: null } } },
+      gamePlay: {
+        is: {
+          leadId: { not: null },
+          lead: {
+            is: {
+              status: { in: ["NEW", "CONTACTED"] },
+            },
+          },
         },
-        {
-          status: "COMPLETED",
-          gamePlay: { is: { leadId: { not: null } } },
-        },
-      ],
+      },
     },
     select: { id: true },
   });
 
-  if (submittedSession) {
+  if (openSubmittedSession) {
     throw new GameSessionError(
       "GAME_BOOKING_ALREADY_SUBMITTED",
       GAME_BOOKING_ALREADY_SUBMITTED_MESSAGE,

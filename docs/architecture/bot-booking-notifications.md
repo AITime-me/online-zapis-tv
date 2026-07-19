@@ -74,6 +74,8 @@
 
 Manage-link hardening идёт expand/contract — см. [manage-token-expand-contract.md](./manage-token-expand-contract.md).
 
+Связанные исправления публичных API / игры (без Phase B): [security-hardening-2026-07-19.md](./security-hardening-2026-07-19.md).
+
 **Phase A (текущий код):** dual-read + **временный dual-write** plaintext+hash ради rollback; DTO/API без raw token; legal `requestReference` независимый; rate limit; same-origin POST; no-store; Referrer-Policy. Plaintext в БД **ещё не устранён**.
 
 **Phase B (TODO):** hash-only write → отключить plaintext fallback → `DROP manage_token` (отдельные релизы после того, как rollback image = Phase A).

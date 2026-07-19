@@ -186,6 +186,35 @@ async function runCsrfTests(): Promise<void> {
     PUBLIC_MUTATING_API_PATHS.has(new URL(publicPost.url).pathname),
     true,
   );
+  // Public mutating path is CSRF-middleware-exempt, but the route must still
+  // enforce the canonical same-origin helper itself.
+  assert.equal(enforceSameOriginForMutatingRequest(publicPost)?.status, 403);
+
+  const sameOriginCreate = new Request("http://localhost:3000/api/booking/create", {
+    method: "POST",
+    headers: {
+      Origin: trustedOrigin,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({}),
+  });
+  assert.equal(enforceSameOriginForMutatingRequest(sameOriginCreate), null);
+
+  const createRoute = fs.readFileSync(
+    path.join("src", "app", "api", "booking", "create", "route.ts"),
+    "utf8",
+  );
+  assert.match(createRoute, /enforceSameOriginForMutatingRequest/);
+  const createPost = createRoute.match(/export async function POST[\s\S]*$/)?.[0] ?? "";
+  const createOriginIdx = createPost.indexOf("enforceSameOriginForMutatingRequest");
+  const createRateIdx = createPost.indexOf("enforceRequestRateLimit");
+  assert.ok(createOriginIdx >= 0 && createRateIdx > createOriginIdx);
+
+  const clientContextRoute = fs.readFileSync(
+    path.join("src", "app", "api", "booking", "client-context", "route.ts"),
+    "utf8",
+  );
+  assert.match(clientContextRoute, /enforceSameOriginForMutatingRequest/);
 
   const csrfBody = JSON.parse(await readResponseBody(createCsrfForbiddenResponse()));
   assert.equal(csrfBody.code, "CSRF_ORIGIN");

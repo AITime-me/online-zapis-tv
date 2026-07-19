@@ -712,6 +712,14 @@ function testForgotPasswordUsesAfterWithoutAwaitingSmtp(): void {
   assert.match(postHandler, /NEUTRAL_RESPONSE/, "handler возвращает нейтральный ответ");
   assert.match(postHandler, /isSyntacticallyValidPasswordResetEmail/, "фон запускается для синтаксически валидного email");
   assert.doesNotMatch(postHandler, /console\.(log|info|warn)\([^)]*email/i, "фон не логирует email");
+  assert.match(
+    postHandler,
+    /enforceRequestRateLimit/,
+    "forgot-password должен иметь route-level rate limit",
+  );
+  const rateIdx = postHandler.indexOf("enforceRequestRateLimit");
+  const afterIdx = postHandler.indexOf("after(");
+  assert.ok(rateIdx >= 0 && afterIdx > rateIdx, "rate limit до after()");
 }
 
 function testResetPageReferrerPolicy(): void {

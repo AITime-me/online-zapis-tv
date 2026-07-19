@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { EMPTY_CLIENT_CONTEXT, toPublicClientContext } from "@/lib/client/client-context-engine";
+import { enforceSameOriginForMutatingRequest } from "@/lib/security/csrf";
 import { enforceRequestRateLimit } from "@/lib/security/rate-limit/enforce-policy";
 import { enforceValidatedPhoneRateLimit } from "@/lib/security/rate-limit/booking-phone";
 import { resolvePublicClientContextByPhone } from "@/services/ClientContextService";
@@ -12,6 +13,11 @@ type ClientContextBody = {
 };
 
 export async function POST(request: Request) {
+  const originResponse = enforceSameOriginForMutatingRequest(request);
+  if (originResponse) {
+    return originResponse;
+  }
+
   const rateLimitResponse = enforceRequestRateLimit(request);
   if (rateLimitResponse) {
     return rateLimitResponse;

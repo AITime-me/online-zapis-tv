@@ -493,10 +493,16 @@ function testDocsAndExampleNoRealSecrets(): void {
   const example = readSource(".env.production.example");
   // Плейсхолдер пароля пуст.
   assert.match(example, /^SMTP_PASSWORD=\s*$/m, "SMTP_PASSWORD в example должен быть пустым placeholder");
-  assert.match(example, /^SMTP_HOST=smtp\.mail\.ru$/m);
+  // Safe generic host — not a real mailbox provider in the template.
+  assert.match(example, /^SMTP_HOST=smtp\.example\.com$/m);
   assert.match(example, /^SMTP_PORT=465$/m);
   assert.match(example, /^SMTP_SECURE=true$/m);
   assert.match(example, /^SMTP_IP_FAMILY=auto$/m, "example default SMTP_IP_FAMILY=auto");
+  assert.doesNotMatch(
+    example,
+    /^SMTP_HOST=smtp\.mail\.ru$/m,
+    "example не должен требовать реальный SMTP-провайдер",
+  );
 
   const docs = readSource("docs/STAGING_PRODUCTION.md");
   assert.match(docs, /отдельный пароль внешнего приложения/i, "docs должны описывать отдельный пароль приложения");

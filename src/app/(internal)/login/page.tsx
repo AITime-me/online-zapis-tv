@@ -4,11 +4,14 @@ import Link from "next/link";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, Suspense } from "react";
+import { resolveSafeInternalCallbackUrl } from "@/lib/auth/safe-callback-url";
 
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get("callbackUrl") ?? "/schedule";
+  const callbackUrl = resolveSafeInternalCallbackUrl(
+    searchParams.get("callbackUrl"),
+  );
 
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);

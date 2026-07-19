@@ -53,6 +53,16 @@ export const RATE_LIMIT_POLICIES: Record<RateLimitPolicyId, RateLimitPolicy> = {
     windowMs: 60 * 1000,
     maxRequests: 300,
   },
+  /**
+   * Forgot-password: IP/fingerprint flood guard.
+   * Stricter than bookingCreate — email side-effects are costly.
+   * Per-user 60s cooldown remains in PasswordResetService.
+   */
+  passwordResetRequest: {
+    id: "passwordResetRequest",
+    windowMs: 15 * 60 * 1000,
+    maxRequests: 5,
+  },
 };
 
 export function getRateLimitPolicy(id: RateLimitPolicyId): RateLimitPolicy {

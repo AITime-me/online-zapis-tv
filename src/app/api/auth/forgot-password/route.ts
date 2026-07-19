@@ -1,6 +1,7 @@
 import { after, NextResponse } from "next/server";
 import { isSyntacticallyValidPasswordResetEmail } from "@/lib/auth/password-reset";
 import { PASSWORD_RESET_NEUTRAL_MESSAGE } from "@/lib/auth/password-reset-messages";
+import { enforceRequestRateLimit } from "@/lib/security/rate-limit/enforce-policy";
 import { requestPasswordResetByEmail } from "@/services/PasswordResetService";
 
 export const dynamic = "force-dynamic";
@@ -16,6 +17,11 @@ const NEUTRAL_RESPONSE = {
 };
 
 export async function POST(request: Request) {
+  const rateLimitResponse = enforceRequestRateLimit(request);
+  if (rateLimitResponse) {
+    return rateLimitResponse;
+  }
+
   let email = "";
 
   try {

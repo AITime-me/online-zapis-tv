@@ -454,10 +454,19 @@ model BookingRequest {
   id          String               @id @default(uuid()) @db.Uuid
   clientName  String               @map("client_name")
   clientPhone String               @map("client_phone")
+  /**
+   * Canonical digits for open-game uniqueness (normalizePhone).
+   * Partial unique index is migration-only — see booking_requests_open_game_phone_catalog_uidx.
+   */
+  clientPhoneNormalized String?    @map("client_phone_normalized")
   comment     String?
   masterId    String?              @map("master_id") @db.Uuid
   serviceId   String?              @map("service_id") @db.Uuid
   serviceNameSnapshot String?      @map("service_name_snapshot")
+  /**
+   * Set for game leads only (from GamePlay.gameCatalogId). Enables per-catalog open uniqueness.
+   */
+  gameCatalogId String?            @map("game_catalog_id") @db.Uuid
   status      BookingRequestStatus @default(NEW)
   source      BookingRequestSource @default(ONLINE)
   type        BookingRequestType
@@ -473,6 +482,7 @@ model BookingRequest {
   service      Service?      @relation(fields: [serviceId], references: [id], onDelete: SetNull)
   client       Client?       @relation(fields: [clientId], references: [id], onDelete: SetNull)
   appointment  Appointment?  @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  gameCatalog  GameCatalog?  @relation(fields: [gameCatalogId], references: [id], onDelete: SetNull, onUpdate: Cascade)
   botEventLogs BotEventLog[]
   gamePlay     GamePlay?     @relation("GamePlayLead")
   legalAcceptanceRecords LegalAcceptanceRecord[]
@@ -481,6 +491,8 @@ model BookingRequest {
   @@index([clientId])
   @@index([appointmentId])
   @@index([serviceId])
+  @@index([clientPhoneNormalized])
+  @@index([gameCatalogId])
   @@map("booking_requests")
 }
 
@@ -656,9 +668,10 @@ model GameCatalog {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
-  gameSessions GameSession[]
-  gamePlays    GamePlay[]
-  gameGifts    GameGift[]
+  gameSessions    GameSession[]
+  gamePlays       GamePlay[]
+  gameGifts       GameGift[]
+  bookingRequests BookingRequest[]
 
   @@index([status])
   @@index([type])
