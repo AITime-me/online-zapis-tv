@@ -52,7 +52,11 @@ export function QuickManagerEditor({
                   request={request}
                   variant="month"
                   detailLevel={bookingRequestDetailLevel}
-                  onOpen={(selected) => onRequestOpen?.(selected)}
+                  onOpen={
+                    onRequestOpen
+                      ? (selected) => onRequestOpen(selected)
+                      : undefined
+                  }
                 />
               ))}
             </div>

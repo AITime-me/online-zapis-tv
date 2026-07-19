@@ -68,7 +68,9 @@ export function ScheduleMonthManagerCell({
           {notes.map((note) => (
             <div
               key={note.id}
-              className="cursor-pointer text-[10px] leading-tight text-zinc-800"
+              className={`text-[10px] leading-tight text-zinc-800 ${
+                isInteractive ? "cursor-pointer" : ""
+              }`}
               onClick={isInteractive ? onOpen : undefined}
             >
               {note.content}
@@ -80,7 +82,11 @@ export function ScheduleMonthManagerCell({
                 request={request}
                 variant="month"
                 detailLevel={bookingRequestDetailLevel}
-                onOpen={(selected) => onRequestOpen?.(selected)}
+                onOpen={
+                  onRequestOpen
+                    ? (selected) => onRequestOpen(selected)
+                    : undefined
+                }
               />
             </div>
           ))}

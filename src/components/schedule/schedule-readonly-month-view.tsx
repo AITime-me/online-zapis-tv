@@ -60,7 +60,13 @@ export function ScheduleReadonlyMonthView({
           ›
         </Link>
       </div>
-      <ScheduleMonthTable data={monthData} readOnly showManagerColumn={false} />
+      <ScheduleMonthTable
+        data={monthData}
+        readOnly
+        showManagerColumn
+        canEditManagerNotes={false}
+        bookingRequestDetailLevel="sanitized"
+      />
     </div>
   );
 }

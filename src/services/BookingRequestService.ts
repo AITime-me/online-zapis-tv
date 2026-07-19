@@ -14,6 +14,7 @@ import { formatDateKeyInStudio } from "@/lib/datetime/date-layer";
 import type { ScheduleDayBookingRequest } from "@/lib/schedule/booking-request-schedule";
 import {
   toMasterScheduleBookingRequest,
+  toSummaryScheduleBookingRequest,
   type FullScheduleBookingRequestDto,
 } from "@/lib/schedule/booking-request-schedule";
 import type { ScheduleBookingRequestVisibility } from "@/lib/schedule/schedule-load-options";
@@ -1205,6 +1206,10 @@ export async function listActiveBookingRequestsForRange(
         : null,
     };
   });
+
+  if (visibility === "summary") {
+    return fullRequests.map(toSummaryScheduleBookingRequest);
+  }
 
   if (visibility === "sanitized") {
     return fullRequests.map(toMasterScheduleBookingRequest);

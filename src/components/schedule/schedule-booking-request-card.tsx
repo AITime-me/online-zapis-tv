@@ -42,8 +42,15 @@ function BookingRequestAppointmentContext({
     return null;
   }
 
-  const when = request.appointmentStartsAt
-    ? formatRequestDateTime(request.appointmentStartsAt)
+  const appointmentStartsAt =
+    "appointmentStartsAt" in request ? request.appointmentStartsAt : null;
+  const appointmentScheduleHref =
+    "appointmentScheduleHref" in request
+      ? request.appointmentScheduleHref
+      : null;
+
+  const when = appointmentStartsAt
+    ? formatRequestDateTime(appointmentStartsAt)
     : null;
 
   return (
@@ -61,9 +68,9 @@ function BookingRequestAppointmentContext({
           <div className="tabular-nums text-zinc-900">{when}</div>
         </div>
       ) : null}
-      {request.appointmentScheduleHref ? (
+      {appointmentScheduleHref ? (
         <Link
-          href={request.appointmentScheduleHref}
+          href={appointmentScheduleHref}
           className="inline-block text-sm font-medium text-[#1a73e8] hover:underline"
         >
           Открыть исходный день в расписании
@@ -128,7 +135,9 @@ export function ScheduleBookingRequestSafeDetailModal({
             </div>
             <div className="text-xs text-zinc-500">
               {getBookingRequestTypeLabel(request.type)}
-              {request.masterName ? ` · ${request.masterName}` : ""}
+              {"masterName" in request && request.masterName
+                ? ` · ${request.masterName}`
+                : ""}
             </div>
           </div>
 
@@ -275,7 +284,9 @@ export function ScheduleBookingRequestDetailModal({
             </div>
             <div className="text-xs text-zinc-500">
               {getBookingRequestTypeLabel(request.type)}
-              {request.masterName ? ` · ${request.masterName}` : ""}
+              {"masterName" in request && request.masterName
+                ? ` · ${request.masterName}`
+                : ""}
             </div>
           </div>
 
@@ -363,7 +374,8 @@ export function ScheduleBookingRequestCard({
   request: ScheduleDayBookingRequest;
   variant?: "month" | "day";
   detailLevel?: ScheduleBookingRequestDetailLevel;
-  onOpen: (request: ScheduleDayBookingRequest) => void;
+  /** When omitted, the card is informational only (no click / keyboard open). */
+  onOpen?: (request: ScheduleDayBookingRequest) => void;
 }) {
   if (variant === "month") {
     return (
@@ -391,7 +403,7 @@ function ScheduleBookingRequestMonthCard({
 }: {
   request: ScheduleDayBookingRequest;
   detailLevel: ScheduleBookingRequestDetailLevel;
-  onOpen: (request: ScheduleDayBookingRequest) => void;
+  onOpen?: (request: ScheduleDayBookingRequest) => void;
 }) {
   const shortSource = getScheduleBookingRequestShortSourceLabel(request);
   const giftLine =
@@ -404,31 +416,47 @@ function ScheduleBookingRequestMonthCard({
         })()
       : null;
 
+  const body = (
+    <div className="text-[9px] leading-[1.15] text-[#124032]">
+      <div className="truncate font-semibold">
+        <span className="tabular-nums">{formatStudioTime(request.createdAt)}</span>
+        <span className="ml-1">· {shortSource}</span>
+      </div>
+      <div className="truncate">{request.clientName}</div>
+      {request.serviceNameSnapshot ? (
+        <div className="truncate text-[#2a5648]">
+          {truncateScheduleText(request.serviceNameSnapshot, 28)}
+        </div>
+      ) : request.type === "RESCHEDULE_REQUEST" && request.appointmentServiceName ? (
+        <div className="truncate text-[#2a5648]">{request.appointmentServiceName}</div>
+      ) : (
+        <div className="truncate">{shortSource}</div>
+      )}
+      {giftLine ? (
+        <div className="truncate text-[#2a5648]">{giftLine}</div>
+      ) : null}
+    </div>
+  );
+
+  if (!onOpen) {
+    return (
+      <div
+        className="mb-px w-full max-h-[3.5rem] overflow-hidden rounded border border-[#b8d6c8] bg-[#edf6f1] px-1 py-0.5 text-left"
+        data-testid="schedule-booking-request-card-readonly"
+      >
+        {body}
+      </div>
+    );
+  }
+
   return (
     <button
       type="button"
       onClick={() => onOpen(request)}
       className="mb-px w-full max-h-[3.5rem] overflow-hidden rounded border border-[#b8d6c8] bg-[#edf6f1] px-1 py-0.5 text-left hover:bg-[#e3f0ea]"
+      data-testid="schedule-booking-request-card"
     >
-      <div className="text-[9px] leading-[1.15] text-[#124032]">
-        <div className="truncate font-semibold">
-          <span className="tabular-nums">{formatStudioTime(request.createdAt)}</span>
-          <span className="ml-1">· {shortSource}</span>
-        </div>
-        <div className="truncate">{request.clientName}</div>
-        {request.serviceNameSnapshot ? (
-          <div className="truncate text-[#2a5648]">
-            {truncateScheduleText(request.serviceNameSnapshot, 28)}
-          </div>
-        ) : request.type === "RESCHEDULE_REQUEST" && request.appointmentServiceName ? (
-          <div className="truncate text-[#2a5648]">{request.appointmentServiceName}</div>
-        ) : (
-          <div className="truncate">{shortSource}</div>
-        )}
-        {giftLine ? (
-          <div className="truncate text-[#2a5648]">{giftLine}</div>
-        ) : null}
-      </div>
+      {body}
     </button>
   );
 }
@@ -440,7 +468,7 @@ function ScheduleBookingRequestDayCard({
 }: {
   request: ScheduleDayBookingRequest;
   detailLevel: ScheduleBookingRequestDetailLevel;
-  onOpen: (request: ScheduleDayBookingRequest) => void;
+  onOpen?: (request: ScheduleDayBookingRequest) => void;
 }) {
   const sourceLabel = getScheduleBookingRequestSourceLabel(request);
   const preview =
@@ -455,39 +483,55 @@ function ScheduleBookingRequestDayCard({
         })()
       : null;
 
+  const body = (
+    <div className="text-xs leading-snug text-[#124032]">
+      <div className="font-semibold">
+        <span className="tabular-nums">{formatStudioTime(request.createdAt)}</span>
+        <span className="ml-1.5">· {sourceLabel}</span>
+      </div>
+      <div className="mt-0.5 truncate">{request.clientName}</div>
+      {request.serviceNameSnapshot ? (
+        <div className="mt-0.5 truncate text-[#2a5648]">
+          Процедура: {request.serviceNameSnapshot}
+        </div>
+      ) : request.type === "RESCHEDULE_REQUEST" && request.appointmentServiceName ? (
+        <div className="mt-0.5 truncate text-[#2a5648]">
+          {request.appointmentServiceName}
+        </div>
+      ) : (
+        <div className="mt-0.5 truncate">{sourceLabel}</div>
+      )}
+      {giftLine ? (
+        <div className="mt-0.5 truncate text-[#2a5648]">{giftLine}</div>
+      ) : null}
+      {!giftLine && preview ? (
+        <div className="mt-0.5 line-clamp-1 text-[#2a5648]">{preview}</div>
+      ) : null}
+      <div className="mt-0.5 text-[10px] font-medium text-[#2a5648]">
+        Статус: {getBookingRequestStatusLabel(request.status)}
+      </div>
+    </div>
+  );
+
+  if (!onOpen) {
+    return (
+      <div
+        className="w-full max-h-[5.5rem] overflow-hidden border border-[#b8d6c8] border-b-[#cfe0d8] bg-[#edf6f1] px-2 py-1.5 text-left"
+        data-testid="schedule-booking-request-card-readonly"
+      >
+        {body}
+      </div>
+    );
+  }
+
   return (
     <button
       type="button"
       onClick={() => onOpen(request)}
       className="w-full max-h-[5.5rem] overflow-hidden border border-[#b8d6c8] border-b-[#cfe0d8] bg-[#edf6f1] px-2 py-1.5 text-left hover:bg-[#e3f0ea]"
+      data-testid="schedule-booking-request-card"
     >
-      <div className="text-xs leading-snug text-[#124032]">
-        <div className="font-semibold">
-          <span className="tabular-nums">{formatStudioTime(request.createdAt)}</span>
-          <span className="ml-1.5">· {sourceLabel}</span>
-        </div>
-        <div className="mt-0.5 truncate">{request.clientName}</div>
-        {request.serviceNameSnapshot ? (
-          <div className="mt-0.5 truncate text-[#2a5648]">
-            Процедура: {request.serviceNameSnapshot}
-          </div>
-        ) : request.type === "RESCHEDULE_REQUEST" && request.appointmentServiceName ? (
-          <div className="mt-0.5 truncate text-[#2a5648]">
-            {request.appointmentServiceName}
-          </div>
-        ) : (
-          <div className="mt-0.5 truncate">{sourceLabel}</div>
-        )}
-        {giftLine ? (
-          <div className="mt-0.5 truncate text-[#2a5648]">{giftLine}</div>
-        ) : null}
-        {!giftLine && preview ? (
-          <div className="mt-0.5 line-clamp-1 text-[#2a5648]">{preview}</div>
-        ) : null}
-        <div className="mt-0.5 text-[10px] font-medium text-[#2a5648]">
-          Статус: {getBookingRequestStatusLabel(request.status)}
-        </div>
-      </div>
+      {body}
     </button>
   );
 }

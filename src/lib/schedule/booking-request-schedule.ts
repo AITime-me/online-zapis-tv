@@ -1,18 +1,25 @@
 import type { BookingRequestType } from "@prisma/client";
 
-export type MasterScheduleBookingRequestDto = {
+/**
+ * Minimal public/view-only card fields: time, type/status, name, service.
+ * No phone, email, comment, manage links, or internal schedule hrefs.
+ */
+export type SummaryScheduleBookingRequestDto = {
   id: string;
   createdAt: string;
   clientName: string;
   status: "NEW" | "CONTACTED" | "CLOSED";
   type: BookingRequestType;
   isFromGame: boolean;
+  serviceNameSnapshot: string | null;
+  appointmentServiceName: string | null;
+};
+
+export type MasterScheduleBookingRequestDto = SummaryScheduleBookingRequestDto & {
   masterName: string | null;
   serviceId: string | null;
-  serviceNameSnapshot: string | null;
   appointmentId: string | null;
   appointmentStartsAt: string | null;
-  appointmentServiceName: string | null;
   appointmentScheduleHref: string | null;
 };
 
@@ -22,13 +29,41 @@ export type FullScheduleBookingRequestDto = MasterScheduleBookingRequestDto & {
 };
 
 export type ScheduleDayBookingRequest =
+  | SummaryScheduleBookingRequestDto
   | MasterScheduleBookingRequestDto
   | FullScheduleBookingRequestDto;
+
+/** Keys that must never appear on view-only / summary booking-request DTOs. */
+export const FORBIDDEN_VIEW_ONLY_BOOKING_REQUEST_KEYS = [
+  "clientPhone",
+  "phone",
+  "email",
+  "comment",
+  "manageToken",
+  "manageTokenHash",
+  "masterName",
+  "serviceId",
+  "appointmentId",
+  "appointmentStartsAt",
+  "appointmentScheduleHref",
+] as const;
 
 export function isFullScheduleBookingRequest(
   request: ScheduleDayBookingRequest,
 ): request is FullScheduleBookingRequestDto {
   return "clientPhone" in request;
+}
+
+export function isMasterScheduleBookingRequest(
+  request: ScheduleDayBookingRequest,
+): request is MasterScheduleBookingRequestDto {
+  return "appointmentScheduleHref" in request && !("clientPhone" in request);
+}
+
+export function isSummaryScheduleBookingRequest(
+  request: ScheduleDayBookingRequest,
+): request is SummaryScheduleBookingRequestDto {
+  return !("appointmentScheduleHref" in request) && !("clientPhone" in request);
 }
 
 export function toMasterScheduleBookingRequest(
@@ -49,6 +84,37 @@ export function toMasterScheduleBookingRequest(
     appointmentServiceName: request.appointmentServiceName,
     appointmentScheduleHref: request.appointmentScheduleHref,
   };
+}
+
+export function toSummaryScheduleBookingRequest(
+  request: Pick<
+    FullScheduleBookingRequestDto,
+    | "id"
+    | "createdAt"
+    | "clientName"
+    | "status"
+    | "type"
+    | "isFromGame"
+    | "serviceNameSnapshot"
+    | "appointmentServiceName"
+  >,
+): SummaryScheduleBookingRequestDto {
+  return {
+    id: request.id,
+    createdAt: request.createdAt,
+    clientName: request.clientName,
+    status: request.status,
+    type: request.type,
+    isFromGame: request.isFromGame,
+    serviceNameSnapshot: request.serviceNameSnapshot,
+    appointmentServiceName: request.appointmentServiceName,
+  };
+}
+
+export function collectForbiddenViewOnlyBookingRequestKeys(
+  value: Record<string, unknown>,
+): string[] {
+  return FORBIDDEN_VIEW_ONLY_BOOKING_REQUEST_KEYS.filter((key) => key in value);
 }
 
 export function getScheduleBookingRequestSourceLabel(

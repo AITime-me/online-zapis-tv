@@ -41,6 +41,7 @@
     "test:security:last-login": "tsx scripts/security-last-login-check.ts",
     "test:security:session-freshness": "tsx scripts/security-session-freshness-check.ts",
     "test:security:role-access": "tsx scripts/security-role-access-check.ts",
+    "test:security:schedule-view-manager-column": "tsx scripts/security-schedule-view-manager-column-check.ts",
     "test:security:reschedule-request": "tsx scripts/security-reschedule-request-check.ts",
     "test:security:manage-link-hardening": "tsx scripts/security-manage-link-hardening-check.ts",
     "test:security:manage-link-headers-smoke": "tsx scripts/security-manage-link-headers-smoke.ts",

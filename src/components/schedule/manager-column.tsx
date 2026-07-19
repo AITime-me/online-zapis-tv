@@ -74,7 +74,11 @@ export function ManagerColumn({
               request={item.request}
               variant="day"
               detailLevel={bookingRequestDetailLevel}
-              onOpen={(request) => onRequestOpen?.(request)}
+              onOpen={
+                onRequestOpen
+                  ? (request) => onRequestOpen(request)
+                  : undefined
+              }
             />
           ),
         )

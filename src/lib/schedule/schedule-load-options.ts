@@ -4,21 +4,31 @@ import {
   canManageOperationalEntities,
 } from "@/lib/auth/permissions";
 
-export type ScheduleBookingRequestVisibility = "none" | "sanitized" | "full";
+export type ScheduleBookingRequestVisibility =
+  | "none"
+  | "summary"
+  | "sanitized"
+  | "full";
 
 export type ScheduleAppointmentVisibility = "operational" | "master" | "viewOnly";
 
 export type ScheduleLoadOptions = {
-  /** Колонка менеджера: заметки и заявки. В view-only режиме — false. */
+  /**
+   * Колонка менеджера: заметки (и заявки при bookingRequestVisibility ≠ none).
+   * View-only: true — заметки и summary-карточки заявок.
+   */
   includeManagerColumn?: boolean;
   /**
    * Внутренние заметки менеджера / владельца в колонках расписания.
-   * false для MASTER и view-only — заметки не попадают в DTO.
+   * false для MASTER — заметки не попадают в DTO.
+   * View-only: true — безопасные note DTO (id/content/createdAt) без контактов.
    */
   includeOperationalNotes?: boolean;
   /**
    * Уровень данных заявок в колонке менеджера.
-   * sanitized — только безопасные поля для MASTER.
+   * summary — минимальная карточка для token view-only (без контактов и href).
+   * sanitized — безопасные поля для MASTER (без phone/comment).
+   * full — OWNER/MANAGER.
    */
   bookingRequestVisibility?: ScheduleBookingRequestVisibility;
   /** Уровень полей записей (appointments) в schedule API. */
@@ -40,9 +50,9 @@ export const SCHEDULE_LOAD_INTERNAL: ScheduleLoadOptions = {
 };
 
 export const SCHEDULE_LOAD_VIEW_ONLY: ScheduleLoadOptions = {
-  includeManagerColumn: false,
-  includeOperationalNotes: false,
-  bookingRequestVisibility: "none",
+  includeManagerColumn: true,
+  includeOperationalNotes: true,
+  bookingRequestVisibility: "summary",
   appointmentVisibility: "viewOnly",
   stripBlockInternalReason: true,
 };
