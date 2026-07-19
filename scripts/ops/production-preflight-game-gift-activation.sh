@@ -18,7 +18,7 @@ Usage: scripts/ops/production-preflight-game-gift-activation.sh [--dry-run] [--h
 
 Read-only PostgreSQL preflight for GameGift activation columns on production.
 Same SQL as staging. Prints only integer counters. Exits non-zero if any
-missing/mismatch/invalid counter != 0.
+counter 2–8 != 0 (missing/mismatch/invalid/partial).
 
 Requires: docker; production checkout; .env.production present (values never printed).
 EOF
@@ -81,29 +81,39 @@ run_preflight() {
     ops_die "preflight SQL failed"
   fi
 
-  local gift_total hands_missing course_missing empty_condition course_missing_min \
-    hands_mismatch course_mismatch
-  IFS=$'\t' read -r gift_total hands_missing course_missing empty_condition \
-    course_missing_min hands_mismatch course_mismatch \
+  local gift_total hands_missing course_missing partial_schema empty_condition \
+    course_missing_min hands_mismatch course_mismatch
+  IFS=$'\t' read -r gift_total hands_missing course_missing partial_schema \
+    empty_condition course_missing_min hands_mismatch course_mismatch \
     <<<"$(echo "$output" | tail -n 1)"
 
   if [[ -z "${gift_total:-}" || -z "${hands_missing:-}" || -z "${course_missing:-}" \
-        || -z "${empty_condition:-}" || -z "${course_missing_min:-}" \
-        || -z "${hands_mismatch:-}" || -z "${course_mismatch:-}" ]]; then
+        || -z "${partial_schema:-}" || -z "${empty_condition:-}" \
+        || -z "${course_missing_min:-}" || -z "${hands_mismatch:-}" \
+        || -z "${course_mismatch:-}" ]]; then
     ops_die "preflight returned unexpected output shape"
+  fi
+
+  if ! [[ "$gift_total" =~ ^[0-9]+$ && "$hands_missing" =~ ^[0-9]+$ \
+        && "$course_missing" =~ ^[0-9]+$ && "$partial_schema" =~ ^[0-9]+$ \
+        && "$empty_condition" =~ ^[0-9]+$ && "$course_missing_min" =~ ^[0-9]+$ \
+        && "$hands_mismatch" =~ ^[0-9]+$ && "$course_mismatch" =~ ^[0-9]+$ ]]; then
+    ops_die "preflight returned non-integer counter values"
   fi
 
   ops_info "gift_total=$gift_total"
   ops_info "hands_gift_missing_count=$hands_missing"
   ops_info "course_gifts_missing_count=$course_missing"
+  ops_info "partial_schema_count=$partial_schema"
   ops_info "empty_condition_count=$empty_condition"
   ops_info "course_missing_min_count=$course_missing_min"
   ops_info "hands_gift_mismatch_count=$hands_mismatch"
   ops_info "course_gifts_mismatch_count=$course_mismatch"
 
   if [[ "$hands_missing" != "0" || "$course_missing" != "0" \
-        || "$empty_condition" != "0" || "$course_missing_min" != "0" \
-        || "$hands_mismatch" != "0" || "$course_mismatch" != "0" ]]; then
+        || "$partial_schema" != "0" || "$empty_condition" != "0" \
+        || "$course_missing_min" != "0" || "$hands_mismatch" != "0" \
+        || "$course_mismatch" != "0" ]]; then
     ops_die "preflight failed: fix GameGift activation rows before migrate deploy / go-live"
   fi
 
