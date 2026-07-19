@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { GameConfigDto, GameGiftDto } from "@/types/game-admin";
+import { ACTIVATION_CONDITION_TEXT_MAX_LENGTH } from "@/lib/game/gift-activation";
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 
@@ -121,6 +122,10 @@ export function GamePanel({
       name: "",
       shortDescription: "",
       image: null,
+      activationMode: "SINGLE_PAID_SERVICE",
+      minCourseSessions: null,
+      activationConditionText:
+        "Подарок предоставляется при записи на одну оплачиваемую процедуру по выпавшему направлению",
     });
   };
 
@@ -161,6 +166,15 @@ export function GamePanel({
           allowedResultTypes: Array.isArray(giftDraft.allowedResultTypes)
             ? giftDraft.allowedResultTypes
             : [],
+          activationMode: giftDraft.activationMode ?? "SINGLE_PAID_SERVICE",
+          minCourseSessions:
+            (giftDraft.activationMode ?? "SINGLE_PAID_SERVICE") ===
+            "COURSE_MIN_SESSIONS"
+              ? Number(giftDraft.minCourseSessions ?? 5)
+              : null,
+          activationConditionText: String(
+            giftDraft.activationConditionText ?? "",
+          ).trim(),
         }),
       });
       const payload = await response.json();
@@ -398,6 +412,7 @@ export function GamePanel({
                 <th className="px-3 py-2 font-medium">Статус</th>
                 <th className="px-3 py-2 font-medium">Probability</th>
                 <th className="px-3 py-2 font-medium">Required premium</th>
+                <th className="px-3 py-2 font-medium">Условие</th>
                 <th className="px-3 py-2 font-medium">Правила</th>
                 <th className="px-3 py-2 font-medium"></th>
               </tr>
@@ -426,6 +441,16 @@ export function GamePanel({
                   <td className="px-3 py-2">{gift.requiredPremiumLevel}</td>
                   <td className="px-3 py-2 text-xs text-zinc-600">
                     <div>
+                      {gift.activationMode === "COURSE_MIN_SESSIONS"
+                        ? `Курс от ${gift.minCourseSessions ?? "—"}`
+                        : "Одна процедура"}
+                    </div>
+                    <div className="mt-1 line-clamp-2 text-zinc-500">
+                      {gift.activationConditionText}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 text-xs text-zinc-600">
+                    <div>
                       directions:{" "}
                       {gift.allowedGameDirections.length
                         ? gift.allowedGameDirections.join(", ")
@@ -451,7 +476,7 @@ export function GamePanel({
               ))}
               {gifts.length === 0 ? (
                 <tr>
-                  <td className="px-3 py-6 text-center text-sm text-zinc-500" colSpan={6}>
+                  <td className="px-3 py-6 text-center text-sm text-zinc-500" colSpan={7}>
                     Подарков пока нет.
                   </td>
                 </tr>
@@ -579,6 +604,84 @@ export function GamePanel({
                     }))
                   }
                 />
+              </label>
+
+              <label className="flex flex-col gap-1">
+                <span className={labelClass}>Режим получения</span>
+                <select
+                  className={fieldClass}
+                  value={String(giftDraft.activationMode ?? "SINGLE_PAID_SERVICE")}
+                  onChange={(event) => {
+                    const mode = event.target.value as
+                      | "SINGLE_PAID_SERVICE"
+                      | "COURSE_MIN_SESSIONS";
+                    setGiftDraft((current) => {
+                      const minCourseSessions =
+                        mode === "COURSE_MIN_SESSIONS"
+                          ? Number(current.minCourseSessions ?? 5)
+                          : null;
+                      const autoText =
+                        mode === "COURSE_MIN_SESSIONS"
+                          ? `Подарок предоставляется при покупке курса минимум из ${minCourseSessions ?? 5} процедур по выпавшему направлению. Один подарок действует на один оплаченный курс`
+                          : "Подарок предоставляется при записи на одну оплачиваемую процедуру по выпавшему направлению";
+                      return {
+                        ...current,
+                        activationMode: mode,
+                        minCourseSessions,
+                        activationConditionText: autoText,
+                      };
+                    });
+                  }}
+                >
+                  <option value="SINGLE_PAID_SERVICE">
+                    Одна оплачиваемая процедура
+                  </option>
+                  <option value="COURSE_MIN_SESSIONS">Курс (минимум процедур)</option>
+                </select>
+              </label>
+
+              {(giftDraft.activationMode ?? "SINGLE_PAID_SERVICE") ===
+              "COURSE_MIN_SESSIONS" ? (
+                <label className="flex flex-col gap-1">
+                  <span className={labelClass}>Минимум процедур в курсе</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    className={fieldClass}
+                    value={String(giftDraft.minCourseSessions ?? 5)}
+                    onChange={(event) => {
+                      const minCourseSessions = Number(event.target.value);
+                      setGiftDraft((current) => ({
+                        ...current,
+                        minCourseSessions,
+                        activationConditionText: `Подарок предоставляется при покупке курса минимум из ${minCourseSessions || 5} процедур по выпавшему направлению. Один подарок действует на один оплаченный курс`,
+                      }));
+                    }}
+                  />
+                </label>
+              ) : null}
+
+              <label className="flex flex-col gap-1 md:col-span-2">
+                <span className={labelClass}>
+                  Текст условия для клиента (можно отредактировать, до{" "}
+                  {ACTIVATION_CONDITION_TEXT_MAX_LENGTH} символов)
+                </span>
+                <textarea
+                  className={`${fieldClass} min-h-24`}
+                  maxLength={ACTIVATION_CONDITION_TEXT_MAX_LENGTH}
+                  value={String(giftDraft.activationConditionText ?? "")}
+                  onChange={(event) =>
+                    setGiftDraft((current) => ({
+                      ...current,
+                      activationConditionText: event.target.value,
+                    }))
+                  }
+                />
+                <span className="text-xs text-zinc-500">
+                  {String(giftDraft.activationConditionText ?? "").length}/
+                  {ACTIVATION_CONDITION_TEXT_MAX_LENGTH}
+                </span>
               </label>
 
               <label className="flex flex-col gap-1">

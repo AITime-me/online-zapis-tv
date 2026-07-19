@@ -1046,6 +1046,10 @@ async function main() {
       requiredPremiumLevel: 0,
       allowedGameDirections: [],
       allowedResultTypes: [],
+      activationMode: "SINGLE_PAID_SERVICE" as const,
+      minCourseSessions: null as number | null,
+      activationConditionText:
+        "Подарок предоставляется при записи на одну оплачиваемую процедуру по выпавшему направлению",
     },
     {
       id: "22222222-2222-4222-8222-222222222222",
@@ -1058,6 +1062,10 @@ async function main() {
       requiredPremiumLevel: 0,
       allowedGameDirections: ["faceCare", "faceMassage"],
       allowedResultTypes: [],
+      activationMode: "COURSE_MIN_SESSIONS" as const,
+      minCourseSessions: 5,
+      activationConditionText:
+        "Подарок предоставляется при покупке курса минимум из 5 процедур по выпавшему направлению. Один подарок действует на один оплаченный курс",
     },
     {
       id: "33333333-3333-4333-8333-333333333333",
@@ -1070,6 +1078,10 @@ async function main() {
       requiredPremiumLevel: 0,
       allowedGameDirections: ["faceCare", "recovery", "toneCare"],
       allowedResultTypes: [],
+      activationMode: "COURSE_MIN_SESSIONS" as const,
+      minCourseSessions: 5,
+      activationConditionText:
+        "Подарок предоставляется при покупке курса минимум из 5 процедур по выпавшему направлению. Один подарок действует на один оплаченный курс",
     },
     {
       id: "44444444-4444-4444-8444-444444444444",
@@ -1082,6 +1094,10 @@ async function main() {
       requiredPremiumLevel: 2,
       allowedGameDirections: ["toneCare", "recovery"],
       allowedResultTypes: [],
+      activationMode: "COURSE_MIN_SESSIONS" as const,
+      minCourseSessions: 5,
+      activationConditionText:
+        "Подарок предоставляется при покупке курса минимум из 5 процедур по выпавшему направлению. Один подарок действует на один оплаченный курс",
     },
   ] as const;
 
@@ -1097,6 +1113,9 @@ async function main() {
         requiredPremiumLevel: gift.requiredPremiumLevel,
         allowedGameDirections: [...gift.allowedGameDirections],
         allowedResultTypes: [...gift.allowedResultTypes],
+        activationMode: gift.activationMode,
+        minCourseSessions: gift.minCourseSessions,
+        activationConditionText: gift.activationConditionText,
         isActive: true,
       },
       create: {
@@ -1109,6 +1128,9 @@ async function main() {
         requiredPremiumLevel: gift.requiredPremiumLevel,
         allowedGameDirections: [...gift.allowedGameDirections],
         allowedResultTypes: [...gift.allowedResultTypes],
+        activationMode: gift.activationMode,
+        minCourseSessions: gift.minCourseSessions,
+        activationConditionText: gift.activationConditionText,
         isActive: true,
       },
     });

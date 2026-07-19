@@ -2,6 +2,7 @@ import {
   GAME_DIRECTIONS,
   type GameDirection,
 } from "@/lib/game/play-contract";
+import { rejectForbiddenClientGiftActivationFields } from "@/lib/game/gift-activation";
 import { GAME_SLUG_PATTERN, normalizeGameSlug } from "@/lib/games/catalog-contract";
 
 export type SessionAuthContext = {
@@ -23,6 +24,10 @@ export type PublicGameGiftDto = {
   image: string | null;
   priority: string;
   cardStyle: string;
+  /** Server-snapshotted client-facing activation condition (not editable by client). */
+  activationConditionText: string;
+  /** Calendar days of validity from result (server constant, currently 30). */
+  validityDays: number;
 };
 
 export type GameSessionStartResponse = {
@@ -71,6 +76,11 @@ export type GameSessionCompleteBody = {
   resultType?: unknown;
   premiumLevel?: unknown;
   giftId?: unknown;
+  giftSnapshot?: unknown;
+  activationMode?: unknown;
+  minCourseSessions?: unknown;
+  activationConditionText?: unknown;
+  validityDays?: unknown;
   clientMetrics?: unknown;
 };
 
@@ -157,8 +167,9 @@ export function validateSessionCompleteBody(
     clientMetrics: GameSessionClientMetrics | null;
   };
 } | { ok: false; error: string } {
-  if (body.giftId !== undefined && body.giftId !== null) {
-    return { ok: false, error: "giftId не поддерживается" };
+  const forbidden = rejectForbiddenClientGiftActivationFields(body);
+  if (!forbidden.ok) {
+    return forbidden;
   }
 
   const catalogSlug = readCatalogSlug(body.catalogSlug);

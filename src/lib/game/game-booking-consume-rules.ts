@@ -1,6 +1,11 @@
 import { extractGameBookingUserMessage } from "@/lib/game/game-booking-comment";
 import { resolveGameDirectionLabel } from "@/lib/game/game-lead-messages";
 import {
+  GIFT_MANAGER_CONFIRMATION_TEXT,
+  GIFT_STACKING_RULE_TEXT,
+  GIFT_VALIDITY_DAYS,
+} from "@/lib/game/gift-activation";
+import {
   parseGiftSnapshot,
   parseRulesSnapshot,
   type GiftSnapshot,
@@ -44,6 +49,8 @@ export type ResolvedGameGift = {
   giftName: string;
   giftDescription: string | null;
   giftSnapshot: GiftSnapshot | null;
+  activationConditionText: string | null;
+  validityDays: number | null;
 };
 
 export function sessionTokenMatchesHash(
@@ -67,6 +74,8 @@ export function resolveGameGiftFromPlay(
       giftName: snapshot.name.trim(),
       giftDescription: snapshot.shortDescription.trim() || null,
       giftSnapshot: snapshot,
+      activationConditionText: snapshot.activationConditionText.trim() || null,
+      validityDays: snapshot.validityDays,
     };
   }
 
@@ -75,6 +84,8 @@ export function resolveGameGiftFromPlay(
       giftName: play.selectedGift.name.trim(),
       giftDescription: play.selectedGift.shortDescription?.trim() || null,
       giftSnapshot: null,
+      activationConditionText: null,
+      validityDays: null,
     };
   }
 
@@ -105,6 +116,14 @@ export function buildServerGameBookingComment(input: {
     null,
   );
 
+  const condition =
+    input.gift.activationConditionText?.trim() ||
+    "Условие получения — по правилам подарка на момент игры";
+  const validityDays =
+    input.gift.validityDays && input.gift.validityDays > 0
+      ? input.gift.validityDays
+      : GIFT_VALIDITY_DAYS;
+
   const lines = [
     `Клиент прошёл игру «${catalogTitle}».`,
     "",
@@ -118,6 +137,16 @@ export function buildServerGameBookingComment(input: {
   if (input.gift.giftDescription) {
     lines.push("", "Описание подарка:", input.gift.giftDescription);
   }
+
+  lines.push(
+    "",
+    "Условие получения:",
+    condition,
+    "",
+    `Срок действия: ${validityDays} календарных дней.`,
+    GIFT_STACKING_RULE_TEXT + ".",
+    GIFT_MANAGER_CONFIRMATION_TEXT + ".",
+  );
 
   const userText = input.userMessage?.trim();
   if (userText) {

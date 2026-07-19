@@ -1,5 +1,14 @@
 import type { GameCatalogType } from "@prisma/client";
 import type { GameMechanicTypeDto } from "@/lib/game/session/game-session-contract";
+import {
+  ACTIVATION_CONDITION_TEXT_MAX_LENGTH,
+  buildGiftActivationSnapshotFields,
+  generateActivationConditionText,
+  GIFT_VALIDITY_DAYS,
+  isGameGiftActivationMode,
+  LEGACY_ACTIVATION_CONDITION_TEXT,
+  type GameGiftActivationMode,
+} from "@/lib/game/gift-activation";
 
 export type GiftSnapshot = {
   giftId: string;
@@ -11,6 +20,14 @@ export type GiftSnapshot = {
   ruleType: "weighted_pool";
   assignedValue: string | null;
   assignedAt: string;
+  /**
+   * New snapshots always set a business mode.
+   * Legacy snapshots without activation fields keep null (unspecified).
+   */
+  activationMode: GameGiftActivationMode | null;
+  minCourseSessions: number | null;
+  activationConditionText: string;
+  validityDays: number;
 };
 
 export type RulesSnapshot = {
@@ -31,6 +48,9 @@ export type GiftSnapshotSource = {
   image: string | null;
   priority: string;
   cardStyle: string;
+  activationMode: GameGiftActivationMode;
+  minCourseSessions: number | null;
+  activationConditionText: string;
 };
 
 export function mechanicTypeFromCatalog(
@@ -46,6 +66,8 @@ export function buildGiftSnapshot(
   gift: GiftSnapshotSource,
   assignedAt: Date,
 ): GiftSnapshot {
+  const activation = buildGiftActivationSnapshotFields(gift);
+
   return {
     giftId: gift.id,
     name: gift.name,
@@ -56,6 +78,10 @@ export function buildGiftSnapshot(
     ruleType: "weighted_pool",
     assignedValue: null,
     assignedAt: assignedAt.toISOString(),
+    activationMode: activation.activationMode,
+    minCourseSessions: activation.minCourseSessions,
+    activationConditionText: activation.activationConditionText,
+    validityDays: activation.validityDays,
   };
 }
 
@@ -88,6 +114,8 @@ export function publicGiftFromSnapshot(
   image: string | null;
   priority: string;
   cardStyle: string;
+  activationConditionText: string;
+  validityDays: number;
 } | null {
   if (!snapshot) {
     return null;
@@ -99,6 +127,8 @@ export function publicGiftFromSnapshot(
     image: snapshot.image ?? null,
     priority: snapshot.priority,
     cardStyle: snapshot.cardStyle,
+    activationConditionText: snapshot.activationConditionText,
+    validityDays: snapshot.validityDays,
   };
 }
 
@@ -132,6 +162,75 @@ export function parseRulesSnapshot(value: unknown): RulesSnapshot | null {
   };
 }
 
+function clampConditionText(text: string): string {
+  if (text.length <= ACTIVATION_CONDITION_TEXT_MAX_LENGTH) {
+    return text;
+  }
+  return text.slice(0, ACTIVATION_CONDITION_TEXT_MAX_LENGTH);
+}
+
+function resolveActivationFromPartial(
+  snapshot: Partial<GiftSnapshot>,
+): {
+  activationMode: GameGiftActivationMode | null;
+  minCourseSessions: number | null;
+  activationConditionText: string;
+  validityDays: number;
+} {
+  const hasExplicitMode = isGameGiftActivationMode(snapshot.activationMode);
+  if (!hasExplicitMode) {
+    const hasExplicitText =
+      typeof snapshot.activationConditionText === "string" &&
+      snapshot.activationConditionText.trim().length > 0;
+    return {
+      activationMode: null,
+      minCourseSessions: null,
+      activationConditionText: clampConditionText(
+        hasExplicitText
+          ? snapshot.activationConditionText!.trim()
+          : LEGACY_ACTIVATION_CONDITION_TEXT,
+      ),
+      validityDays:
+        typeof snapshot.validityDays === "number" &&
+        Number.isFinite(snapshot.validityDays) &&
+        snapshot.validityDays > 0
+          ? Math.trunc(snapshot.validityDays)
+          : GIFT_VALIDITY_DAYS,
+    };
+  }
+
+  const mode = snapshot.activationMode as GameGiftActivationMode;
+  const minCourseSessions =
+    mode === "COURSE_MIN_SESSIONS"
+      ? typeof snapshot.minCourseSessions === "number" &&
+        Number.isFinite(snapshot.minCourseSessions) &&
+        snapshot.minCourseSessions > 0
+        ? Math.trunc(snapshot.minCourseSessions)
+        : 5
+      : null;
+  const hasExplicitText =
+    typeof snapshot.activationConditionText === "string" &&
+    snapshot.activationConditionText.trim().length > 0;
+  const text = clampConditionText(
+    hasExplicitText
+      ? snapshot.activationConditionText!.trim()
+      : generateActivationConditionText(mode, minCourseSessions),
+  );
+  const validityDays =
+    typeof snapshot.validityDays === "number" &&
+    Number.isFinite(snapshot.validityDays) &&
+    snapshot.validityDays > 0
+      ? Math.trunc(snapshot.validityDays)
+      : GIFT_VALIDITY_DAYS;
+
+  return {
+    activationMode: mode,
+    minCourseSessions,
+    activationConditionText: text,
+    validityDays,
+  };
+}
+
 export function parseGiftSnapshot(value: unknown): GiftSnapshot | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -149,6 +248,8 @@ export function parseGiftSnapshot(value: unknown): GiftSnapshot | null {
     return null;
   }
 
+  const activation = resolveActivationFromPartial(snapshot);
+
   return {
     giftId: snapshot.giftId,
     name: snapshot.name,
@@ -159,5 +260,9 @@ export function parseGiftSnapshot(value: unknown): GiftSnapshot | null {
     ruleType: "weighted_pool",
     assignedValue: snapshot.assignedValue ?? null,
     assignedAt: snapshot.assignedAt,
+    activationMode: activation.activationMode,
+    minCourseSessions: activation.minCourseSessions,
+    activationConditionText: activation.activationConditionText,
+    validityDays: activation.validityDays,
   };
 }

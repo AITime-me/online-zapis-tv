@@ -90,7 +90,7 @@
       return null;
     }
 
-    var playId = data.playId || data.play_id || null;
+    var playId = data.playId || data.play_id || data.gamePlayId || null;
     var fallback = getFallbackGift(gameResult);
 
     if (data.gift && typeof data.gift === 'object') {
@@ -103,10 +103,20 @@
       }
 
       return {
-        playId: playId,
+        playId: playId || data.gamePlayId || null,
         giftName: nestedGiftName,
         giftId: data.gift.id || data.gift.giftId || null,
         phrase: data.phrase || null,
+        activationConditionText:
+          data.gift.activationConditionText ||
+          data.gift.activation_condition_text ||
+          null,
+        validityDays:
+          typeof data.gift.validityDays === 'number'
+            ? data.gift.validityDays
+            : typeof data.gift.validity_days === 'number'
+              ? data.gift.validity_days
+              : null,
         fromApi: true
       };
     }
@@ -120,10 +130,13 @@
     }
 
     return {
-      playId: playId,
+      playId: playId || data.gamePlayId || null,
       giftName: giftName,
       giftId: data.giftId || data.gift_id || null,
       phrase: data.phrase || null,
+      activationConditionText: data.activationConditionText || null,
+      validityDays:
+        typeof data.validityDays === 'number' ? data.validityDays : null,
       fromApi: true
     };
   }

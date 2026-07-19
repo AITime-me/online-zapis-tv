@@ -51,6 +51,8 @@ type ServerSessionResult = {
     image: string | null;
     priority: string;
     cardStyle: string;
+    activationConditionText?: string;
+    validityDays?: number;
   };
   bookingSubmitted?: boolean;
   error?: string;
@@ -68,6 +70,37 @@ type PoimayGameFlowGate = {
 
 function readDomDirectionLabel(): string | null {
   return document.getElementById("result-direction")?.textContent?.trim() || null;
+}
+
+function applyGiftActivationToResultDom(gift: {
+  name: string;
+  activationConditionText?: string;
+  validityDays?: number;
+}): void {
+  const giftEl = document.getElementById("gift-value");
+  if (giftEl) {
+    giftEl.textContent = gift.name;
+  }
+
+  const conditionEl = document.getElementById("gift-activation-condition");
+  if (conditionEl) {
+    conditionEl.textContent =
+      gift.activationConditionText?.trim() ||
+      "Условие получения сообщит менеджер";
+  }
+
+  const stackingEl = document.getElementById("gift-stacking-rule");
+  if (stackingEl) {
+    stackingEl.textContent =
+      "Игровые подарки не суммируются: один подарок действует на одну разовую запись или один оплаченный курс";
+  }
+
+  const validityEl = document.getElementById("gift-validity");
+  if (validityEl) {
+    const days =
+      gift.validityDays && gift.validityDays > 0 ? gift.validityDays : 30;
+    validityEl.textContent = `Срок действия подарка: ${days} календарных дней. Применение подтверждает менеджер.`;
+  }
 }
 
 function safeGetPlaySession(): GameLeadSession | null {
@@ -230,6 +263,9 @@ export function ProcedureGiftGameVanilla({
           skinNeed: null,
           resultType: null,
           premiumLevel: null,
+          activationConditionText:
+            payload.gift.activationConditionText ?? null,
+          validityDays: payload.gift.validityDays ?? null,
         };
         setPlaySession(session);
         if (payload.bookingSubmitted) {
@@ -240,10 +276,7 @@ export function ProcedureGiftGameVanilla({
         const poimayApp = (window as Window & { PoimayGameApp?: PoimayGameAppApi })
           .PoimayGameApp;
         poimayApp?.showScreen?.("screen-result");
-        const giftEl = document.getElementById("gift-value");
-        if (giftEl) {
-          giftEl.textContent = payload.gift.name;
-        }
+        applyGiftActivationToResultDom(payload.gift);
       }
     } catch {
       // Ignore sync errors; client markers remain fallback.
@@ -888,6 +921,10 @@ export function ProcedureGiftGameVanilla({
               <p className="rules-items">стресс, недосып, усталость, отёки, дедлайн, запишусь потом, нет времени</p>
             </div>
             <p className="text text--center">У вас 20–30 секунд.</p>
+            <p className="text text--center" style={{ marginTop: 8, opacity: 0.85 }}>
+              Условия получения зависят от выпавшего подарка и будут показаны вместе с
+              результатом
+            </p>
             <button type="button" className="btn btn--primary" data-action="start-game">
               Играть
             </button>
@@ -942,6 +979,21 @@ export function ProcedureGiftGameVanilla({
               <div className="gift-block">
                 <p className="result-label">Подарок к записи:</p>
                 <p id="gift-value" className="gift-value">уход для рук</p>
+                <p
+                  id="gift-activation-condition"
+                  className="result-explanation"
+                  style={{ marginTop: 12 }}
+                ></p>
+                <p
+                  id="gift-stacking-rule"
+                  className="result-explanation"
+                  style={{ marginTop: 8, opacity: 0.9 }}
+                ></p>
+                <p
+                  id="gift-validity"
+                  className="result-explanation"
+                  style={{ marginTop: 8, opacity: 0.9 }}
+                ></p>
               </div>
 
               <p className="copy-hint">

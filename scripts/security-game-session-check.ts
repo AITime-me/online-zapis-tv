@@ -176,6 +176,10 @@ function assertSnapshots(): void {
       image: null,
       priority: "standard",
       cardStyle: "default",
+      activationMode: "SINGLE_PAID_SERVICE",
+      minCourseSessions: null,
+      activationConditionText:
+        "Подарок предоставляется при записи на одну оплачиваемую процедуру по выпавшему направлению",
     },
     assignedAt,
   );
@@ -183,6 +187,8 @@ function assertSnapshots(): void {
   assert.equal(snapshot.ruleType, "weighted_pool");
   assert.equal(snapshot.assignedAt, assignedAt.toISOString());
   assert.equal("probability" in snapshot, false);
+  assert.equal(snapshot.activationMode, "SINGLE_PAID_SERVICE");
+  assert.equal(snapshot.validityDays, 30);
 
   const rules = buildRulesSnapshot({
     campaignKey: "2026-07",

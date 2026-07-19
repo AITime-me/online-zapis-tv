@@ -139,7 +139,9 @@ function assertHmacPayloadHash(): void {
   assert.equal(hashA, expected);
 
   assert.equal(idempotencyPayloadHashesEqual(hashA, hashA), true);
-  assert.equal(idempotencyPayloadHashesEqual(hashA, hashA.slice(0, -1) + "a"), false);
+  const flipped =
+    (hashA[0] === "a" ? "b" : "a") + hashA.slice(1);
+  assert.equal(idempotencyPayloadHashesEqual(hashA, flipped), false);
   assert.equal(
     timingSafeEqual(Buffer.from(hashA, "utf8"), Buffer.from(hashA, "utf8")),
     true,
@@ -156,6 +158,10 @@ function buildMockPlay(overrides: Partial<GamePlayBookingRow> = {}): GamePlayBoo
       image: null,
       priority: "standard",
       cardStyle: "default",
+      activationMode: "SINGLE_PAID_SERVICE",
+      minCourseSessions: null,
+      activationConditionText:
+        "Подарок предоставляется при записи на одну оплачиваемую процедуру по выпавшему направлению",
     },
     assignedAt,
   );

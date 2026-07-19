@@ -35,6 +35,7 @@
     "test:security:game-booking-p2002": "tsx scripts/security-game-booking-p2002-check.ts",
     "test:security:open-game-phone-catalog-preflight": "tsx scripts/security-open-game-phone-catalog-preflight-check.ts",
     "test:security:game-tier-foundation": "tsx scripts/security-game-tier-foundation-check.ts",
+    "test:security:game-gift-activation": "tsx scripts/security-game-gift-activation-check.ts",
     "test:security:csrf-coverage": "tsx scripts/security-csrf-coverage-check.ts",
     "test:security:safe-callback-url": "tsx scripts/security-safe-callback-url-check.ts",
     "test:security:env-auth-url": "tsx scripts/security-env-auth-url-check.ts",

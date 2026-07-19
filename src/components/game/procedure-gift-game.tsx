@@ -40,6 +40,8 @@ type GameGift = {
   image: string | null;
   priority: string;
   cardStyle: string;
+  activationConditionText?: string;
+  validityDays?: number;
 };
 
 type Step = "intro" | "quiz" | "result" | "lead";
@@ -420,6 +422,19 @@ export function ProcedureGiftGame({ config }: { config: PublicGameConfig | null 
                   {gift.shortDescription}
                 </p>
               ) : null}
+              {gift?.activationConditionText ? (
+                <p className="font-body mt-3 text-sm leading-relaxed" style={{ color: studioBrand.inkMuted }}>
+                  {gift.activationConditionText}
+                </p>
+              ) : null}
+              <p className="font-body mt-2 text-sm leading-relaxed" style={{ color: studioBrand.inkMuted }}>
+                Срок действия подарка: {gift?.validityDays && gift.validityDays > 0 ? gift.validityDays : 30}{" "}
+                календарных дней. Применение подарка подтверждает менеджер.
+              </p>
+              <p className="font-body mt-2 text-sm leading-relaxed" style={{ color: studioBrand.inkMuted }}>
+                Игровые подарки не суммируются: один подарок действует на одну разовую запись или один
+                оплаченный курс
+              </p>
             </div>
 
             <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:justify-center">

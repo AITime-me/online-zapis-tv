@@ -13,6 +13,9 @@
       resultType: data.resultType || null,
       skinNeed: data.skinNeed || null,
       premiumLevel: data.premiumLevel != null ? data.premiumLevel : null,
+      activationConditionText: data.activationConditionText || null,
+      validityDays:
+        typeof data.validityDays === 'number' ? data.validityDays : null,
       score: data.score != null ? data.score : null,
       savedAt: new Date().toISOString()
     };

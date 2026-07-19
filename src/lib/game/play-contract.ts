@@ -1,3 +1,5 @@
+import { rejectForbiddenClientGiftActivationFields } from "@/lib/game/gift-activation";
+
 /** Машинные ключи направления из внешней игры «Поймай своё время». */
 export const GAME_DIRECTIONS = [
   "faceCare",
@@ -15,6 +17,11 @@ export type GamePlayRequestBody = {
   premiumLevel?: unknown;
   catalogSlug?: unknown;
   giftId?: unknown;
+  giftSnapshot?: unknown;
+  activationMode?: unknown;
+  minCourseSessions?: unknown;
+  activationConditionText?: unknown;
+  validityDays?: unknown;
 };
 
 export type ValidatedGamePlayInput = {
@@ -56,8 +63,9 @@ function readOptionalCatalogSlug(value: unknown): string | null {
 export function validateGamePlayBody(
   body: GamePlayRequestBody,
 ): { ok: true; data: ValidatedGamePlayInput } | { ok: false; error: string } {
-  if (body.giftId !== undefined && body.giftId !== null) {
-    return { ok: false, error: "giftId не поддерживается" };
+  const forbidden = rejectForbiddenClientGiftActivationFields(body);
+  if (!forbidden.ok) {
+    return forbidden;
   }
 
   const gameDirectionRaw = readNonEmptyString(body.gameDirection);

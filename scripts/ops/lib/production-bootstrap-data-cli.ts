@@ -499,6 +499,9 @@ async function buildPlan(prisma: PrismaClient): Promise<BootstrapPlan> {
         existing.requiredPremiumLevel === canonical.requiredPremiumLevel &&
         existing.isActive === canonical.isActive &&
         existing.gameCatalogId === catalogId &&
+        existing.activationMode === canonical.activationMode &&
+        existing.minCourseSessions === canonical.minCourseSessions &&
+        existing.activationConditionText === canonical.activationConditionText &&
         jsonArrEq(existing.allowedGameDirections, canonical.allowedGameDirections) &&
         jsonArrEq(existing.allowedResultTypes, canonical.allowedResultTypes);
       if (!ok) {
@@ -775,6 +778,9 @@ async function applyBootstrap(
           requiredPremiumLevel: g.requiredPremiumLevel,
           allowedGameDirections: [...g.allowedGameDirections],
           allowedResultTypes: [...g.allowedResultTypes],
+          activationMode: g.activationMode,
+          minCourseSessions: g.minCourseSessions,
+          activationConditionText: g.activationConditionText,
           isActive: g.isActive,
           gameCatalogId: catalog.id,
         },

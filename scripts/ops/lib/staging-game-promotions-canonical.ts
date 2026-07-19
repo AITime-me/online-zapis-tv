@@ -39,6 +39,9 @@ export type GiftRowSnapshot = {
   requiredPremiumLevel: number;
   isActive: boolean;
   gameCatalogId: string | null;
+  activationMode?: string;
+  minCourseSessions?: number | null;
+  activationConditionText?: string;
 };
 
 export type PromotionRowSnapshot = {
@@ -118,6 +121,28 @@ export function collectRestorePostCheckErrors(
       errors.push(
         `gift ${expected.id} requiredPremiumLevel ${row.requiredPremiumLevel} != ${expected.requiredPremiumLevel}`,
       );
+    }
+    if (
+      row.activationMode !== undefined &&
+      row.activationMode !== expected.activationMode
+    ) {
+      errors.push(
+        `gift ${expected.id} activationMode ${row.activationMode} != ${expected.activationMode}`,
+      );
+    }
+    if (
+      row.minCourseSessions !== undefined &&
+      row.minCourseSessions !== expected.minCourseSessions
+    ) {
+      errors.push(
+        `gift ${expected.id} minCourseSessions ${row.minCourseSessions} != ${expected.minCourseSessions}`,
+      );
+    }
+    if (
+      row.activationConditionText !== undefined &&
+      row.activationConditionText !== expected.activationConditionText
+    ) {
+      errors.push(`gift ${expected.id} activationConditionText mismatch`);
     }
     if (!row.isActive) {
       errors.push(`gift ${expected.id} must be isActive=true`);

@@ -5,6 +5,11 @@ import {
   GAME_GIFT_CATALOG_NOT_FOUND_ERROR,
   rejectClientCatalogRebind,
 } from "@/lib/game/admin-gift-catalog-binding";
+import {
+  generateActivationConditionText,
+  validateGiftActivationInput,
+  type GameGiftActivationMode,
+} from "@/lib/game/gift-activation";
 import type {
   GameConfigDto,
   GameConfigWriteInput,
@@ -52,6 +57,9 @@ function mapGift(row: {
   allowedGameDirections: string[];
   allowedResultTypes: string[];
   requiredPremiumLevel: number;
+  activationMode: GameGiftActivationMode;
+  minCourseSessions: number | null;
+  activationConditionText: string;
   gameCatalogId: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -68,6 +76,9 @@ function mapGift(row: {
     allowedGameDirections: [...row.allowedGameDirections],
     allowedResultTypes: [...row.allowedResultTypes],
     requiredPremiumLevel: row.requiredPremiumLevel,
+    activationMode: row.activationMode,
+    minCourseSessions: row.minCourseSessions,
+    activationConditionText: row.activationConditionText,
     gameCatalogId: row.gameCatalogId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -225,6 +236,15 @@ export async function createGameGift(
   const probability = Math.max(0, toInt(input.probability, 0));
   const requiredPremiumLevel = Math.max(0, toInt(input.requiredPremiumLevel, 0));
 
+  const activation = validateGiftActivationInput({
+    activationMode: input.activationMode ?? "SINGLE_PAID_SERVICE",
+    minCourseSessions: input.minCourseSessions,
+    activationConditionText: input.activationConditionText,
+  });
+  if (!activation.ok) {
+    throw new GameAdminValidationError(activation.error);
+  }
+
   const created = await prisma.gameGift.create({
     data: {
       name,
@@ -237,6 +257,9 @@ export async function createGameGift(
       allowedGameDirections: normalizeStrings(input.allowedGameDirections),
       allowedResultTypes: normalizeStrings(input.allowedResultTypes),
       requiredPremiumLevel,
+      activationMode: activation.value.activationMode,
+      minCourseSessions: activation.value.minCourseSessions,
+      activationConditionText: activation.value.activationConditionText,
       gameCatalogId: catalogId,
     },
   });
@@ -282,6 +305,47 @@ export async function updateGameGift(
     throw new GameAdminValidationError("Описание подарка не может быть пустым");
   }
 
+  const nextMode =
+    input.activationMode !== undefined
+      ? input.activationMode
+      : existing.activationMode;
+  const nextMin =
+    input.minCourseSessions !== undefined
+      ? input.minCourseSessions
+      : existing.minCourseSessions;
+  const nextConditionText =
+    input.activationConditionText !== undefined
+      ? input.activationConditionText
+      : existing.activationConditionText;
+
+  const activationTouched =
+    input.activationMode !== undefined ||
+    input.minCourseSessions !== undefined ||
+    input.activationConditionText !== undefined;
+
+  let activationMode = existing.activationMode;
+  let minCourseSessions = existing.minCourseSessions;
+  let activationConditionText = existing.activationConditionText;
+
+  if (activationTouched) {
+    const activation = validateGiftActivationInput({
+      activationMode: nextMode,
+      minCourseSessions: nextMin,
+      activationConditionText: nextConditionText,
+    });
+    if (!activation.ok) {
+      throw new GameAdminValidationError(activation.error);
+    }
+    activationMode = activation.value.activationMode;
+    minCourseSessions = activation.value.minCourseSessions;
+    activationConditionText = activation.value.activationConditionText;
+  } else if (!activationConditionText.trim()) {
+    activationConditionText = generateActivationConditionText(
+      activationMode,
+      minCourseSessions,
+    );
+  }
+
   const updated = await prisma.gameGift.update({
     where: { id },
     data: {
@@ -306,6 +370,13 @@ export async function updateGameGift(
               0,
               toInt(input.requiredPremiumLevel, existing.requiredPremiumLevel),
             ),
+          }
+        : {}),
+      ...(activationTouched || !existing.activationConditionText.trim()
+        ? {
+            activationMode,
+            minCourseSessions,
+            activationConditionText,
           }
         : {}),
       gameCatalogId: catalogId,

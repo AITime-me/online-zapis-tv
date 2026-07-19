@@ -23,6 +23,9 @@ export type CanonicalGiftSeed = {
   requiredPremiumLevel: number;
   allowedGameDirections: string[];
   allowedResultTypes: string[];
+  activationMode: "SINGLE_PAID_SERVICE" | "COURSE_MIN_SESSIONS";
+  minCourseSessions: number | null;
+  activationConditionText: string;
   isActive: true;
 };
 
@@ -39,6 +42,10 @@ export const CANONICAL_GAME_GIFTS: readonly CanonicalGiftSeed[] = [
     requiredPremiumLevel: 0,
     allowedGameDirections: [],
     allowedResultTypes: [],
+    activationMode: "SINGLE_PAID_SERVICE",
+    minCourseSessions: null,
+    activationConditionText:
+      "Подарок предоставляется при записи на одну оплачиваемую процедуру по выпавшему направлению",
     isActive: true,
   },
   {
@@ -52,6 +59,10 @@ export const CANONICAL_GAME_GIFTS: readonly CanonicalGiftSeed[] = [
     requiredPremiumLevel: 0,
     allowedGameDirections: ["faceCare", "faceMassage"],
     allowedResultTypes: [],
+    activationMode: "COURSE_MIN_SESSIONS",
+    minCourseSessions: 5,
+    activationConditionText:
+      "Подарок предоставляется при покупке курса минимум из 5 процедур по выпавшему направлению. Один подарок действует на один оплаченный курс",
     isActive: true,
   },
   {
@@ -65,6 +76,10 @@ export const CANONICAL_GAME_GIFTS: readonly CanonicalGiftSeed[] = [
     requiredPremiumLevel: 0,
     allowedGameDirections: ["faceCare", "recovery", "toneCare"],
     allowedResultTypes: [],
+    activationMode: "COURSE_MIN_SESSIONS",
+    minCourseSessions: 5,
+    activationConditionText:
+      "Подарок предоставляется при покупке курса минимум из 5 процедур по выпавшему направлению. Один подарок действует на один оплаченный курс",
     isActive: true,
   },
   {
@@ -78,6 +93,10 @@ export const CANONICAL_GAME_GIFTS: readonly CanonicalGiftSeed[] = [
     requiredPremiumLevel: 2,
     allowedGameDirections: ["toneCare", "recovery"],
     allowedResultTypes: [],
+    activationMode: "COURSE_MIN_SESSIONS",
+    minCourseSessions: 5,
+    activationConditionText:
+      "Подарок предоставляется при покупке курса минимум из 5 процедур по выпавшему направлению. Один подарок действует на один оплаченный курс",
     isActive: true,
   },
 ] as const;

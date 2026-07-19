@@ -11,6 +11,7 @@ import {
   validateIdempotencyKeyHeader,
 } from "@/lib/booking-requests/idempotency-contract";
 import { toPublicBookingRequestCreateResponse } from "@/lib/booking-requests/public-booking-request-contract";
+import { rejectForbiddenClientGiftActivationFields } from "@/lib/game/gift-activation";
 import { enforceSameOriginForMutatingRequest } from "@/lib/security/csrf";
 import { enforceRequestRateLimit } from "@/lib/security/rate-limit/enforce-policy";
 import { enforceValidatedPhoneRateLimit } from "@/lib/security/rate-limit/booking-phone";
@@ -62,7 +63,15 @@ export async function POST(request: Request) {
   }
 
   try {
-    const body = (await request.json()) as CreateBookingRequestBody;
+    const body = (await request.json()) as CreateBookingRequestBody &
+      Record<string, unknown>;
+    const forbiddenGiftFields = rejectForbiddenClientGiftActivationFields(body);
+    if (!forbiddenGiftFields.ok) {
+      return NextResponse.json(
+        { ok: false, error: forbiddenGiftFields.error },
+        { status: 400 },
+      );
+    }
     const clientName =
       typeof body.clientName === "string" ? body.clientName.trim() : "";
     const clientPhone =

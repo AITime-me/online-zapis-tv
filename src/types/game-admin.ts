@@ -30,6 +30,9 @@ export type GameGiftDto = {
   allowedGameDirections: string[];
   allowedResultTypes: string[];
   requiredPremiumLevel: number;
+  activationMode: "SINGLE_PAID_SERVICE" | "COURSE_MIN_SESSIONS";
+  minCourseSessions: number | null;
+  activationConditionText: string;
   gameCatalogId: string | null;
   createdAt: string;
   updatedAt: string;

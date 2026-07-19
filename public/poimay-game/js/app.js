@@ -59,6 +59,31 @@
       giftEl.textContent = gift.giftName;
     }
 
+    var conditionEl = document.getElementById('gift-activation-condition');
+    if (conditionEl) {
+      conditionEl.textContent =
+        gift.activationConditionText ||
+        'Условие получения сообщит менеджер';
+    }
+
+    var stackingEl = document.getElementById('gift-stacking-rule');
+    if (stackingEl) {
+      stackingEl.textContent =
+        'Игровые подарки не суммируются: один подарок действует на одну разовую запись или один оплаченный курс';
+    }
+
+    var validityEl = document.getElementById('gift-validity');
+    if (validityEl) {
+      var days =
+        typeof gift.validityDays === 'number' && gift.validityDays > 0
+          ? gift.validityDays
+          : 30;
+      validityEl.textContent =
+        'Срок действия подарка: ' +
+        days +
+        ' календарных дней. Применение подтверждает менеджер.';
+    }
+
     var phrase = gift.phrase || '';
     document.getElementById('result-phrase').textContent = phrase;
     currentPhrase = phrase;
@@ -85,6 +110,9 @@
       resultType: payload.resultType,
       skinNeed: payload.skinNeed,
       premiumLevel: payload.premiumLevel,
+      activationConditionText: gift.activationConditionText || null,
+      validityDays:
+        typeof gift.validityDays === 'number' ? gift.validityDays : null,
       score: analytics ? analytics.score : null
     });
   }
