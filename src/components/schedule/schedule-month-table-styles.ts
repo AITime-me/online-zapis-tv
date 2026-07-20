@@ -10,7 +10,12 @@ export const MASTER_COL = "w-[200px] min-w-[200px] max-w-[200px]";
 export const HEADER_BG = "bg-[#eef0f3]";
 export const DATE_HEADER_BG = "bg-[#e8ebf0]";
 
-/** Контейнер прокрутки таблицы: горизонтальный свайп на мобильных, без расширения страницы. */
+/**
+ * Контейнер прокрутки таблицы.
+ * Высоту root задаёт `.schedule-viewport-height` (100vh → 100dvh через @supports);
+ * дальше flex-цепочка с `min-h-0` / `flex-1` заполняет оставшееся место.
+ * Вертикальный scroll — только здесь (`overflow-y-auto`), не на page wrappers.
+ */
 export const SCHEDULE_TABLE_SCROLL = [
   "w-full max-w-full min-w-0",
   "overflow-x-auto overflow-y-auto",

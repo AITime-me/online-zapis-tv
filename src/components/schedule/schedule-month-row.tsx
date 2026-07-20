@@ -84,7 +84,10 @@ export function ScheduleMonthRow({
   const dateCellBg = isToday ? "bg-[#dceaf8]" : "bg-[#f0f2f5]";
 
   return (
-    <tr className={`border-b border-[#d0d5da] ${rowBg}`}>
+    <tr
+      className={`border-b border-[#d0d5da] ${rowBg}`}
+      data-date-key={day.dateKey}
+    >
       <td
         className={`${stickyDateBodyClass(dateCellBg)} border-b border-r-2 ${BORDER_DATE} border-[#d0d5da] px-2 py-1 align-top`}
       >

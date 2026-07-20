@@ -43,6 +43,8 @@
     "test:security:session-freshness": "tsx scripts/security-session-freshness-check.ts",
     "test:security:role-access": "tsx scripts/security-role-access-check.ts",
     "test:security:schedule-view-manager-column": "tsx scripts/security-schedule-view-manager-column-check.ts",
+    "test:security:schedule-month-scroll": "tsx scripts/security-schedule-month-scroll-check.ts",
+    "test:e2e:schedule-month-scroll": "playwright test tests/schedule-month-mobile-scroll.spec.ts",
     "test:security:reschedule-request": "tsx scripts/security-reschedule-request-check.ts",
     "test:security:manage-link-hardening": "tsx scripts/security-manage-link-hardening-check.ts",
     "test:security:manage-link-headers-smoke": "tsx scripts/security-manage-link-headers-smoke.ts",

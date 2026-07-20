@@ -10,9 +10,9 @@ import {
 } from "@/components/admin/workspace-nav-items";
 
 const linkClass =
-  "inline-block whitespace-nowrap py-1 text-[#1a73e8] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1a73e8]";
+  "inline-block shrink-0 whitespace-nowrap py-1 text-[#1a73e8] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1a73e8]";
 const activeClass =
-  "inline-block whitespace-nowrap py-1 font-medium text-zinc-900";
+  "inline-block shrink-0 whitespace-nowrap py-1 font-medium text-zinc-900";
 
 type InternalWorkspaceNavProps = {
   role: UserRole;
@@ -37,10 +37,24 @@ export function InternalWorkspaceNav({
     isNavItemVisible(role, item.section),
   );
 
+  // Schedule: одна горизонтально прокручиваемая строка на мобильных —
+  // иначе OWNER-nav на wrap съедает высоту scrollport таблицы.
+  // Admin: прежний wrap (страница скроллится целиком).
+  const navClass =
+    variant === "schedule"
+      ? [
+          "flex min-w-0 flex-nowrap items-center gap-x-3",
+          "overflow-x-auto overscroll-x-contain",
+          "[-webkit-overflow-scrolling:touch]",
+          "text-xs sm:text-sm",
+          "lg:flex-wrap lg:overflow-x-visible",
+        ].join(" ")
+      : "flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs sm:text-sm";
+
   return (
     <nav
       aria-label="Навигация рабочих разделов"
-      className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs sm:text-sm"
+      className={navClass}
     >
       {visibleItems.map((item) => {
         const isActive = current === item.key;

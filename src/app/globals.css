@@ -28,6 +28,22 @@ body {
   overflow-x: hidden;
 }
 
+/**
+ * Высота корневого контейнера расписания.
+ * Fallback через отдельный @supports-блок: минификаторы (Lightning CSS)
+ * иначе схлопывают дублирующий `height` в одном правиле до одного `100dvh`
+ * и ломают старые браузеры / проверку каскада.
+ */
+.schedule-viewport-height {
+  height: 100vh;
+}
+
+@supports (height: 100dvh) {
+  .schedule-viewport-height {
+    height: 100dvh;
+  }
+}
+
 .font-display {
   font-family: var(--font-display), "Times New Roman", serif;
 }

@@ -124,8 +124,8 @@ export function ScheduleDayView({
   };
 
   return (
-    <div className="flex min-w-0 flex-col gap-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
         <ScheduleViewSwitcher view="day" month={month} date={data.date} />
         <ScheduleDateSwitcher
           currentDate={data.date}
@@ -133,7 +133,10 @@ export function ScheduleDayView({
         />
       </div>
 
-      <div className={`${SCHEDULE_TABLE_SCROLL} border border-[#dadce0] bg-white`}>
+      <div
+        data-testid="schedule-day-table-scroll"
+        className={`${SCHEDULE_TABLE_SCROLL} min-h-0 flex-1 border border-[#dadce0] bg-white pb-[env(safe-area-inset-bottom,0px)]`}
+      >
         <div className="w-max">
           <div className="flex w-max border-b border-[#dadce0] bg-[#f8f9fa]">
             <div

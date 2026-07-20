@@ -37,11 +37,11 @@ export function ScheduleReadonlyMonthView({
 
   return (
     <div
-      className="flex min-w-0 flex-col gap-2"
+      className="flex min-h-0 min-w-0 flex-1 flex-col gap-2"
       data-testid="schedule-readonly-month-view"
       data-revision={scheduleRevision}
     >
-      <div className="flex items-center gap-1">
+      <div className="flex shrink-0 items-center gap-1">
         <Link
           href={buildHref(prevMonth)}
           className="border border-[#dadce0] bg-white px-1.5 py-0.5 text-xs text-zinc-700 hover:bg-[#f1f3f4]"

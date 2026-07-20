@@ -45,8 +45,8 @@ export function ScheduleMonthTable({
 }) {
   return (
     <div
-      className={`${SCHEDULE_TABLE_SCROLL} border ${BORDER_OUTER} bg-white`}
-      style={{ maxHeight: "calc(100vh - 120px)" }}
+      data-testid="schedule-month-table-scroll"
+      className={`${SCHEDULE_TABLE_SCROLL} min-h-0 flex-1 border ${BORDER_OUTER} bg-white pb-[env(safe-area-inset-bottom,0px)]`}
     >
       <table className="w-max border-separate border-spacing-0 text-left">
         <thead className={HEADER_BG}>
