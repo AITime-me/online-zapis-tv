@@ -16,22 +16,43 @@ export class SmtpHostResolveError extends Error {
   }
 }
 
+function uniqueHosts(records: string[]): string[] {
+  return [...new Set(records.map((r) => r.trim()).filter(Boolean))];
+}
+
+async function resolveFamilyRecords(
+  hostname: string,
+  family: "4" | "6",
+): Promise<string[]> {
+  try {
+    const records = family === "6" ? await dns.resolve6(hostname) : await dns.resolve4(hostname);
+    return uniqueHosts(records);
+  } catch {
+    return [];
+  }
+}
+
 /**
- * Возвращает список адресов для попытки подключения (в порядке DNS).
- * auto — только исходное имя хоста; 4/6 — массив A/AAAA без дубликатов.
+ * Возвращает список адресов для попытки подключения.
+ *
+ * - auto — A (IPv4), затем AAAA (IPv6); при пустом DNS — исходное имя хоста.
+ *   Перечисление IP нужно, чтобы smtp-mailer мог безопасно перебрать адреса:
+ *   Nodemailer сам выбирает один случайный A-запись без ретрая.
+ * - 4/6 — только соответствующее семейство (fail-closed, если записей нет).
  */
 export async function resolveSmtpConnectHosts(
   hostname: string,
   ipFamily: SmtpIpFamily,
 ): Promise<string[]> {
   if (ipFamily === "auto") {
-    return [hostname];
+    const v4 = await resolveFamilyRecords(hostname, "4");
+    const v6 = await resolveFamilyRecords(hostname, "6");
+    const ordered = [...v4, ...v6];
+    return ordered.length > 0 ? ordered : [hostname];
   }
 
-  let records: string[];
-  try {
-    records = ipFamily === "6" ? await dns.resolve6(hostname) : await dns.resolve4(hostname);
-  } catch {
+  const records = await resolveFamilyRecords(hostname, ipFamily);
+  if (records.length === 0) {
     throw new SmtpHostResolveError(
       ipFamily === "6"
         ? "Не удалось получить AAAA-записи SMTP-хоста"
@@ -39,14 +60,7 @@ export async function resolveSmtpConnectHosts(
     );
   }
 
-  const unique = [...new Set(records.map((r) => r.trim()).filter(Boolean))];
-  if (unique.length === 0) {
-    throw new SmtpHostResolveError(
-      ipFamily === "6" ? "SMTP-хост не имеет AAAA-записей" : "SMTP-хост не имеет A-записей",
-    );
-  }
-
-  return unique;
+  return records;
 }
 
 /**

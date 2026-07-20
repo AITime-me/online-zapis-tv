@@ -5,7 +5,8 @@
  *
  * Безопасность транспорта:
  *   - проверка сертификата НЕ отключается (rejectUnauthorized остаётся true);
- *   - requireTLS: true — незашифрованная отправка запрещена;
+ *   - при secure=false (STARTTLS) — requireTLS: true;
+ *   - при secure=true (порт 465) — requireTLS не включается (уже implicit TLS);
  *   - минимальная версия TLS 1.2;
  *   - при подключении к IP из DNS — tls.servername = исходный SMTP_HOST;
  *   - разумные connection/greeting/socket timeouts;
@@ -36,6 +37,107 @@ const defaultCreateTransport: CreateTransport = (options) =>
   nodemailer.createTransport(options) as unknown as TransportLike;
 
 /**
+ * Коды ошибок Node.js net/tls и Nodemailer на этапе установки TCP/TLS
+ * (до SMTP-команд MAIL/RCPT/DATA). Ретрай по другому IP разрешён только при
+ * command === "CONN" и code из этого списка.
+ */
+export const RETRYABLE_SMTP_CONNECT_ERROR_CODES: ReadonlySet<string> = new Set([
+  "ECONNECTION",
+  "ETIMEDOUT",
+  "ECONNREFUSED",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "EADDRNOTAVAIL",
+  "ESOCKET",
+  "ECONNRESET",
+]);
+
+/**
+ * true только если ошибка произошла до начала SMTP-транзакции (фаза CONN).
+ * Любая auth/DATA/SMTP-ответ/неизвестная ошибка → false (без повторной sendMail).
+ */
+export function isRetryableSmtpConnectError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const record = error as Record<string, unknown>;
+  if (record.command !== "CONN") {
+    return false;
+  }
+
+  if (typeof record.code !== "string") {
+    return false;
+  }
+  const code = record.code.trim();
+  if (!code || !RETRYABLE_SMTP_CONNECT_ERROR_CODES.has(code)) {
+    return false;
+  }
+
+  // SMTP 4xx/5xx (даже при ошибочной разметке command) — не ретраим.
+  if (typeof record.responseCode === "number" && Number.isFinite(record.responseCode)) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Безопасные поля ошибки SMTP/сокета для диагностики.
+ * Запрещены: пароль, токен, тело/тема письма, email получателя, SMTP auth, host.
+ */
+export function summarizeMailDeliveryError(error: unknown): {
+  name?: string;
+  code?: string;
+  command?: string;
+  responseCode?: number;
+} {
+  if (!error || typeof error !== "object") {
+    return {};
+  }
+
+  const record = error as Record<string, unknown>;
+  const summary: {
+    name?: string;
+    code?: string;
+    command?: string;
+    responseCode?: number;
+  } = {};
+
+  if (typeof record.name === "string" && record.name.trim()) {
+    summary.name = record.name.trim().slice(0, 64);
+  }
+  if (typeof record.code === "string" && record.code.trim()) {
+    summary.code = record.code.trim().slice(0, 64);
+  }
+  if (typeof record.command === "string" && record.command.trim()) {
+    summary.command = record.command.trim().slice(0, 32);
+  }
+  if (typeof record.responseCode === "number" && Number.isFinite(record.responseCode)) {
+    summary.responseCode = record.responseCode;
+  }
+
+  return summary;
+}
+
+function logMailDeliveryFailure(error?: unknown): void {
+  const summary = error === undefined ? {} : summarizeMailDeliveryError(error);
+  const parts = [
+    summary.name ? `name=${summary.name}` : null,
+    summary.code ? `code=${summary.code}` : null,
+    summary.command ? `command=${summary.command}` : null,
+    summary.responseCode !== undefined ? `responseCode=${summary.responseCode}` : null,
+  ].filter(Boolean);
+
+  if (parts.length === 0) {
+    console.error("[mail] delivery failed");
+    return;
+  }
+
+  console.error(`[mail] delivery failed ${parts.join(" ")}`);
+}
+
+/**
  * Опции Nodemailer-транспорта. connectHost — адрес подключения (имя или IP из DNS).
  * Для IP обязателен tls.servername с исходным именем хоста (SNI + проверка сертификата).
  */
@@ -50,7 +152,8 @@ export function buildTransportOptions(
     port: config.port,
     secure: config.secure,
     auth: { user: config.user, pass: config.password },
-    requireTLS: true,
+    // requireTLS — только для STARTTLS (secure=false). На 465/implicit TLS не нужен.
+    requireTLS: !config.secure,
     tls: {
       minVersion: "TLSv1.2",
       ...(useServername ? { servername: config.host } : {}),
@@ -75,11 +178,12 @@ export function createSmtpMailer(
       let connectHosts: string[];
       try {
         connectHosts = await resolveHosts(config.host, config.ipFamily);
-      } catch {
-        console.error("[mail] delivery failed");
+      } catch (error) {
+        logMailDeliveryFailure(error);
         throw new MailDeliveryError();
       }
 
+      let lastError: unknown;
       for (let i = 0; i < connectHosts.length; i += 1) {
         const connectHost = connectHosts[i]!;
         const transport = createTransport(buildTransportOptions(config, connectHost));
@@ -93,11 +197,12 @@ export function createSmtpMailer(
           });
           transport.close?.();
           return;
-        } catch {
+        } catch (error) {
+          lastError = error;
           transport.close?.();
-          // Пробуем следующий адрес из DNS, если есть; иначе — безопасная ошибка.
-          if (i === connectHosts.length - 1) {
-            console.error("[mail] delivery failed");
+          const hasMoreHosts = i < connectHosts.length - 1;
+          if (!hasMoreHosts || !isRetryableSmtpConnectError(error)) {
+            logMailDeliveryFailure(lastError);
             throw new MailDeliveryError();
           }
         }

@@ -14,6 +14,9 @@ import { MailDeliveryError } from "../src/lib/mail/mailer";
 import {
   buildTransportOptions,
   createSmtpMailer,
+  isRetryableSmtpConnectError,
+  RETRYABLE_SMTP_CONNECT_ERROR_CODES,
+  summarizeMailDeliveryError,
   type CreateTransport,
   type TransportLike,
 } from "../src/lib/mail/smtp-mailer";
@@ -118,6 +121,7 @@ function testInvalidFromAddressRejected(): void {
 async function testValidConfigCreatesTlsTransport(): Promise<void> {
   const result = validateMailConfig(VALID_SMTP_ENV);
   assert.equal(result.ok, true, "корректная конфигурация должна проходить");
+  assert.ok(result.ok && result.config.provider === "smtp");
 
   let captured: Record<string, unknown> | null = null;
   const spy: CreateTransport = (options) => {
@@ -125,13 +129,14 @@ async function testValidConfigCreatesTlsTransport(): Promise<void> {
     return { async sendMail() {} };
   };
 
-  const mailer = createMailerFromEnv(VALID_SMTP_ENV as NodeJS.ProcessEnv, spy);
+  // Stub DNS: не ходим в сеть в unit-тесте; auto в runtime перечисляет A/AAAA.
+  const mailer = createSmtpMailer(result.config, spy, async (host) => [host]);
   await mailer.sendMail({ to: "a@b.ru", subject: "s", text: "t" });
   assert.ok(captured, "transport должен быть создан при отправке для валидной smtp-конфигурации");
 
   const opts = captured as unknown as Record<string, unknown>;
   assert.equal(opts.secure, true, "465 => secure:true (implicit TLS)");
-  assert.equal(opts.requireTLS, true, "requireTLS должен быть включён");
+  assert.equal(opts.requireTLS, false, "secure=true => requireTLS выключен (не STARTTLS)");
   assert.equal(opts.logger, false, "logger должен быть выключен");
   assert.equal(opts.debug, false, "debug должен быть выключен");
   assert.ok(
@@ -140,6 +145,9 @@ async function testValidConfigCreatesTlsTransport(): Promise<void> {
       typeof opts.socketTimeout === "number",
     "должны быть заданы connection/greeting/socket timeouts",
   );
+
+  const startTls = buildTransportOptions(smtpConfig({ port: 587, secure: false }));
+  assert.equal(startTls.requireTLS, true, "secure=false => requireTLS для STARTTLS");
 }
 
 function testTlsServernameOnResolvedIp(): void {
@@ -195,34 +203,84 @@ function testNoHardcodedSmtpIp(): void {
   const resolveSource = readSource("src/lib/mail/smtp-host-resolve.ts");
   assert.match(resolveSource, /dns\.resolve6/, "AAAA через node:dns/promises.resolve6");
   assert.match(resolveSource, /dns\.resolve4/, "A через node:dns/promises.resolve4");
+  assert.match(
+    resolveSource,
+    /ipFamily === "auto"[\s\S]*resolveFamilyRecords\(hostname, "4"\)[\s\S]*resolveFamilyRecords\(hostname, "6"\)/,
+    "auto должен запрашивать A, затем AAAA (IPv4 предпочтительнее для dual-stack Docker)",
+  );
   assert.doesNotMatch(resolveSource, /rejectUnauthorized:\s*false/, "rejectUnauthorized не отключается");
 
   const smtpSource = readSource("src/lib/mail/smtp-mailer.ts");
   assert.match(smtpSource, /connectHosts\.length/, "должен перебирать несколько адресов из DNS");
   assert.match(smtpSource, /servername:\s*config\.host/, "servername при IP = исходный SMTP_HOST");
+  assert.match(smtpSource, /requireTLS:\s*!config\.secure/, "requireTLS только при STARTTLS");
+  assert.match(smtpSource, /summarizeMailDeliveryError/, "ошибки доставки должны суммироваться безопасно");
+  assert.match(smtpSource, /isRetryableSmtpConnectError/, "ретрай IP только через isRetryableSmtpConnectError");
 }
 
-async function testRetriesNextResolvedIp(): Promise<void> {
+function testRetryableSmtpConnectErrorClassifier(): void {
+  for (const code of RETRYABLE_SMTP_CONNECT_ERROR_CODES) {
+    assert.equal(
+      isRetryableSmtpConnectError({ command: "CONN", code }),
+      true,
+      `CONN+${code} должен быть ретраибельным`,
+    );
+  }
+
+  assert.equal(isRetryableSmtpConnectError({ command: "CONN", code: "ETIMEDOUT" }), true);
+  assert.equal(isRetryableSmtpConnectError({ command: "CONN", code: "ECONNREFUSED" }), true);
+  assert.equal(isRetryableSmtpConnectError({ command: "CONN", code: "ECONNRESET" }), true);
+
+  assert.equal(isRetryableSmtpConnectError({ command: "AUTH", code: "EAUTH" }), false);
+  assert.equal(isRetryableSmtpConnectError({ command: "AUTH", code: "EAUTH", responseCode: 535 }), false);
+  assert.equal(isRetryableSmtpConnectError({ command: "DATA", code: "ETIMEDOUT" }), false);
+  assert.equal(isRetryableSmtpConnectError({ command: "DATA", code: "ECONNRESET" }), false);
+  assert.equal(
+    isRetryableSmtpConnectError({ command: "MAIL FROM", code: "EENVELOPE", responseCode: 550 }),
+    false,
+  );
+  assert.equal(isRetryableSmtpConnectError({ command: "CONN", code: "ETIMEDOUT", responseCode: 421 }), false);
+  assert.equal(isRetryableSmtpConnectError(new Error("timeout")), false);
+  assert.equal(isRetryableSmtpConnectError({ command: "CONN" }), false);
+  assert.equal(isRetryableSmtpConnectError({ code: "ETIMEDOUT" }), false);
+}
+
+type NodemailerLikeError = {
+  code?: string;
+  command?: string;
+  responseCode?: number;
+  message?: string;
+  response?: string;
+};
+
+function nodemailerErr(fields: NodemailerLikeError): Error {
+  return Object.assign(new Error(fields.message ?? "smtp error"), fields);
+}
+
+async function runIpRetrySuccessAfterConnectError(firstError: NodemailerLikeError): Promise<void> {
   let transportCreates = 0;
+  let sendMailCalls = 0;
+  const resolveStub = async () => ["198.51.100.1", "198.51.100.2"];
+
   const spy: CreateTransport = () => {
     transportCreates += 1;
     if (transportCreates === 1) {
       return {
         async sendMail() {
-          throw new Error("connection timeout");
+          sendMailCalls += 1;
+          throw nodemailerErr(firstError);
         },
         close() {},
       };
     }
     return {
       async sendMail() {
+        sendMailCalls += 1;
         return { messageId: "ok" };
       },
       close() {},
     };
   };
-
-  const resolveStub = async () => ["198.51.100.1", "198.51.100.2"];
 
   const mailer = createSmtpMailer(
     smtpConfig({ host: "smtp.example.com", ipFamily: "4" }),
@@ -231,7 +289,81 @@ async function testRetriesNextResolvedIp(): Promise<void> {
   );
 
   await mailer.sendMail({ to: "user@example.com", subject: "Test", text: "hello" });
-  assert.equal(transportCreates, 2, "при ошибке первого IP должен пробоваться следующий");
+  assert.equal(transportCreates, 2);
+  assert.equal(sendMailCalls, 2);
+}
+
+async function runIpRetryRejected(firstError: NodemailerLikeError): Promise<void> {
+  let transportCreates = 0;
+  let sendMailCalls = 0;
+  const resolveStub = async () => ["198.51.100.1", "198.51.100.2"];
+
+  const spy: CreateTransport = () => {
+    transportCreates += 1;
+    return {
+      async sendMail() {
+        sendMailCalls += 1;
+        throw nodemailerErr(firstError);
+      },
+      close() {},
+    };
+  };
+
+  const mailer = createSmtpMailer(
+    smtpConfig({ host: "smtp.example.com", ipFamily: "4" }),
+    spy,
+    resolveStub,
+  );
+
+  await assert.rejects(
+    mailer.sendMail({ to: "user@example.com", subject: "Test", text: "hello" }),
+    MailDeliveryError,
+  );
+  assert.equal(transportCreates, 1, `не должен ретраить при ${JSON.stringify(firstError)}`);
+  assert.equal(sendMailCalls, 1);
+}
+
+async function testIpRetryMatrix(): Promise<void> {
+  await runIpRetrySuccessAfterConnectError({ code: "ETIMEDOUT", command: "CONN" });
+  await runIpRetrySuccessAfterConnectError({ code: "ECONNREFUSED", command: "CONN" });
+
+  await runIpRetryRejected({ code: "EAUTH", command: "AUTH", responseCode: 535 });
+  await runIpRetryRejected({ code: "ETIMEDOUT", command: "DATA" });
+  await runIpRetryRejected({ code: "ECONNRESET", command: "DATA" });
+  await runIpRetryRejected({ code: "EMESSAGE", command: "DATA", responseCode: 550 });
+  await runIpRetryRejected({ message: "unknown failure" });
+}
+
+async function testNonRetryableErrorLogsSafely(): Promise<void> {
+  const logged: string[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args.map(String).join(" "));
+  };
+
+  try {
+    await runIpRetryRejected({
+      code: "EAUTH",
+      command: "AUTH",
+      responseCode: 535,
+      message: `auth failed for ${SECRET_PASSWORD} user@victim.example`,
+      response: "535 5.7.8 authentication failed",
+    });
+  } finally {
+    console.error = originalError;
+  }
+
+  const joined = logged.join("\n");
+  assert.match(joined, /\[mail\] delivery failed/);
+  assert.match(joined, /code=EAUTH/);
+  assert.match(joined, /command=AUTH/);
+  assert.doesNotMatch(joined, new RegExp(SECRET_PASSWORD));
+  assert.doesNotMatch(joined, /victim/);
+  assert.doesNotMatch(joined, /535 5\.7\.8/);
+}
+
+async function testRetriesNextResolvedIp(): Promise<void> {
+  await runIpRetrySuccessAfterConnectError({ code: "ETIMEDOUT", command: "CONN" });
 }
 
 function testCertificateVerificationNotDisabled(): void {
@@ -242,7 +374,7 @@ function testCertificateVerificationNotDisabled(): void {
   assert.doesNotMatch(optsJson, /ignoreTLS/, "ignoreTLS не должен использоваться");
   const tls = opts.tls as Record<string, unknown> | undefined;
   assert.ok(tls && tls.minVersion === "TLSv1.2", "минимальная версия TLS 1.2");
-  assert.equal(opts.requireTLS, true);
+  assert.equal(opts.requireTLS, false, "для secure=true requireTLS не нужен");
 }
 
 async function testSuccessfulSendCallsMailerOnce(): Promise<void> {
@@ -294,6 +426,124 @@ async function testTransportErrorLeaksNothing(): Promise<void> {
   assert.doesNotMatch(joined, /535|auth failed/, "лог не должен содержать ответ SMTP-сервера");
   assert.doesNotMatch(joined, new RegExp(messageSubject), "лог не должен содержать тему письма");
   assert.doesNotMatch(joined, new RegExp(messageText), "лог не должен содержать тело письма");
+  assert.doesNotMatch(joined, /user@example\.com/, "лог не должен содержать email получателя");
+}
+
+function testSafeDeliveryErrorSummary(): void {
+  const summary = summarizeMailDeliveryError({
+    name: "Error",
+    code: "EAUTH",
+    command: "AUTH",
+    responseCode: 535,
+    message: `auth failed for ${SECRET_PASSWORD} user@victim.example`,
+    response: "535 5.7.8 Error: authentication failed",
+  });
+
+  assert.equal(summary.name, "Error");
+  assert.equal(summary.code, "EAUTH");
+  assert.equal(summary.command, "AUTH");
+  assert.equal(summary.responseCode, 535);
+  assert.equal(
+    JSON.stringify(summary).includes(SECRET_PASSWORD),
+    false,
+    "summary не должен содержать пароль",
+  );
+  assert.equal(
+    JSON.stringify(summary).includes("victim"),
+    false,
+    "summary не должен содержать email/ответ сервера",
+  );
+}
+
+async function testAutoEnumeratesDnsForRetry(): Promise<void> {
+  let transportCreates = 0;
+  const spy: CreateTransport = (options) => {
+    transportCreates += 1;
+    if (transportCreates === 1) {
+      assert.equal(options.host, "198.51.100.1");
+      return {
+        async sendMail() {
+          const err = Object.assign(new Error("timeout"), {
+            code: "ETIMEDOUT",
+            command: "CONN",
+          });
+          throw err;
+        },
+        close() {},
+      };
+    }
+    assert.equal(options.host, "198.51.100.2");
+    assert.equal((options.tls as { servername?: string }).servername, "smtp.example.com");
+    return {
+      async sendMail() {
+        return { messageId: "ok" };
+      },
+      close() {},
+    };
+  };
+
+  const mailer = createSmtpMailer(
+    smtpConfig({ host: "smtp.example.com", ipFamily: "auto" }),
+    spy,
+    async () => ["198.51.100.1", "198.51.100.2"],
+  );
+
+  await mailer.sendMail({ to: "user@example.com", subject: "Test", text: "hello" });
+  assert.equal(transportCreates, 2, "auto должен перебирать IP из DNS при ошибке первого");
+}
+
+function testStandaloneMailPackagingContract(): void {
+  const nextConfig = readSource("next.config.ts");
+  assert.match(
+    nextConfig,
+    /serverExternalPackages:\s*\[[^\]]*["']nodemailer["']/,
+    "nodemailer должен быть в serverExternalPackages (не Turbopack-бандл)",
+  );
+  assert.match(
+    nextConfig,
+    /outputFileTracingIncludes[\s\S]*forgot-password[\s\S]*nodemailer/,
+    "outputFileTracingIncludes должен включать nodemailer для forgot-password",
+  );
+  assert.doesNotMatch(
+    nextConfig,
+    /reset-password[\s\S]*nodemailer/,
+    "reset-password не отправляет почту — tracing nodemailer не нужен",
+  );
+
+  const pkgSource = readSource("package.json");
+  const pkg = JSON.parse(pkgSource) as {
+    scripts?: Record<string, string>;
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+  assert.match(
+    pkg.scripts?.build ?? "",
+    /next build --webpack/,
+    "production build должен использовать webpack (Turbopack hashed require ломает Docker standalone)",
+  );
+  assert.match(
+    pkg.scripts?.build ?? "",
+    /security-mail-standalone-check/,
+    "npm run build должен включать post-build standalone mail contract",
+  );
+  assert.ok(pkg.scripts?.["test:security:mail-standalone"], "должен быть test:security:mail-standalone");
+  assert.ok(pkg.dependencies?.nodemailer, "nodemailer должен быть в dependencies");
+  assert.equal(pkg.devDependencies?.nodemailer, undefined, "nodemailer не должен быть только в devDependencies");
+
+  const dockerfile = readSource("Dockerfile");
+  assert.match(
+    dockerfile,
+    /COPY --from=builder \/app\/node_modules\/nodemailer \.\/node_modules\/nodemailer/,
+    "runner должен явно копировать nodemailer в standalone-образ",
+  );
+}
+
+function testMailStandaloneContractScriptExists(): void {
+  const script = readSource("scripts/security-mail-standalone-check.ts");
+  assert.match(script, /assertMailStandaloneContract/, "standalone check должен вызывать assertMailStandaloneContract");
+  const lib = readSource("scripts/lib/mail-standalone-contract.ts");
+  assert.match(lib, /standaloneRequire\("nodemailer"\)/, "контракт проверяет isolated require nodemailer");
+  assert.doesNotMatch(lib, /if \(!fs\.existsSync\(standalonePkg\)\) \{\s*return/, "контракт не должен молча пропускаться");
 }
 
 function testFromHeader(): void {
@@ -523,11 +773,18 @@ async function main(): Promise<void> {
   testSmtpIpFamilyParsing();
   testTlsServernameOnResolvedIp();
   testNoHardcodedSmtpIp();
+  testRetryableSmtpConnectErrorClassifier();
   await testValidConfigCreatesTlsTransport();
   testCertificateVerificationNotDisabled();
   await testSuccessfulSendCallsMailerOnce();
   await testRetriesNextResolvedIp();
+  await testAutoEnumeratesDnsForRetry();
+  await testIpRetryMatrix();
+  await testNonRetryableErrorLogsSafely();
   await testTransportErrorLeaksNothing();
+  testSafeDeliveryErrorSummary();
+  testStandaloneMailPackagingContract();
+  testMailStandaloneContractScriptExists();
   testFromHeader();
   testEmailValidation();
   testCliSource();

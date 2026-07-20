@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack && tsx scripts/security-mail-standalone-check.ts",
     "start": "next start",
     "lint": "eslint",
     "db:generate": "prisma generate",
@@ -69,6 +69,7 @@
     "test:security:booking-request-service": "tsx scripts/security-booking-request-service-check.ts",
     "test:security:legal-versioning": "tsx scripts/security-legal-versioning-check.ts",
     "test:security:mail": "tsx scripts/security-mail-check.ts",
+    "test:security:mail-standalone": "tsx scripts/security-mail-standalone-check.ts",
     "test:e2e": "playwright test"
   },
   "prisma": {

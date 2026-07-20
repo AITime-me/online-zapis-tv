@@ -43,6 +43,14 @@ const manageLinkNoStoreHeaders = [
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // Nodemailer — CJS SMTP-стек. Держим external + webpack build: Turbopack
+  // serverExternalPackages в standalone даёт require("nodemailer-<hash>") и
+  // битые symlink в Docker (MODULE_NOT_FOUND), тогда как mail:test/ops видит
+  // реальный package.
+  serverExternalPackages: ["nodemailer"],
+  outputFileTracingIncludes: {
+    "/api/auth/forgot-password": ["./node_modules/nodemailer/**/*"],
+  },
   async headers() {
     return [
       {

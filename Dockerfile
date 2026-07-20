@@ -65,6 +65,10 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+# Nodemailer без транзитивных deps. Явное копирование + `next build --webpack`
+# страхуют standalone: Turbopack даёт require("nodemailer-<hash>") и битые symlink
+# в multi-stage Docker (MODULE_NOT_FOUND внутри app-контейнера).
+COPY --from=builder /app/node_modules/nodemailer ./node_modules/nodemailer
 
 RUN mkdir -p /app/exports/emergency \
   && chown -R nextjs:nodejs /app/exports

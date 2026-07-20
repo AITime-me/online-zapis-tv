@@ -20,7 +20,7 @@ export type SmtpConfig = {
   secure: boolean;
   user: string;
   password: string;
-  /** auto — обычное имя хоста; 4/6 — динамический A/AAAA с tls.servername = host. */
+  /** auto — A затем AAAA с ретраем; 4/6 — только выбранное семейство. */
   ipFamily: SmtpIpFamily;
 };
 
