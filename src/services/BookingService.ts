@@ -1,6 +1,6 @@
 import "server-only";
 
-import { Prisma } from "@prisma/client";
+import { Prisma, type AppointmentStatus } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { safeLogError } from "@/lib/logging/redact";
 import {
@@ -14,6 +14,20 @@ import type {
   BookingServiceMode,
 } from "@/lib/booking/catalog-types";
 import {
+  isClientConsentGiven,
+  validateClientContactFields,
+} from "@/lib/booking/client-validation";
+import {
+  filterSlotsByReachableChains,
+  isOnlineBookingSlotChainsEnabled,
+  parseTimeToMinutes,
+  resolveOnlineFillTimingsForRequest,
+  type SlotChainBlockingInterval,
+  type SlotChainTiming,
+  type SlotChainWorkWindow,
+} from "@/lib/booking/online-slot-chains";
+import { onlinePublicMasterServiceWhere } from "@/lib/booking/online-public-master-service";
+import {
   addMinutesSafe,
   formatStudioTimeInput,
   getEpochDate,
@@ -21,31 +35,34 @@ import {
   parseStudioDateTime,
 } from "@/lib/datetime/date-layer";
 import { getStudioDayRangeFromDateKey, getStudioMonthRangeFromMonthKey } from "@/lib/datetime/studio";
-import { resolvePublicOnlineBookingHours } from "@/lib/schedule/master-work-hours";
-import { SEED_TEST_SERVICE_IDS } from "@/lib/services/seed-test-service-ids";
-import {
-  AppointmentConflictError,
-  AppointmentValidationError,
-  createOnlineAppointment,
-} from "@/services/AppointmentService";
-import {
-  assertRequiredLegalDocumentsPublished,
-} from "@/services/LegalDocumentService";
-import {
-  isClientConsentGiven,
-  validateClientContactFields,
-} from "@/lib/booking/client-validation";
-import { resolveClientForLead } from "@/services/ClientLinkService";
-import { checkMasterIntervalAvailability } from "@/services/MasterAvailabilityService";
-import { blocksForDayWhere } from "@/services/ScheduleBlockService";
-import { resolveServiceTimingForMaster } from "@/services/ServiceTimingService";
 import {
   formatPriceDisplay,
   fromPriceBounds,
   getBasePrice,
 } from "@/lib/pricing/price-layer";
 import { evaluateStoredAppliedPromotions } from "@/lib/promo/applied-promotions";
+import { resolvePublicOnlineBookingHours } from "@/lib/schedule/master-work-hours";
+import { isBlockingAppointmentStatus } from "@/lib/schedule/non-blocking-appointment-statuses";
+import { SEED_TEST_SERVICE_IDS } from "@/lib/services/seed-test-service-ids";
+import {
+  AppointmentConflictError,
+  AppointmentValidationError,
+  createOnlineAppointment,
+} from "@/services/AppointmentService";
 import { resolveClientContextByPhone } from "@/services/ClientContextService";
+import { resolveClientForLead } from "@/services/ClientLinkService";
+import {
+  assertRequiredLegalDocumentsPublished,
+} from "@/services/LegalDocumentService";
+import {
+  checkMasterIntervalAvailability,
+  toBusyInterval,
+} from "@/services/MasterAvailabilityService";
+import { blocksForDayWhere } from "@/services/ScheduleBlockService";
+import {
+  resolveServiceTimingForMaster,
+  resolveTimingFromLoadedParts,
+} from "@/services/ServiceTimingService";
 
 export type {
   BookingCatalogCategory,
@@ -64,6 +81,19 @@ export type OnlineBookingInput = {
   comment?: string;
   personalDataConsent: boolean;
   offerAcknowledgement: boolean;
+};
+
+/**
+ * Внутренние опции расчёта слотов (5-й аргумент getAvailableTimeSlots).
+ * Публичный HTTP API не меняется; используется для preload в month и DI в тестах.
+ */
+export type PublicSlotCalculationOptions = {
+  /** Уже загруженные timings; undefined = загрузить при включённом флаге. */
+  preloadedOnlineTimings?: SlotChainTiming[] | null;
+  /** Подмена loader только для тестов / harness. */
+  loadOnlineFillTimings?: (
+    masterId: string,
+  ) => Promise<SlotChainTiming[] | null>;
 };
 
 export class OnlineServiceUnavailableError extends AppointmentValidationError {
@@ -129,6 +159,144 @@ function resolveSlotIterationBounds(
   }
 
   return { rangeStart, rangeEnd };
+}
+
+function dateToStudioMinutes(value: Date): number {
+  return parseTimeToMinutes(formatStudioTimeInput(value));
+}
+
+/**
+ * Пакетная загрузка timing-вариантов публичных онлайн-услуг мастера.
+ * Один masterService.findMany; без повторного master.findUnique
+ * (мастер уже проверен assertOnlineBookable / slot context).
+ * null — техническая ошибка → fallback; [] — пустой каталог → fallback без spam-лога.
+ */
+async function loadOnlineFillTimingsForMaster(
+  masterId: string,
+): Promise<SlotChainTiming[] | null> {
+  try {
+    const masterServices = await prisma.masterService.findMany({
+      where: onlinePublicMasterServiceWhere(masterId),
+      select: {
+        isEnabled: true,
+        durationMinutesOverride: true,
+        breakAfterMinutesOverride: true,
+        service: {
+          select: {
+            durationMinutes: true,
+            breakAfterMinutes: true,
+            isActive: true,
+          },
+        },
+      },
+    });
+
+    const seen = new Set<string>();
+    const timings: SlotChainTiming[] = [];
+
+    for (const entry of masterServices) {
+      const resolved = resolveTimingFromLoadedParts(entry.service, entry);
+      if (!resolved) {
+        continue;
+      }
+      const key = `${resolved.durationMinutes}:${resolved.breakAfterMinutes}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      timings.push({
+        durationMinutes: resolved.durationMinutes,
+        breakAfterMinutes: resolved.breakAfterMinutes,
+      });
+    }
+
+    return timings;
+  } catch (error) {
+    safeLogError(
+      "[booking/loadOnlineFillTimingsForMaster] online filler timings failed; fallback to rawSlots",
+      error,
+    );
+    return null;
+  }
+}
+
+function buildSlotChainWorkWindows(
+  workStart: string,
+  workEnd: string,
+  constrainAppointmentEnd: boolean,
+  extraWorkWindows: Array<{ startsAt: Date; endsAt: Date }>,
+): SlotChainWorkWindow[] {
+  const windows: SlotChainWorkWindow[] = [
+    {
+      startMinutes: parseTimeToMinutes(workStart),
+      lastStartMinutes: parseTimeToMinutes(workEnd),
+      hardEndMinutes: constrainAppointmentEnd
+        ? parseTimeToMinutes(workEnd)
+        : null,
+      constrainProcedureEnd: constrainAppointmentEnd,
+    },
+  ];
+
+  for (const extra of extraWorkWindows) {
+    const startMinutes = dateToStudioMinutes(extra.startsAt);
+    const endMinutes = dateToStudioMinutes(extra.endsAt);
+    if (endMinutes <= startMinutes) {
+      continue;
+    }
+    windows.push({
+      startMinutes,
+      // Для extra окно жёсткое: последний старт — любая минута до конца,
+      // но процедура должна закончиться ≤ endsAt (как в availability).
+      lastStartMinutes: Math.max(startMinutes, endMinutes - 1),
+      hardEndMinutes: endMinutes,
+      constrainProcedureEnd: true,
+    });
+  }
+
+  return windows;
+}
+
+function buildSlotChainBlockingIntervals(
+  appointments: Array<{
+    startsAt: Date;
+    endsAt: Date;
+    breakAfterMinutes: number | null;
+    status: AppointmentStatus;
+  }>,
+  scheduleBlocks: Array<{
+    startsAt: Date | null;
+    endsAt: Date | null;
+    isFullDay: boolean;
+  }>,
+): SlotChainBlockingInterval[] {
+  const intervals: SlotChainBlockingInterval[] = [];
+
+  for (const appointment of appointments) {
+    if (!isBlockingAppointmentStatus(appointment.status)) {
+      continue;
+    }
+    const busy = toBusyInterval({
+      startsAt: appointment.startsAt,
+      endsAt: appointment.endsAt,
+      breakAfterMinutes: appointment.breakAfterMinutes ?? 0,
+    });
+    intervals.push({
+      startMinutes: dateToStudioMinutes(busy.startsAt),
+      endMinutes: dateToStudioMinutes(busy.endsAt),
+    });
+  }
+
+  for (const block of scheduleBlocks) {
+    if (block.isFullDay || block.startsAt == null || block.endsAt == null) {
+      continue;
+    }
+    intervals.push({
+      startMinutes: dateToStudioMinutes(block.startsAt),
+      endMinutes: dateToStudioMinutes(block.endsAt),
+    });
+  }
+
+  return intervals;
 }
 
 async function loadServicePromoContext(serviceId: string) {
@@ -592,6 +760,7 @@ export async function getAvailableTimeSlots(
   serviceId: string,
   dateKey: string,
   studioToday: string,
+  options: PublicSlotCalculationOptions = {},
 ): Promise<string[]> {
   const timing = await assertOnlineBookable(masterId, serviceId);
   const context = await loadSlotContext(masterId, dateKey);
@@ -645,7 +814,41 @@ export async function getAvailableTimeSlots(
     current = addMinutesToTime(dateKey, current, slotStep);
   }
 
-  return [...new Set(slots)];
+  const rawSlots = [...new Set(slots)];
+
+  const loader =
+    options.loadOnlineFillTimings ?? loadOnlineFillTimingsForMaster;
+
+  const resolved = await resolveOnlineFillTimingsForRequest({
+    chainsEnabled: isOnlineBookingSlotChainsEnabled(),
+    preloadedOnlineTimings: options.preloadedOnlineTimings,
+    load: () => loader(masterId),
+  });
+
+  if (resolved.mode === "skip_filter") {
+    return rawSlots;
+  }
+
+  if (resolved.timings == null || resolved.timings.length === 0) {
+    return rawSlots;
+  }
+
+  return filterSlotsByReachableChains({
+    rawSlots,
+    slotStepMinutes: slotStep,
+    gridOriginMinutes: parseTimeToMinutes(rangeStart),
+    workWindows: buildSlotChainWorkWindows(
+      workStart,
+      workEnd,
+      constrainAppointmentEnd,
+      context.extraWorkWindows,
+    ),
+    blockingIntervals: buildSlotChainBlockingIntervals(
+      context.appointments,
+      context.scheduleBlocks,
+    ),
+    onlineTimings: resolved.timings,
+  });
 }
 
 export async function getAvailableDaysInMonth(
@@ -653,10 +856,22 @@ export async function getAvailableDaysInMonth(
   serviceId: string,
   monthKey: string,
   studioToday: string,
+  options: PublicSlotCalculationOptions = {},
 ): Promise<string[]> {
   const { days } = getStudioMonthRangeFromMonthKey(monthKey);
   const futureDays = days.filter((dateKey) => dateKey >= studioToday);
   const availableDays: string[] = [];
+
+  const loader =
+    options.loadOnlineFillTimings ?? loadOnlineFillTimingsForMaster;
+
+  let preloadedOnlineTimings = options.preloadedOnlineTimings;
+  if (
+    preloadedOnlineTimings === undefined &&
+    isOnlineBookingSlotChainsEnabled()
+  ) {
+    preloadedOnlineTimings = await loader(masterId);
+  }
 
   for (const dateKey of futureDays) {
     const slots = await getAvailableTimeSlots(
@@ -664,6 +879,10 @@ export async function getAvailableDaysInMonth(
       serviceId,
       dateKey,
       studioToday,
+      {
+        preloadedOnlineTimings,
+        loadOnlineFillTimings: options.loadOnlineFillTimings,
+      },
     );
     if (slots.length > 0) {
       availableDays.push(dateKey);
