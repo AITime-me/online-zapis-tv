@@ -56,9 +56,18 @@ export function QuickDayEditor({
   const [extraForm, setExtraForm] = useState({
     startTime: "08:00",
     endTime: "10:00",
-    isOnlineBookingEnabled: false,
+    isOnlineBookingEnabled: true,
   });
   const [extraError, setExtraError] = useState<string | null>(null);
+
+  const resetExtraForm = () => {
+    setExtraForm({
+      startTime: "08:00",
+      endTime: "10:00",
+      isOnlineBookingEnabled: true,
+    });
+    setExtraError(null);
+  };
 
   const closeOtherForms = () => {
     setShowNewAppointment(false);
@@ -176,6 +185,7 @@ export function QuickDayEditor({
         throw new Error(payload.error ?? "Ошибка сохранения");
       }
       setShowNewExtraWork(false);
+      resetExtraForm();
       handleSaveStatus("saved");
       await refreshCell();
     } catch (error) {
@@ -283,6 +293,7 @@ export function QuickDayEditor({
                 type="button"
                 onClick={() => {
                   closeOtherForms();
+                  resetExtraForm();
                   setShowNewExtraWork(true);
                 }}
                 className="border border-[#dadce0] bg-white px-2 py-1 text-[10px] hover:bg-[#f1f3f4]"
