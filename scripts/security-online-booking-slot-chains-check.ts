@@ -680,6 +680,91 @@ function testCreatePathUsesSameFilteredListRuntime(): void {
   assert.equal(availableSlots.includes("18:00"), true);
 }
 
+function assertComposeEnvWiring(): void {
+  const staging = read("docker-compose.staging.yml");
+  const production = read("docker-compose.production.yml");
+  const local = read("docker-compose.yml");
+  const flagLine =
+    /ONLINE_BOOKING_SLOT_CHAINS_ENABLED:\s*\$\{ONLINE_BOOKING_SLOT_CHAINS_ENABLED:-false\}/;
+
+  const stagingApp = staging.match(
+    /^ {2}app:[\s\S]*?(?=^ {2}[a-z]|^networks:|^volumes:)/m,
+  );
+  assert.ok(stagingApp, "staging app service найден");
+  assert.match(
+    stagingApp[0]!,
+    flagLine,
+    "staging Compose передаёт ONLINE_BOOKING_SLOT_CHAINS_ENABLED с default false",
+  );
+
+  const productionApp = production.match(
+    /^ {2}app:[\s\S]*?(?=^ {2}[a-z]|^networks:|^volumes:)/m,
+  );
+  assert.ok(productionApp, "production app service найден");
+  assert.match(
+    productionApp[0]!,
+    flagLine,
+    "production Compose передаёт ONLINE_BOOKING_SLOT_CHAINS_ENABLED с default false",
+  );
+
+  const stagingMigrator = staging.match(
+    /^ {2}migrator:[\s\S]*?(?=^networks:|^volumes:)/m,
+  );
+  const productionMigrator = production.match(
+    /^ {2}migrator:[\s\S]*?(?=^networks:|^volumes:)/m,
+  );
+  assert.ok(stagingMigrator);
+  assert.ok(productionMigrator);
+  assert.doesNotMatch(
+    stagingMigrator[0]!,
+    /ONLINE_BOOKING_SLOT_CHAINS_ENABLED/,
+    "staging migrator не получает slot-chains flag",
+  );
+  assert.doesNotMatch(
+    productionMigrator[0]!,
+    /ONLINE_BOOKING_SLOT_CHAINS_ENABLED/,
+    "production migrator не получает slot-chains flag",
+  );
+
+  const stagingPostgres = staging.match(
+    /^ {2}postgres:[\s\S]*?(?=^ {2}[a-z])/m,
+  );
+  const productionPostgres = production.match(
+    /^ {2}postgres:[\s\S]*?(?=^ {2}[a-z])/m,
+  );
+  assert.ok(stagingPostgres);
+  assert.ok(productionPostgres);
+  assert.doesNotMatch(stagingPostgres[0]!, /ONLINE_BOOKING_SLOT_CHAINS_ENABLED/);
+  assert.doesNotMatch(
+    productionPostgres[0]!,
+    /ONLINE_BOOKING_SLOT_CHAINS_ENABLED/,
+  );
+
+  assert.doesNotMatch(
+    staging,
+    /NEXT_PUBLIC_ONLINE_BOOKING_SLOT_CHAINS/,
+    "флаг не NEXT_PUBLIC в staging",
+  );
+  assert.doesNotMatch(
+    production,
+    /NEXT_PUBLIC_ONLINE_BOOKING_SLOT_CHAINS/,
+    "флаг не NEXT_PUBLIC в production",
+  );
+
+  // Локальный compose — только postgres, без app; wiring не требуется.
+  assert.doesNotMatch(local, /^ {2}app:/m);
+  assert.doesNotMatch(local, /ONLINE_BOOKING_SLOT_CHAINS_ENABLED/);
+
+  // Без server env функция выключена (default false semantics).
+  assert.equal(isOnlineBookingSlotChainsEnabled({}), false);
+  assert.equal(
+    isOnlineBookingSlotChainsEnabled({
+      ONLINE_BOOKING_SLOT_CHAINS_ENABLED: "false",
+    }),
+    false,
+  );
+}
+
 function assertWiring(): void {
   const booking = read("src/services/BookingService.ts");
   assert.match(booking, /resolveOnlineFillTimingsForRequest/);
@@ -774,6 +859,7 @@ async function main(): Promise<void> {
   await testLoaderCallCountsRuntime();
   testCreatePathUsesSameFilteredListRuntime();
   assertWiring();
+  assertComposeEnvWiring();
   assertExtraWorkRegressionStillDocumented();
 
   console.log("security-online-booking-slot-chains-check: OK");
