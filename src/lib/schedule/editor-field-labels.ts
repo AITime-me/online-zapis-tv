@@ -18,7 +18,7 @@ export const SCHEDULE_EDITOR_FIELD_LABELS = {
   isBold: "Жирное выделение",
   blockType: "Тип блока",
   closureType: "Тип закрытия",
-  onlineBooking: "Доступно онлайн",
+  onlineBooking: "Открыть это время для онлайн-записи",
 } as const;
 
 export type ScheduleEditorFieldKey = keyof typeof SCHEDULE_EDITOR_FIELD_LABELS;
