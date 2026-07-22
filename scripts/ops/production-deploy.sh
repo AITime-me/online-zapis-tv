@@ -542,12 +542,20 @@ verify_health() {
 
   if ops_check_http_health_production; then
     HTTP_HEALTH_STATUS="ok"
-    return 0
+  else
+    HTTP_HEALTH_STATUS="failed"
+    LAST_ERROR_SUMMARY="http health check failed (expected ok=true and status=healthy)"
+    return 1
   fi
 
-  HTTP_HEALTH_STATUS="failed"
-  LAST_ERROR_SUMMARY="http health check failed (expected ok=true and status=healthy)"
-  return 1
+  if ! ops_verify_full_busy_writes_runtime_marker \
+    "$PRODUCTION_APP_CONTAINER" \
+    "$PRODUCTION_ENV_FILE"; then
+    LAST_ERROR_SUMMARY="full-busy writes runtime marker verification failed"
+    return 1
+  fi
+
+  return 0
 }
 
 rollback_app_image() {
@@ -817,7 +825,6 @@ main() {
   ops_info "  migration: ${MIGRATION_STATUS}"
   ops_info "  docker health: ${DOCKER_HEALTH_STATUS}"
   ops_info "  http health: ${HTTP_HEALTH_STATUS}"
-  ops_info "  full busy writes: $(ops_print_full_busy_writes_runtime_label "$PRODUCTION_ENV_FILE")"
   ops_info "  manifest: ${MANIFEST_PATH}"
 }
 

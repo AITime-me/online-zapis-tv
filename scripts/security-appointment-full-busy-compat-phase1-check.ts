@@ -10,7 +10,10 @@ import {
   isAppointmentTimingDirty,
 } from "../src/lib/schedule/appointment-timing-write";
 import { formatFullBusyWritesRuntimeLabel } from "../src/lib/schedule/appointment-full-busy-writes";
-import type { AppointmentBusyTimingSnapshot } from "../src/lib/schedule/appointment-busy";
+import {
+  getAppointmentBusyInterval,
+  type AppointmentBusyTimingSnapshot,
+} from "../src/lib/schedule/appointment-busy";
 import { parseStudioDateKey } from "../src/lib/datetime/date-layer";
 
 const ROOT = process.cwd();
@@ -159,6 +162,147 @@ function testNoteOnlyUpdateIsNotTimingDirty(): void {
   assert.equal(dirty, false, "v1 raw 10:00–11:00 + 20 break compares as free-at 11:20");
 }
 
+type MigrationTimingRow = AppointmentBusyTimingSnapshot & {
+  timingCanonicalStoredAt: Date | null;
+};
+
+function phase1VersionOnlyClassification(row: MigrationTimingRow): number {
+  const applicableBreak =
+    row.breakAfterMinutes ?? row.standardBreakAfterMinutes ?? 0;
+  const wallSeconds =
+    (row.endsAt.getTime() - row.startsAt.getTime()) / 1000;
+  const minuteAligned =
+    row.startsAt.getUTCSeconds() === 0 &&
+    row.startsAt.getUTCMilliseconds() === 0 &&
+    row.endsAt.getUTCSeconds() === 0 &&
+    row.endsAt.getUTCMilliseconds() === 0;
+
+  if (
+    row.timingSemanticsVersion === 1 &&
+    row.isManualTimeOverride === false &&
+    row.standardDurationMinutes != null &&
+    row.endsAt.getTime() > row.startsAt.getTime() &&
+    applicableBreak >= 0 &&
+    minuteAligned &&
+    wallSeconds ===
+      (row.standardDurationMinutes + applicableBreak) * 60
+  ) {
+    return 2;
+  }
+  return row.timingSemanticsVersion;
+}
+
+function testPhase1MigrationClassification(): void {
+  const migration = read(
+    "prisma/migrations/20260722190000_appointment_timing_semantics_phase1/migration.sql",
+  );
+  assert.equal(
+    migration.match(/UPDATE\s+"appointments"/g)?.length,
+    1,
+    "Phase 1 migration must have only the exact already-full version-only UPDATE",
+  );
+  assert.doesNotMatch(
+    migration,
+    /SET\s+"timing_semantics_version"\s*=\s*2[\s\S]{0,300}"is_manual_time_override"\s*=\s*true/i,
+    "manual override rows must never be upgraded version-only",
+  );
+  assert.match(migration, /"is_manual_time_override"\s*=\s*false/);
+  assert.match(migration, /"standard_duration_minutes"\s+IS\s+NOT\s+NULL/i);
+  assert.match(migration, /"ends_at"\s*>\s*"starts_at"/);
+  assert.match(
+    migration,
+    /COALESCE\("break_after_minutes",\s*"standard_break_after_minutes",\s*0\)\s*>=\s*0/,
+  );
+  assert.match(migration, /EXTRACT\(EPOCH FROM \("ends_at" - "starts_at"\)\)/);
+  assert.doesNotMatch(migration, /\bROUND\s*\(/i);
+  assert.doesNotMatch(migration, /SET\s+"ends_at"\s*=/i);
+
+  const shortenedManual: MigrationTimingRow = {
+    ...legacySnapshot({
+      endsAt: at("11:10"),
+      standardDurationMinutes: 120,
+      breakAfterMinutes: 30,
+      standardBreakAfterMinutes: 30,
+      isManualTimeOverride: true,
+    }),
+    timingCanonicalStoredAt: null,
+  };
+  assert.equal(phase1VersionOnlyClassification(shortenedManual), 1);
+  assert.equal(shortenedManual.endsAt.getTime(), at("11:10").getTime());
+  assert.equal(shortenedManual.timingCanonicalStoredAt, null);
+  assert.equal(
+    getAppointmentBusyInterval(shortenedManual).endsAt.getTime(),
+    at("12:30").getTime(),
+    "shortened manual v1 remains conservatively busy through 12:30",
+  );
+
+  const noteOnlyDirty = isAppointmentTimingDirty({
+    current: shortenedManual,
+    currentServiceId: "service-1",
+    currentMasterId: "master-1",
+    currentDateKey: DATE_KEY,
+    desiredStartsAt: at("10:00"),
+    desiredFreeAt: at("12:30"),
+    desiredServiceId: "service-1",
+    desiredMasterId: "master-1",
+    desiredDateKey: DATE_KEY,
+  });
+  assert.equal(noteOnlyDirty, false);
+  assert.equal(shortenedManual.timingSemanticsVersion, 1);
+
+  const manualAlreadyFull: MigrationTimingRow = {
+    ...shortenedManual,
+    endsAt: at("12:30"),
+  };
+  assert.equal(phase1VersionOnlyClassification(manualAlreadyFull), 1);
+
+  const exactAlreadyFull: MigrationTimingRow = {
+    ...legacySnapshot({
+      endsAt: at("11:20"),
+      isManualTimeOverride: false,
+    }),
+    timingCanonicalStoredAt: null,
+  };
+  assert.equal(phase1VersionOnlyClassification(exactAlreadyFull), 2);
+  assert.equal(exactAlreadyFull.endsAt.getTime(), at("11:20").getTime());
+  assert.equal(exactAlreadyFull.timingCanonicalStoredAt, null);
+
+  const exactProcedureOnly: MigrationTimingRow = {
+    ...exactAlreadyFull,
+    endsAt: at("11:00"),
+  };
+  assert.equal(phase1VersionOnlyClassification(exactProcedureOnly), 1);
+
+  const nonMinuteAligned: MigrationTimingRow = {
+    ...exactAlreadyFull,
+    endsAt: new Date(at("11:20").getTime() + 1_000),
+  };
+  assert.equal(phase1VersionOnlyClassification(nonMinuteAligned), 1);
+
+  const missingDuration: MigrationTimingRow = {
+    ...exactAlreadyFull,
+    standardDurationMinutes: null,
+  };
+  assert.equal(phase1VersionOnlyClassification(missingDuration), 1);
+
+  const negativeBreak: MigrationTimingRow = {
+    ...exactAlreadyFull,
+    endsAt: at("10:50"),
+    breakAfterMinutes: -10,
+  };
+  assert.equal(phase1VersionOnlyClassification(negativeBreak), 1);
+
+  for (const endsAt of [at("10:00"), at("09:50")]) {
+    assert.equal(
+      phase1VersionOnlyClassification({
+        ...exactAlreadyFull,
+        endsAt,
+      }),
+      1,
+    );
+  }
+}
+
 function testBusySelectInventory(): void {
   const targets = [
     "src/services/MasterAvailabilityService.ts",
@@ -281,6 +425,7 @@ function testRollbackAndDeployManifestGates(): void {
 function main(): void {
   testWriteAdapterInvariants();
   testNoteOnlyUpdateIsNotTimingDirty();
+  testPhase1MigrationClassification();
   testBusySelectInventory();
   testTimingWriteInventory();
   testRuntimeAndCompose();

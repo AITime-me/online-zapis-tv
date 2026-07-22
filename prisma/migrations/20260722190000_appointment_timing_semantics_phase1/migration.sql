@@ -1,6 +1,6 @@
 -- Phase 1: Appointment timing semantics marker (compatibility).
 -- Does NOT rewrite ends_at (no Phase 2 backfill).
--- Version-only bumps for manual override + exact already-full legacy rows.
+-- Version-only bumps are limited to deterministic exact already-full rows.
 
 ALTER TABLE "appointments"
   ADD COLUMN IF NOT EXISTS "timing_semantics_version" INTEGER NOT NULL DEFAULT 1;
@@ -21,18 +21,13 @@ BEGIN
   END IF;
 END $$;
 
--- Manual override → version 2, ends_at unchanged, canonical_stored_at stays NULL
-UPDATE "appointments"
-SET "timing_semantics_version" = 2
-WHERE "is_manual_time_override" = true
-  AND "timing_semantics_version" = 1;
-
 -- Exact already-full (minute-aligned, exact seconds) → version 2, ends_at unchanged
 UPDATE "appointments"
 SET "timing_semantics_version" = 2
 WHERE "timing_semantics_version" = 1
   AND "is_manual_time_override" = false
   AND "standard_duration_minutes" IS NOT NULL
+  AND "ends_at" > "starts_at"
   AND COALESCE("break_after_minutes", "standard_break_after_minutes", 0) >= 0
   AND EXTRACT(SECOND FROM ("starts_at" AT TIME ZONE 'Asia/Yekaterinburg')) = 0
   AND EXTRACT(SECOND FROM ("ends_at" AT TIME ZONE 'Asia/Yekaterinburg')) = 0

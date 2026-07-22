@@ -1152,6 +1152,46 @@ ops_print_full_busy_writes_runtime_label() {
   fi
 }
 
+ops_get_full_busy_writes_runtime_marker() {
+  local app_container="$1"
+  local marker
+
+  if ! marker="$(
+    docker exec "$app_container" \
+      node /app/scripts/ops/full-busy-writes-runtime-marker.mjs 2>/dev/null
+  )"; then
+    return 1
+  fi
+
+  case "$marker" in
+    FULL_BUSY_WRITES_ON|FULL_BUSY_WRITES_OFF)
+      printf '%s' "$marker"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+ops_verify_full_busy_writes_runtime_marker() {
+  local app_container="$1"
+  local env_file="$2"
+  local expected actual
+
+  expected="$(ops_print_full_busy_writes_runtime_label "$env_file")"
+  if ! actual="$(ops_get_full_busy_writes_runtime_marker "$app_container")"; then
+    ops_warn "full-busy writes runtime marker verification failed"
+    return 1
+  fi
+  if [[ "$actual" != "$expected" ]]; then
+    ops_warn "full-busy writes runtime marker does not match deploy configuration"
+    return 1
+  fi
+
+  # Only the allowlisted marker is emitted; no environment values are printed.
+  ops_info "$actual"
+}
+
 ops_assess_rollback_migration_risk() {
   local manifest="$1"
   local migration_status deploy_status
