@@ -1105,7 +1105,7 @@ export function NewAppointmentForm({
           ref={submitButtonRef}
           type="button"
           onClick={handleCreate}
-          disabled={isSubmitting}
+          disabled={isSubmitting || showOverlapConfirm}
           tabIndex={showOverlapConfirm ? -1 : undefined}
           className="bg-[#1a73e8] px-2 py-1 text-[10px] text-white disabled:opacity-50"
         >

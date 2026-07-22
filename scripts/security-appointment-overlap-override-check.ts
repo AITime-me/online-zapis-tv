@@ -385,7 +385,12 @@ function testUiOverlapConfirmFlow(): void {
   );
   assert.match(
     form,
-    /disabled=\{isSubmitting \|\| showOverlapConfirm\}/,
+    /ref=\{submitButtonRef\}[\s\S]*disabled=\{isSubmitting \|\| showOverlapConfirm\}/,
+    "основная кнопка submit отключена при открытом overlap-confirm",
+  );
+  assert.match(
+    form,
+    /disabled=\{isSubmitting \|\| showOverlapConfirm\}[\s\S]*Отмена/,
     "штатная «Отмена» формы недоступна, пока открыт alertdialog",
   );
   assert.match(
