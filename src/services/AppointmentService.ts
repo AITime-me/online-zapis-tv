@@ -225,6 +225,8 @@ async function loadConflictContext(
         startsAt: true,
         endsAt: true,
         breakAfterMinutes: true,
+        standardDurationMinutes: true,
+        standardBreakAfterMinutes: true,
         status: true,
       },
     }),
@@ -276,7 +278,10 @@ async function assertNoBlockingConflict(
   input: AppointmentWriteInput,
   candidateBreakAfterMinutes: number,
   excludeAppointmentId?: string,
-  writeOptions?: { allowAppointmentOverlap?: boolean },
+  writeOptions?: {
+    allowAppointmentOverlap?: boolean;
+    usePublicBusyForExistingAppointments?: boolean;
+  },
 ) {
   const startsAt = parseStudioDateTime(input.dateKey, input.startTime);
   const endsAt = parseStudioDateTime(input.dateKey, input.endTime);
@@ -304,7 +309,9 @@ async function assertNoBlockingConflict(
     appointments: context.appointments.map((appointment) => ({
       startsAt: appointment.startsAt,
       endsAt: appointment.endsAt,
-      breakAfterMinutes: appointment.breakAfterMinutes ?? 0,
+      breakAfterMinutes: appointment.breakAfterMinutes,
+      standardDurationMinutes: appointment.standardDurationMinutes,
+      standardBreakAfterMinutes: appointment.standardBreakAfterMinutes,
       status: appointment.status,
     })),
     scheduleBlocks: context.scheduleBlocks.map((block) => ({
@@ -317,6 +324,8 @@ async function assertNoBlockingConflict(
       endsAt,
       breakAfterMinutes: candidateBreakAfterMinutes,
     },
+    usePublicBusyForAppointments:
+      writeOptions?.usePublicBusyForExistingAppointments === true,
   });
 
   const blockingConflict = resolveAppointmentWriteConflict(
@@ -396,6 +405,11 @@ async function resolveTimingFields(
 export type CreateAppointmentOptions = {
   /** Только ручной create: строго true разрешает overlap с другой записью мастера. */
   allowAppointmentOverlap?: boolean;
+  /**
+   * Online write: existing appointments блокируют по public busy interval.
+   * Manual OWNER/MANAGER path must keep actual busy (default false).
+   */
+  usePublicBusyForExistingAppointments?: boolean;
 };
 
 export async function createAppointment(
@@ -415,6 +429,7 @@ export async function createOnlineAppointment(
   },
 ): Promise<OnlineAppointmentCreateResult> {
   // Public path never receives overlap override options — overlap stays blocked.
+  // Existing appointments use public (conservative) busy interval.
   const result = await createAppointmentRecord(
     {
       ...input,
@@ -423,6 +438,9 @@ export async function createOnlineAppointment(
       recordPublicLegalAcceptances: true,
     },
     null,
+    {
+      usePublicBusyForExistingAppointments: true,
+    },
   );
 
   if (!result.issuedManageToken) {
@@ -548,6 +566,8 @@ async function createAppointmentRecord(
         undefined,
         {
           allowAppointmentOverlap: options?.allowAppointmentOverlap === true,
+          usePublicBusyForExistingAppointments:
+            options?.usePublicBusyForExistingAppointments === true,
         },
       );
 

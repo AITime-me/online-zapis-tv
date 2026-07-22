@@ -265,7 +265,16 @@ function testManualApiExposesMachineCodesAndStrictFlag(): void {
     /allowAppointmentOverlap/,
     "public createOnlineAppointment не передаёт options override",
   );
-  assert.match(onlineFn, /createAppointmentRecord\([\s\S]*,\s*null\s*,?\s*\)/);
+  assert.match(
+    onlineFn,
+    /createAppointmentRecord\([\s\S]*,\s*null/,
+    "online create всё ещё без createdBy user",
+  );
+  assert.match(
+    onlineFn,
+    /usePublicBusyForExistingAppointments:\s*true/,
+    "online create включает public busy в write options",
+  );
 
   const updateStart = service.indexOf("export async function updateAppointment");
   assert.ok(updateStart >= 0);

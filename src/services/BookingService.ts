@@ -56,7 +56,7 @@ import {
 } from "@/services/LegalDocumentService";
 import {
   checkMasterIntervalAvailability,
-  toBusyInterval,
+  toPublicBusyInterval,
 } from "@/services/MasterAvailabilityService";
 import { blocksForDayWhere } from "@/services/ScheduleBlockService";
 import {
@@ -261,6 +261,8 @@ function buildSlotChainBlockingIntervals(
     startsAt: Date;
     endsAt: Date;
     breakAfterMinutes: number | null;
+    standardDurationMinutes: number | null;
+    standardBreakAfterMinutes: number | null;
     status: AppointmentStatus;
   }>,
   scheduleBlocks: Array<{
@@ -275,10 +277,12 @@ function buildSlotChainBlockingIntervals(
     if (!isBlockingAppointmentStatus(appointment.status)) {
       continue;
     }
-    const busy = toBusyInterval({
+    const busy = toPublicBusyInterval({
       startsAt: appointment.startsAt,
       endsAt: appointment.endsAt,
-      breakAfterMinutes: appointment.breakAfterMinutes ?? 0,
+      breakAfterMinutes: appointment.breakAfterMinutes,
+      standardDurationMinutes: appointment.standardDurationMinutes,
+      standardBreakAfterMinutes: appointment.standardBreakAfterMinutes,
     });
     intervals.push({
       startMinutes: dateToStudioMinutes(busy.startsAt),
@@ -393,6 +397,8 @@ async function loadSlotContext(masterId: string, dateKey: string) {
         startsAt: true,
         endsAt: true,
         breakAfterMinutes: true,
+        standardDurationMinutes: true,
+        standardBreakAfterMinutes: true,
         status: true,
       },
     }),
@@ -447,7 +453,9 @@ function isSlotAvailable(
     appointments: context.appointments.map((appointment) => ({
       startsAt: appointment.startsAt,
       endsAt: appointment.endsAt,
-      breakAfterMinutes: appointment.breakAfterMinutes ?? 0,
+      breakAfterMinutes: appointment.breakAfterMinutes,
+      standardDurationMinutes: appointment.standardDurationMinutes,
+      standardBreakAfterMinutes: appointment.standardBreakAfterMinutes,
       status: appointment.status,
     })),
     scheduleBlocks: context.scheduleBlocks.map((block) => ({
@@ -460,6 +468,7 @@ function isSlotAvailable(
       endsAt,
       breakAfterMinutes,
     },
+    usePublicBusyForAppointments: true,
   });
 
   return availability.isAvailable;
