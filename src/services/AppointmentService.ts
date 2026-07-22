@@ -10,8 +10,6 @@ import { safeLogError } from "@/lib/logging/redact";
 import { logServiceError } from "@/lib/errors/format-service-error";
 import { parseAppliedPromotions } from "@/lib/promo/applied-promotions";
 import {
-  addMinutesSafe,
-  diffMinutes,
   formatDateKeyInStudio,
   formatStudioTimeInput,
   getEpochDate,
@@ -30,10 +28,7 @@ import {
   normalizeMasterNote,
   validateMasterNote,
 } from "@/lib/schedule/master-note-validation";
-import {
-  calculateAppointmentEndsAt,
-  resolveServiceTimingForMaster,
-} from "@/services/ServiceTimingService";
+import { resolveServiceTimingForMaster } from "@/services/ServiceTimingService";
 import { createManageToken, createPublicRequestReference, hashManageToken } from "@/lib/booking/manage-token";
 import { recordRequiredPublicFormAcceptances } from "@/services/LegalAcceptanceService";
 import type { AppliedPromotionRecord } from "@/types/applied-promotion";
@@ -43,6 +38,16 @@ import {
   type AppointmentConflictCode,
   type AppointmentConflictType,
 } from "@/lib/schedule/appointment-write-conflicts";
+import {
+  APPOINTMENT_BUSY_TIMING_SELECT,
+  getAppointmentBusyInterval,
+  type AppointmentBusyTimingSnapshot,
+} from "@/lib/schedule/appointment-busy";
+import {
+  AppointmentTimingValidationError,
+  buildAppointmentTimingWriteData,
+  isAppointmentTimingDirty,
+} from "@/lib/schedule/appointment-timing-write";
 
 export {
   resolveAppointmentWriteConflict,
@@ -82,6 +87,27 @@ export class AppointmentValidationError extends Error {
     super(message);
     this.name = "AppointmentValidationError";
   }
+}
+
+function rethrowTimingValidation(error: unknown): never {
+  if (error instanceof AppointmentTimingValidationError) {
+    throw new AppointmentValidationError(error.message);
+  }
+  throw error;
+}
+
+function toBusyTimingSnapshot(
+  appointment: AppointmentBusyTimingSnapshot,
+): AppointmentBusyTimingSnapshot {
+  return {
+    startsAt: appointment.startsAt,
+    endsAt: appointment.endsAt,
+    timingSemanticsVersion: appointment.timingSemanticsVersion ?? 1,
+    breakAfterMinutes: appointment.breakAfterMinutes,
+    standardBreakAfterMinutes: appointment.standardBreakAfterMinutes,
+    standardDurationMinutes: appointment.standardDurationMinutes,
+    isManualTimeOverride: appointment.isManualTimeOverride,
+  };
 }
 
 function isAppointmentSerializationFailure(error: unknown): boolean {
@@ -169,11 +195,15 @@ export type OnlineAppointmentCreateResult = {
 function mapAppointment(
   appointment: Appointment & { service: { publicName: string } | null },
 ): AppointmentDto {
+  const busyEnd = getAppointmentBusyInterval(
+    toBusyTimingSnapshot(appointment),
+  ).endsAt;
+
   return {
     id: appointment.id,
     serviceId: appointment.serviceId,
     startsAt: appointment.startsAt.toISOString(),
-    endsAt: appointment.endsAt.toISOString(),
+    endsAt: busyEnd.toISOString(),
     clientName: appointment.clientName,
     clientPhone: appointment.clientPhone,
     serviceName: appointment.service?.publicName ?? null,
@@ -222,12 +252,8 @@ async function loadConflictContext(
       },
       select: {
         id: true,
-        startsAt: true,
-        endsAt: true,
-        breakAfterMinutes: true,
-        standardDurationMinutes: true,
-        standardBreakAfterMinutes: true,
         status: true,
+        ...APPOINTMENT_BUSY_TIMING_SELECT,
       },
     }),
     db.scheduleBlock.findMany({
@@ -258,35 +284,19 @@ async function loadConflictContext(
   };
 }
 
-async function resolveBreakAfterMinutesForInput(
-  input: AppointmentWriteInput,
-): Promise<number> {
-  if (!input.serviceId) {
-    return 0;
-  }
-
-  const timing = await resolveServiceTimingForMaster(
-    input.masterId,
-    input.serviceId,
-  );
-
-  return timing?.breakAfterMinutes ?? 0;
-}
-
 async function assertNoBlockingConflict(
   db: AppointmentConflictDbClient,
   input: AppointmentWriteInput,
-  candidateBreakAfterMinutes: number,
   excludeAppointmentId?: string,
   writeOptions?: {
     allowAppointmentOverlap?: boolean;
-    usePublicBusyForExistingAppointments?: boolean;
   },
 ) {
   const startsAt = parseStudioDateTime(input.dateKey, input.startTime);
-  const endsAt = parseStudioDateTime(input.dateKey, input.endTime);
+  // endTime is always desired free-at for conflict checks.
+  const desiredFreeAt = parseStudioDateTime(input.dateKey, input.endTime);
 
-  if (endsAt <= startsAt) {
+  if (desiredFreeAt <= startsAt) {
     throw new AppointmentValidationError("Окончание должно быть позже начала");
   }
 
@@ -307,11 +317,7 @@ async function assertNoBlockingConflict(
     constrainAppointmentEnd: workHours.constrainAppointmentEnd,
     extraWorkWindows: context.extraWorkWindows,
     appointments: context.appointments.map((appointment) => ({
-      startsAt: appointment.startsAt,
-      endsAt: appointment.endsAt,
-      breakAfterMinutes: appointment.breakAfterMinutes,
-      standardDurationMinutes: appointment.standardDurationMinutes,
-      standardBreakAfterMinutes: appointment.standardBreakAfterMinutes,
+      ...toBusyTimingSnapshot(appointment),
       status: appointment.status,
     })),
     scheduleBlocks: context.scheduleBlocks.map((block) => ({
@@ -321,11 +327,9 @@ async function assertNoBlockingConflict(
     })),
     candidateInterval: {
       startsAt,
-      endsAt,
-      breakAfterMinutes: candidateBreakAfterMinutes,
+      endsAt: desiredFreeAt,
+      breakAfterMinutes: 0,
     },
-    usePublicBusyForAppointments:
-      writeOptions?.usePublicBusyForExistingAppointments === true,
   });
 
   const blockingConflict = resolveAppointmentWriteConflict(
@@ -341,75 +345,9 @@ async function assertNoBlockingConflict(
   }
 }
 
-async function resolveTimingFields(
-  input: AppointmentWriteInput,
-  startsAt: Date,
-  endsAt: Date,
-) {
-  let standardDurationMinutes: number | null = null;
-  let standardBreakAfterMinutes: number | null = null;
-  let serviceDurationMinutes: number | null = null;
-  let breakAfterMinutes: number | null = null;
-  let isManualTimeOverride = input.isManualTimeOverride ?? false;
-
-  const totalMinutes = diffMinutes(startsAt, endsAt);
-
-  if (input.serviceId) {
-    const timing = await resolveServiceTimingForMaster(
-      input.masterId,
-      input.serviceId,
-    );
-
-    if (timing) {
-      standardDurationMinutes = timing.durationMinutes;
-      standardBreakAfterMinutes = timing.breakAfterMinutes;
-      const durationOnlyEndsAt =
-        addMinutesSafe(startsAt, timing.durationMinutes) ?? startsAt;
-      const withBreakEndsAt = calculateAppointmentEndsAt(
-        startsAt,
-        timing.durationMinutes,
-        timing.breakAfterMinutes,
-      );
-
-      if (endsAt.getTime() === durationOnlyEndsAt.getTime()) {
-        serviceDurationMinutes = timing.durationMinutes;
-        breakAfterMinutes = timing.breakAfterMinutes;
-        isManualTimeOverride = false;
-      } else if (endsAt.getTime() === withBreakEndsAt.getTime()) {
-        serviceDurationMinutes = timing.durationMinutes;
-        breakAfterMinutes = timing.breakAfterMinutes;
-        isManualTimeOverride = false;
-      } else {
-        isManualTimeOverride = true;
-        serviceDurationMinutes = totalMinutes;
-        breakAfterMinutes = timing.breakAfterMinutes;
-      }
-    }
-  }
-
-  if (!input.serviceId || serviceDurationMinutes == null) {
-    serviceDurationMinutes = totalMinutes;
-    breakAfterMinutes = 0;
-    isManualTimeOverride = true;
-  }
-
-  return {
-    standardDurationMinutes,
-    standardBreakAfterMinutes,
-    serviceDurationMinutes,
-    breakAfterMinutes,
-    isManualTimeOverride,
-  };
-}
-
 export type CreateAppointmentOptions = {
   /** Только ручной create: строго true разрешает overlap с другой записью мастера. */
   allowAppointmentOverlap?: boolean;
-  /**
-   * Online write: existing appointments блокируют по public busy interval.
-   * Manual OWNER/MANAGER path must keep actual busy (default false).
-   */
-  usePublicBusyForExistingAppointments?: boolean;
 };
 
 export async function createAppointment(
@@ -429,7 +367,6 @@ export async function createOnlineAppointment(
   },
 ): Promise<OnlineAppointmentCreateResult> {
   // Public path never receives overlap override options — overlap stays blocked.
-  // Existing appointments use public (conservative) busy interval.
   const result = await createAppointmentRecord(
     {
       ...input,
@@ -438,9 +375,6 @@ export async function createOnlineAppointment(
       recordPublicLegalAcceptances: true,
     },
     null,
-    {
-      usePublicBusyForExistingAppointments: true,
-    },
   );
 
   if (!result.issuedManageToken) {
@@ -483,20 +417,37 @@ async function createAppointmentRecord(
     }
 
     const startsAt = parseStudioDateTime(input.dateKey, input.startTime);
-    const endsAt = parseStudioDateTime(input.dateKey, input.endTime);
+    const desiredFreeAt = parseStudioDateTime(input.dateKey, input.endTime);
 
-    if (!Number.isFinite(startsAt.getTime()) || !Number.isFinite(endsAt.getTime())) {
+    if (
+      !Number.isFinite(startsAt.getTime()) ||
+      !Number.isFinite(desiredFreeAt.getTime())
+    ) {
       throw new AppointmentValidationError("Некорректные дата или время записи");
     }
 
-    if (endsAt <= startsAt) {
+    if (desiredFreeAt <= startsAt) {
       throw new AppointmentValidationError("Окончание должно быть позже начала");
     }
 
-    const [timingFields, candidateBreakAfterMinutes] = await Promise.all([
-      resolveTimingFields(input, startsAt, endsAt),
-      resolveBreakAfterMinutesForInput(input),
-    ]);
+    const serviceTiming = await resolveServiceTimingForMaster(
+      input.masterId,
+      input.serviceId!,
+    );
+
+    let timingWrite;
+    try {
+      timingWrite = buildAppointmentTimingWriteData({
+        startsAt,
+        desiredFreeAt,
+        standardDurationMinutes: serviceTiming?.durationMinutes ?? null,
+        standardBreakAfterMinutes: serviceTiming?.breakAfterMinutes ?? null,
+        breakAfterMinutes: serviceTiming?.breakAfterMinutes ?? 0,
+        existing: null,
+      });
+    } catch (error) {
+      rethrowTimingValidation(error);
+    }
 
     const issuedManageToken =
       input.source === "ONLINE" ? createManageToken() : null;
@@ -517,7 +468,7 @@ async function createAppointmentRecord(
       master: { connect: { id: input.masterId } },
       service: { connect: { id: input.serviceId! } },
       startsAt,
-      endsAt,
+      endsAt: timingWrite.endsAt,
       clientName: input.clientName.trim(),
       clientPhone: input.clientPhone.trim(),
       comment: input.comment?.trim() || null,
@@ -539,7 +490,13 @@ async function createAppointmentRecord(
       ...(input.clientId
         ? { client: { connect: { id: input.clientId } } }
         : {}),
-      ...timingFields,
+      serviceDurationMinutes: timingWrite.serviceDurationMinutes,
+      breakAfterMinutes: timingWrite.breakAfterMinutes,
+      standardDurationMinutes: timingWrite.standardDurationMinutes,
+      standardBreakAfterMinutes: timingWrite.standardBreakAfterMinutes,
+      isManualTimeOverride: timingWrite.isManualTimeOverride,
+      timingSemanticsVersion: timingWrite.timingSemanticsVersion,
+      timingCanonicalStoredAt: timingWrite.timingCanonicalStoredAt,
     };
 
     if (process.env.NODE_ENV !== "production") {
@@ -547,29 +504,24 @@ async function createAppointmentRecord(
         masterId: input.masterId,
         serviceId: input.serviceId,
         startsAt: startsAt.toISOString(),
-        endsAt: endsAt.toISOString(),
+        endsAt: timingWrite.endsAt.toISOString(),
+        desiredFreeAt: desiredFreeAt.toISOString(),
         status: input.status,
         source: input.source,
         appliedPromotionsCount: input.appliedPromotions?.length ?? 0,
-        serviceDurationMinutes: timingFields.serviceDurationMinutes,
-        breakAfterMinutes: timingFields.breakAfterMinutes,
+        serviceDurationMinutes: timingWrite.serviceDurationMinutes,
+        breakAfterMinutes: timingWrite.breakAfterMinutes,
+        timingSemanticsVersion: timingWrite.timingSemanticsVersion,
         hasManageTokenHash: Boolean(manageTokenHash),
         // Never log issuedManageToken / raw manageToken
       });
     }
 
     const appointment = await runSerializableAppointmentWrite(async (tx) => {
-      await assertNoBlockingConflict(
-        tx,
-        input,
-        candidateBreakAfterMinutes,
-        undefined,
-        {
-          allowAppointmentOverlap: options?.allowAppointmentOverlap === true,
-          usePublicBusyForExistingAppointments:
-            options?.usePublicBusyForExistingAppointments === true,
-        },
-      );
+      // input.endTime is desired free-at; candidate breakAfterMinutes = 0.
+      await assertNoBlockingConflict(tx, input, undefined, {
+        allowAppointmentOverlap: options?.allowAppointmentOverlap === true,
+      });
 
       const created = await tx.appointment.create({
         data: createPayload,
@@ -602,6 +554,11 @@ async function createAppointmentRecord(
       issuedManageToken,
     };
   } catch (error) {
+    if (error instanceof AppointmentTimingValidationError) {
+      const validationError = new AppointmentValidationError(error.message);
+      logServiceError("appointment.create", validationError);
+      throw validationError;
+    }
     logServiceError("appointment.create", error);
     throw error;
   }
@@ -628,11 +585,17 @@ export async function updateAppointment(
     );
   }
 
+  const existingSnapshot = toBusyTimingSnapshot(existing);
+  const currentBusyEnd = getAppointmentBusyInterval(existingSnapshot).endsAt;
+
   const merged: AppointmentWriteInput = {
     masterId: input.masterId ?? existing.masterId,
     dateKey: input.dateKey ?? formatDateKeyInStudio(existing.startsAt),
     startTime: input.startTime ?? formatStudioTimeInput(existing.startsAt),
-    endTime: input.endTime ?? formatStudioTimeInput(existing.endsAt),
+    endTime:
+      input.endTime !== undefined
+        ? input.endTime
+        : formatStudioTimeInput(currentBusyEnd),
     serviceId:
       input.serviceId !== undefined ? input.serviceId : existing.serviceId,
     clientName: input.clientName ?? existing.clientName,
@@ -649,22 +612,30 @@ export async function updateAppointment(
       input.isManualTimeOverride ?? existing.isManualTimeOverride,
   };
 
-  const startsAt = parseStudioDateTime(merged.dateKey, merged.startTime);
-  const endsAt = parseStudioDateTime(merged.dateKey, merged.endTime);
+  const desiredStartsAt = parseStudioDateTime(merged.dateKey, merged.startTime);
+  const desiredFreeAt = parseStudioDateTime(merged.dateKey, merged.endTime);
 
-  if (endsAt <= startsAt) {
+  if (desiredFreeAt <= desiredStartsAt) {
     throw new AppointmentValidationError("Окончание должно быть позже начала");
   }
 
-  const timingFields = await resolveTimingFields(merged, startsAt, endsAt);
+  const timingDirty = isAppointmentTimingDirty({
+    current: existingSnapshot,
+    currentServiceId: existing.serviceId,
+    currentMasterId: existing.masterId,
+    currentDateKey: formatDateKeyInStudio(existing.startsAt),
+    desiredStartsAt,
+    desiredFreeAt,
+    desiredServiceId: merged.serviceId ?? null,
+    desiredMasterId: merged.masterId,
+    desiredDateKey: merged.dateKey,
+  });
 
-  const data: Prisma.AppointmentUpdateInput = {
+  const nonTimingData: Prisma.AppointmentUpdateInput = {
     service:
       merged.serviceId != null
         ? { connect: { id: merged.serviceId } }
         : { disconnect: true },
-    startsAt,
-    endsAt,
     clientName: merged.clientName.trim(),
     clientPhone: merged.clientPhone.trim(),
     comment: merged.comment?.trim() || null,
@@ -672,22 +643,51 @@ export async function updateAppointment(
     isBold: merged.isBold ?? false,
     status: merged.status,
     source: merged.source,
-    ...timingFields,
   };
 
+  let data: Prisma.AppointmentUpdateInput = nonTimingData;
+
+  if (timingDirty) {
+    const serviceTiming = merged.serviceId
+      ? await resolveServiceTimingForMaster(merged.masterId, merged.serviceId)
+      : null;
+
+    let timingWrite;
+    try {
+      timingWrite = buildAppointmentTimingWriteData({
+        startsAt: desiredStartsAt,
+        desiredFreeAt,
+        standardDurationMinutes: serviceTiming?.durationMinutes ?? null,
+        standardBreakAfterMinutes: serviceTiming?.breakAfterMinutes ?? null,
+        breakAfterMinutes: serviceTiming?.breakAfterMinutes ?? 0,
+        existing: existingSnapshot,
+        isUpdate: true,
+      });
+    } catch (error) {
+      rethrowTimingValidation(error);
+    }
+
+    data = {
+      ...nonTimingData,
+      master: { connect: { id: merged.masterId } },
+      startsAt: desiredStartsAt,
+      endsAt: timingWrite.endsAt,
+      serviceDurationMinutes: timingWrite.serviceDurationMinutes,
+      breakAfterMinutes: timingWrite.breakAfterMinutes,
+      standardDurationMinutes: timingWrite.standardDurationMinutes,
+      standardBreakAfterMinutes: timingWrite.standardBreakAfterMinutes,
+      isManualTimeOverride: timingWrite.isManualTimeOverride,
+      timingSemanticsVersion: timingWrite.timingSemanticsVersion,
+      timingCanonicalStoredAt: timingWrite.timingCanonicalStoredAt,
+    };
+  }
+
   const needsConflictCheck = isBlockingAppointmentStatus(merged.status);
-  const candidateBreakAfterMinutes = needsConflictCheck
-    ? await resolveBreakAfterMinutesForInput(merged)
-    : 0;
 
   const appointment = needsConflictCheck
     ? await runSerializableAppointmentWrite(async (tx) => {
-        await assertNoBlockingConflict(
-          tx,
-          merged,
-          candidateBreakAfterMinutes,
-          id,
-        );
+        // merged.endTime is desired free-at; candidate breakAfterMinutes = 0.
+        await assertNoBlockingConflict(tx, merged, id);
 
         return tx.appointment.update({
           where: { id },

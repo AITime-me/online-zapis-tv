@@ -248,7 +248,17 @@ persist_state_manifest() {
     "APP_ROLLBACK_STATUS=$(ops_escape_manifest_value "$APP_ROLLBACK_STATUS")" \
     "DOCKER_HEALTH_STATUS=$(ops_escape_manifest_value "$DOCKER_HEALTH_STATUS")" \
     "HTTP_HEALTH_STATUS=$(ops_escape_manifest_value "$HTTP_HEALTH_STATUS")" \
-    "LAST_ERROR_SUMMARY=$(ops_escape_manifest_value "${LAST_ERROR_SUMMARY:-}")"
+    "LAST_ERROR_SUMMARY=$(ops_escape_manifest_value "${LAST_ERROR_SUMMARY:-}")" \
+    "COMPAT_COMMIT_SHA=$(ops_escape_manifest_value "${COMPAT_COMMIT_SHA:-$TARGET_COMMIT_SHA}")" \
+    "FULL_BUSY_WRITES_FLAG=$(ops_escape_manifest_value "${FULL_BUSY_WRITES_FLAG:-$(ops_read_env_value APPOINTMENT_FULL_BUSY_END_WRITES_ENABLED "$STAGING_ENV_FILE" || true)}")" \
+    "DEPLOY_AT_UTC=$(ops_escape_manifest_value "${DEPLOY_AT_UTC:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}")" \
+    "PHASE1_VERSION_ONLY_V2_COUNT=$(ops_escape_manifest_value "${PHASE1_VERSION_ONLY_V2_COUNT:-}")" \
+    "CANONICAL_V2_WRITE_COUNT_BEFORE=$(ops_escape_manifest_value "${CANONICAL_V2_WRITE_COUNT_BEFORE:-}")" \
+    "CANONICAL_V2_WRITE_COUNT_AFTER=$(ops_escape_manifest_value "${CANONICAL_V2_WRITE_COUNT_AFTER:-}")" \
+    "FIRST_CANONICAL_V2_WRITE_AT=$(ops_escape_manifest_value "${FIRST_CANONICAL_V2_WRITE_AT:-}")" \
+    "PRE_COMPAT_ROLLBACK_ALLOWED=$(ops_escape_manifest_value "${PRE_COMPAT_ROLLBACK_ALLOWED:-}")" \
+    "ALLOWED_ROLLBACK_TARGET=$(ops_escape_manifest_value "${ALLOWED_ROLLBACK_TARGET:-}")" \
+    "APP_FULL_BUSY_COMPAT=$(ops_escape_manifest_value "${APP_FULL_BUSY_COMPAT:-yes}")"
 
   ops_update_latest_symlink "$MANIFEST_PATH"
 }
@@ -564,6 +574,7 @@ main() {
   ops_info "  migration: ${MIGRATION_STATUS}"
   ops_info "  docker health: ${DOCKER_HEALTH_STATUS}"
   ops_info "  http health: ${HTTP_HEALTH_STATUS}"
+  ops_info "  full busy writes: $(ops_print_full_busy_writes_runtime_label "$STAGING_ENV_FILE")"
   ops_info "  manifest: ${MANIFEST_PATH}"
 }
 

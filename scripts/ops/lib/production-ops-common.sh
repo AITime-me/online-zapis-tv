@@ -431,7 +431,7 @@ ops_validate_production_env_file() {
   local file="$PRODUCTION_ENV_FILE"
   local app_env auth_secret auth_url schedule_token
   local postgres_user postgres_password postgres_db
-  local trust_proxy mail_provider
+  local trust_proxy mail_provider full_busy_writes
   local mail_from_address smtp_host smtp_user smtp_password smtp_port smtp_secure
 
   ops_check_env_file_permissions "$file"
@@ -488,6 +488,13 @@ ops_validate_production_env_file() {
     ops_die "TRUST_PROXY_HEADERS must be true in production (reverse proxy expected)"
   fi
   ops_report_env_check TRUST_PROXY_HEADERS OK
+
+  full_busy_writes="$(ops_read_env_value APPOINTMENT_FULL_BUSY_END_WRITES_ENABLED "$file" || true)"
+  if [[ -n "$full_busy_writes" && "$full_busy_writes" != "true" && "$full_busy_writes" != "false" ]]; then
+    ops_report_env_check APPOINTMENT_FULL_BUSY_END_WRITES_ENABLED INVALID
+    ops_die "APPOINTMENT_FULL_BUSY_END_WRITES_ENABLED must be true, false, or empty (default false)"
+  fi
+  ops_report_env_check APPOINTMENT_FULL_BUSY_END_WRITES_ENABLED OK
 
   mail_provider="$(ops_read_env_value MAIL_PROVIDER "$file" || true)"
   if ops_is_disabled_mail_provider "$mail_provider"; then
@@ -932,6 +939,103 @@ ops_require_interactive_confirmation() {
   IFS= read -r answer
   if [[ "$answer" != "$expected" ]]; then
     ops_die "confirmation failed; expected exact input: ${expected}"
+  fi
+}
+
+# --- appointment full-busy Phase 1: pre-compat rollback guard ---
+
+ops_timing_pre_rollback_sql_file() {
+  printf '%s' "${OPS_REPO_ROOT}/scripts/ops/lib/appointment-timing-pre-rollback-audit.sql"
+}
+
+# Prints only:
+#   PRE_COMPAT_ROLLBACK_ALLOWED=yes|no
+#   CANONICAL_V2_WRITE_COUNT=<n>
+#   PHASE1_VERSION_ONLY_V2_COUNT=<n>
+# Dry-run of a forbidden pre-compat rollback (CANONICAL_V2_WRITE_COUNT > 0)
+# must also exit non-zero before confirm / apply.
+ops_run_appointment_timing_pre_rollback_audit() {
+  local env_file="$1"
+  local compose_file="$2"
+  local sql_file pg_user pg_db output canonical version_only
+
+  sql_file="$(ops_timing_pre_rollback_sql_file)"
+  [[ -f "$sql_file" ]] || ops_die "missing timing pre-rollback SQL: ${sql_file}"
+
+  pg_user="$(ops_read_env_value POSTGRES_USER "$env_file" || true)"
+  pg_db="$(ops_read_env_value POSTGRES_DB "$env_file" || true)"
+  [[ -n "$pg_user" ]] || ops_die "POSTGRES_USER missing for timing audit"
+  [[ -n "$pg_db" ]] || ops_die "POSTGRES_DB missing for timing audit"
+
+  if ! output="$(
+    docker compose -f "$compose_file" --env-file "$env_file" exec -T postgres \
+      psql -v ON_ERROR_STOP=1 -U "$pg_user" -d "$pg_db" -At -F $'\t' \
+      -f - <"$sql_file" 2>/dev/null
+  )"; then
+    ops_die "timing pre-rollback audit failed (database unreachable or SQL error)"
+  fi
+
+  output="$(printf '%s\n' "$output" | tail -n 1)"
+  IFS=$'\t' read -r canonical version_only <<<"$output"
+
+  if [[ -z "${canonical:-}" || -z "${version_only:-}" ]]; then
+    ops_die "timing pre-rollback audit returned malformed output"
+  fi
+  if ! [[ "$canonical" =~ ^[0-9]+$ && "$version_only" =~ ^[0-9]+$ ]]; then
+    ops_die "timing pre-rollback audit returned non-integer counts"
+  fi
+
+  TIMING_CANONICAL_V2_WRITE_COUNT="$canonical"
+  TIMING_PHASE1_VERSION_ONLY_V2_COUNT="$version_only"
+
+  if [[ "$canonical" -gt 0 ]]; then
+    TIMING_PRE_COMPAT_ROLLBACK_ALLOWED="no"
+  else
+    TIMING_PRE_COMPAT_ROLLBACK_ALLOWED="yes"
+  fi
+
+  printf 'PRE_COMPAT_ROLLBACK_ALLOWED=%s\n' "$TIMING_PRE_COMPAT_ROLLBACK_ALLOWED"
+  printf 'CANONICAL_V2_WRITE_COUNT=%s\n' "$TIMING_CANONICAL_V2_WRITE_COUNT"
+  printf 'PHASE1_VERSION_ONLY_V2_COUNT=%s\n' "$TIMING_PHASE1_VERSION_ONLY_V2_COUNT"
+}
+
+ops_rollback_target_is_pre_full_busy_compat() {
+  local manifest="$1"
+  local marker
+  marker="$(ops_read_manifest_value "$manifest" APP_FULL_BUSY_COMPAT || true)"
+  if [[ "$marker" == "yes" ]]; then
+    return 1
+  fi
+  return 0
+}
+
+ops_assert_pre_compat_timing_rollback_allowed() {
+  local env_file="$1"
+  local compose_file="$2"
+  local manifest="$3"
+
+  if ! ops_rollback_target_is_pre_full_busy_compat "$manifest"; then
+    ops_info "rollback target is full-busy-compat (or newer) — timing canonical-write guard skipped"
+    TIMING_PRE_COMPAT_ROLLBACK_ALLOWED="yes"
+    return 0
+  fi
+
+  ops_run_appointment_timing_pre_rollback_audit "$env_file" "$compose_file"
+
+  if [[ "${TIMING_PRE_COMPAT_ROLLBACK_ALLOWED:-no}" != "yes" ]]; then
+    ops_die "pre-compat rollback forbidden: CANONICAL_V2_WRITE_COUNT=${TIMING_CANONICAL_V2_WRITE_COUNT:-unknown}"
+  fi
+}
+
+# Safe runtime label only — never prints env values or secrets.
+ops_print_full_busy_writes_runtime_label() {
+  local env_file="$1"
+  local val
+  val="$(ops_read_env_value APPOINTMENT_FULL_BUSY_END_WRITES_ENABLED "$env_file" || true)"
+  if [[ "$val" == "true" ]]; then
+    printf 'FULL_BUSY_WRITES_ON'
+  else
+    printf 'FULL_BUSY_WRITES_OFF'
   fi
 }
 

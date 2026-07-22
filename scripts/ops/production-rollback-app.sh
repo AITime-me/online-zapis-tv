@@ -136,30 +136,6 @@ write_rollback_manifest() {
   ROLLBACK_RESULT_MANIFEST="$manifest"
 }
 
-perform_rollback() {
-  local rollback_tag expected_image_id
-
-  assert_previous_app_rollback_available
-
-  rollback_tag="$(ops_read_manifest_value "$ROLLBACK_MANIFEST" ROLLBACK_IMAGE_TAG || true)"
-  expected_image_id="$(ops_read_manifest_value "$ROLLBACK_MANIFEST" PREVIOUS_APP_IMAGE_ID || true)"
-
-  if ! docker image inspect "$rollback_tag" >/dev/null 2>&1; then
-    ops_die "rollback image not found: ${rollback_tag}"
-  fi
-
-  if [[ "$OPS_DRY_RUN" -eq 1 ]]; then
-    return 0
-  fi
-
-  ops_apply_compose_app_image "$rollback_tag"
-  ops_recreate_app_container
-
-  if ! ops_assert_container_image_matches "$PRODUCTION_APP_CONTAINER" "$expected_image_id"; then
-    ops_die "rollback failed: container image id does not match expected previous image"
-  fi
-}
-
 main() {
   parse_args "$@"
   ops_setup_common_traps
@@ -179,6 +155,12 @@ main() {
   ops_assess_rollback_migration_risk "$ROLLBACK_MANIFEST"
   print_rollback_plan
   assert_previous_app_rollback_available
+
+  # timing pre-rollback audit → eligibility (before confirm / dry-run success)
+  ops_assert_pre_compat_timing_rollback_allowed \
+    "$PRODUCTION_ENV_FILE" \
+    "$PRODUCTION_COMPOSE_FILE" \
+    "$ROLLBACK_MANIFEST"
 
   if [[ "$OPS_DRY_RUN" -eq 1 ]]; then
     ops_info "Dry-run complete — no Docker changes were made."
@@ -207,6 +189,36 @@ main() {
 
   write_rollback_manifest "success"
   ops_info "Production app rollback complete (database unchanged). Manifest: ${ROLLBACK_RESULT_MANIFEST}"
+}
+
+perform_rollback() {
+  local rollback_tag expected_image_id
+
+  assert_previous_app_rollback_available
+
+  # Defense in depth: eligibility guard also inside apply path.
+  ops_assert_pre_compat_timing_rollback_allowed \
+    "$PRODUCTION_ENV_FILE" \
+    "$PRODUCTION_COMPOSE_FILE" \
+    "$ROLLBACK_MANIFEST"
+
+  rollback_tag="$(ops_read_manifest_value "$ROLLBACK_MANIFEST" ROLLBACK_IMAGE_TAG || true)"
+  expected_image_id="$(ops_read_manifest_value "$ROLLBACK_MANIFEST" PREVIOUS_APP_IMAGE_ID || true)"
+
+  if ! docker image inspect "$rollback_tag" >/dev/null 2>&1; then
+    ops_die "rollback image not found: ${rollback_tag}"
+  fi
+
+  if [[ "$OPS_DRY_RUN" -eq 1 ]]; then
+    return 0
+  fi
+
+  ops_apply_compose_app_image "$rollback_tag"
+  ops_recreate_app_container
+
+  if ! ops_assert_container_image_matches "$PRODUCTION_APP_CONTAINER" "$expected_image_id"; then
+    ops_die "rollback failed: container image id does not match expected previous image"
+  fi
 }
 
 main "$@"

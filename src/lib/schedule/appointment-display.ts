@@ -48,8 +48,11 @@ export function isScheduleAppointmentBold(
 }
 
 /**
- * timeLabel — фактический интервал процедуры (startsAt–endsAt).
- * breakAfterMinutes / busy-хвост в отображение не входят.
+ * timeLabel — интервал занятости мастера startsAt–busyEnd (free-at).
+ * Для staff schedule DTO endsAt уже должен быть busyEnd.
+ * Client-facing procedure duration остаётся отдельным полем (не +break).
+ *
+ * Future ICS (not in repo): client DTEND = start+procedure; staff DTEND = free-at.
  */
 export function buildScheduleAppointmentDisplay(
   appointment: Pick<

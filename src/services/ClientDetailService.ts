@@ -1,5 +1,9 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import {
+  APPOINTMENT_BUSY_TIMING_SELECT,
+  getAppointmentBusyInterval,
+} from "@/lib/schedule/appointment-busy";
 import { getActiveDuplicateClientIdSet } from "@/services/ClientDuplicateService";
 import type { ClientDetailResult } from "@/types/client-detail";
 
@@ -148,8 +152,7 @@ export async function getClientDetailsForAdmin(
       take: HISTORY_LIMIT + 1,
       select: {
         id: true,
-        startsAt: true,
-        endsAt: true,
+        ...APPOINTMENT_BUSY_TIMING_SELECT,
         status: true,
         comment: true,
         importantNote: true,
@@ -253,16 +256,19 @@ export async function getClientDetailsForAdmin(
       serviceNameSnapshot: row.serviceNameSnapshot ?? null,
     })),
     bookingRequestsTruncated,
-    appointments: appointmentRows.slice(0, HISTORY_LIMIT).map((row) => ({
-      id: row.id,
-      startsAt: row.startsAt.toISOString(),
-      endsAt: row.endsAt.toISOString(),
-      masterName: row.master.publicName,
-      serviceName: row.service?.publicName ?? null,
-      status: row.status,
-      comment: row.comment,
-      importantNote: row.importantNote,
-    })),
+    appointments: appointmentRows.slice(0, HISTORY_LIMIT).map((row) => {
+      const busyEnd = getAppointmentBusyInterval(row).endsAt;
+      return {
+        id: row.id,
+        startsAt: row.startsAt.toISOString(),
+        endsAt: busyEnd.toISOString(),
+        masterName: row.master.publicName,
+        serviceName: row.service?.publicName ?? null,
+        status: row.status,
+        comment: row.comment,
+        importantNote: row.importantNote,
+      };
+    }),
     appointmentsTruncated,
     mergedClients: mergedSources.map((row) => ({
       id: row.id,
