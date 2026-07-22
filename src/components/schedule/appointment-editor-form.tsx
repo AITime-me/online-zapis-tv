@@ -652,6 +652,7 @@ export function NewAppointmentForm({
   onCreated,
   onSaveStatus,
   onCancel,
+  onOverlapConfirmChange,
 }: {
   dateKey: string;
   masterId: string;
@@ -659,6 +660,7 @@ export function NewAppointmentForm({
   onCreated: () => void | Promise<void>;
   onSaveStatus: (status: "idle" | "saving" | "saved" | "error", message?: string) => void;
   onCancel: () => void;
+  onOverlapConfirmChange?: (open: boolean) => void;
 }) {
   const [form, setForm] = useState<AppointmentFormState>({
     startTime: options.master.workStart,
@@ -682,6 +684,13 @@ export function NewAppointmentForm({
   const overlapDialogRef = useRef<HTMLDivElement | null>(null);
 
   isSubmittingRef.current = isSubmitting;
+
+  useEffect(() => {
+    onOverlapConfirmChange?.(showOverlapConfirm);
+    return () => {
+      onOverlapConfirmChange?.(false);
+    };
+  }, [onOverlapConfirmChange, showOverlapConfirm]);
 
   const selectedService = options.services.find(
     (service) => service.id === form.serviceId,

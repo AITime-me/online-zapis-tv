@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
   formatDateKeyLabel,
   formatStudioTimeRange,
@@ -36,6 +36,32 @@ type QuickDayEditorProps = {
   onScheduleChange?: () => void | Promise<void>;
 };
 
+const DESKTOP_DRAG_MEDIA = "(min-width: 768px) and (pointer: fine)";
+const DRAG_THRESHOLD_PX = 6;
+const VIEWPORT_MARGIN_PX = 12;
+
+function clampPanelOffset(
+  panel: HTMLElement,
+  nextX: number,
+  nextY: number,
+  current: { x: number; y: number },
+): { x: number; y: number } {
+  const rect = panel.getBoundingClientRect();
+  const naturalLeft = rect.left - current.x;
+  const naturalTop = rect.top - current.y;
+  const width = rect.width;
+  const height = rect.height;
+  const minX = VIEWPORT_MARGIN_PX - naturalLeft;
+  const maxX = window.innerWidth - VIEWPORT_MARGIN_PX - width - naturalLeft;
+  const minY = VIEWPORT_MARGIN_PX - naturalTop;
+  const maxY = window.innerHeight - VIEWPORT_MARGIN_PX - height - naturalTop;
+
+  return {
+    x: Math.min(Math.max(nextX, minX), Math.max(minX, maxX)),
+    y: Math.min(Math.max(nextY, minY), Math.max(minY, maxY)),
+  };
+}
+
 export function QuickDayEditor({
   data: initialData,
   canEdit,
@@ -59,6 +85,117 @@ export function QuickDayEditor({
     isOnlineBookingEnabled: true,
   });
   const [extraError, setExtraError] = useState<string | null>(null);
+  const [panelOffset, setPanelOffset] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [desktopDragEnabled, setDesktopDragEnabled] = useState(false);
+  const [overlapConfirmOpen, setOverlapConfirmOpen] = useState(false);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const panelOffsetRef = useRef(panelOffset);
+  const suppressBackdropClickRef = useRef(false);
+
+  panelOffsetRef.current = panelOffset;
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+    const media = window.matchMedia(DESKTOP_DRAG_MEDIA);
+    const sync = () => setDesktopDragEnabled(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
+    const onResize = () => {
+      const panel = panelRef.current;
+      if (!panel) {
+        return;
+      }
+      setPanelOffset((current) =>
+        clampPanelOffset(panel, current.x, current.y, current),
+      );
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const canDrag = desktopDragEnabled && !overlapConfirmOpen;
+
+  const handleDragPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!canDrag || event.button !== 0) {
+      return;
+    }
+
+    const target = event.target as HTMLElement | null;
+    if (
+      target?.closest(
+        "button, a, input, select, textarea, label, [role='button']",
+      )
+    ) {
+      return;
+    }
+
+    const panel = panelRef.current;
+    if (!panel) {
+      return;
+    }
+
+    const pointerId = event.pointerId;
+    const startClientX = event.clientX;
+    const startClientY = event.clientY;
+    const origin = panelOffsetRef.current;
+    let moved = false;
+
+    event.currentTarget.setPointerCapture(pointerId);
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) {
+        return;
+      }
+      const dx = moveEvent.clientX - startClientX;
+      const dy = moveEvent.clientY - startClientY;
+      if (!moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) {
+        return;
+      }
+      moved = true;
+      setIsDragging(true);
+      const next = clampPanelOffset(
+        panel,
+        origin.x + dx,
+        origin.y + dy,
+        panelOffsetRef.current,
+      );
+      panelOffsetRef.current = next;
+      setPanelOffset(next);
+    };
+
+    const onPointerUp = (upEvent: PointerEvent) => {
+      if (upEvent.pointerId !== pointerId) {
+        return;
+      }
+      event.currentTarget.releasePointerCapture(pointerId);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+      setIsDragging(false);
+      if (moved) {
+        suppressBackdropClickRef.current = true;
+      }
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
+  };
+
+  const handleBackdropClick = () => {
+    if (suppressBackdropClickRef.current) {
+      suppressBackdropClickRef.current = false;
+      return;
+    }
+    onClose();
+  };
 
   const resetExtraForm = () => {
     setExtraForm({
@@ -73,6 +210,7 @@ export function QuickDayEditor({
     setShowNewAppointment(false);
     setShowNewExtraWork(false);
     setClosureFormMode("none");
+    setOverlapConfirmOpen(false);
   };
 
   const openIntervalForm = () => {
@@ -230,17 +368,25 @@ export function QuickDayEditor({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 p-4 pt-16"
-      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/15 p-4 pt-16"
+      onClick={handleBackdropClick}
       role="presentation"
     >
       <div
-        className="max-h-[85vh] w-full max-w-lg overflow-y-auto border border-[#dadce0] bg-white shadow-lg"
+        ref={panelRef}
+        className="flex max-h-[85vh] w-full max-w-lg flex-col border border-[#dadce0] bg-white shadow-lg"
+        style={{ transform: `translate(${panelOffset.x}px, ${panelOffset.y}px)` }}
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-labelledby="quick-day-editor-title"
       >
-        <div className="flex items-start justify-between border-b border-[#dadce0] bg-[#f8f9fa] px-3 py-2">
+        <div
+          className={`flex shrink-0 items-start justify-between border-b border-[#dadce0] bg-[#f8f9fa] px-3 py-2 ${
+            canDrag ? (isDragging ? "cursor-grabbing" : "cursor-grab") : ""
+          }`}
+          onPointerDown={handleDragPointerDown}
+          data-quick-day-drag-handle="true"
+        >
           <div>
             <h2
               id="quick-day-editor-title"
@@ -269,6 +415,7 @@ export function QuickDayEditor({
           <button
             type="button"
             onClick={onClose}
+            onPointerDown={(event) => event.stopPropagation()}
             className="ml-2 px-1 text-lg leading-none text-zinc-500 hover:text-zinc-900"
             aria-label="Закрыть"
           >
@@ -276,7 +423,7 @@ export function QuickDayEditor({
           </button>
         </div>
 
-        <div className="p-3">
+        <div className="min-h-0 flex-1 overflow-y-auto p-3">
           {canEdit ? (
             <div className="mb-3 flex gap-2">
               <button
@@ -315,6 +462,7 @@ export function QuickDayEditor({
                 }}
                 onSaveStatus={handleSaveStatus}
                 onCancel={() => setShowNewAppointment(false)}
+                onOverlapConfirmChange={setOverlapConfirmOpen}
               />
             </div>
           ) : null}
