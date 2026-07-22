@@ -92,22 +92,56 @@ export function QuickDayEditor({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const panelOffsetRef = useRef(panelOffset);
   const suppressBackdropClickRef = useRef(false);
+  const isMountedRef = useRef(true);
+  const activeDragTeardownRef = useRef<(() => void) | null>(null);
 
   panelOffsetRef.current = panelOffset;
+
+  const teardownActiveDrag = useCallback((options?: { moved?: boolean }) => {
+    const teardown = activeDragTeardownRef.current;
+    activeDragTeardownRef.current = null;
+    if (teardown) {
+      teardown();
+    }
+    if (!isMountedRef.current) {
+      return;
+    }
+    setIsDragging(false);
+    if (options?.moved) {
+      suppressBackdropClickRef.current = true;
+    }
+  }, []);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      teardownActiveDrag();
+    };
+  }, [teardownActiveDrag]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
       return;
     }
     const media = window.matchMedia(DESKTOP_DRAG_MEDIA);
-    const sync = () => setDesktopDragEnabled(media.matches);
+    const sync = () => {
+      const enabled = media.matches;
+      setDesktopDragEnabled(enabled);
+      if (!enabled) {
+        teardownActiveDrag();
+      }
+    };
     sync();
     media.addEventListener("change", sync);
     return () => media.removeEventListener("change", sync);
-  }, []);
+  }, [teardownActiveDrag]);
 
   useEffect(() => {
     const onResize = () => {
+      if (!isMountedRef.current) {
+        return;
+      }
       const panel = panelRef.current;
       if (!panel) {
         return;
@@ -121,6 +155,12 @@ export function QuickDayEditor({
   }, []);
 
   const canDrag = desktopDragEnabled && !overlapConfirmOpen;
+
+  useEffect(() => {
+    if (!canDrag) {
+      teardownActiveDrag();
+    }
+  }, [canDrag, teardownActiveDrag]);
 
   const handleDragPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!canDrag || event.button !== 0) {
@@ -141,16 +181,21 @@ export function QuickDayEditor({
       return;
     }
 
+    // Завершаем предыдущий незавершённый drag, если он остался.
+    teardownActiveDrag();
+
     const pointerId = event.pointerId;
+    const captureTarget = event.currentTarget;
     const startClientX = event.clientX;
     const startClientY = event.clientY;
     const origin = panelOffsetRef.current;
     let moved = false;
+    let cleanedUp = false;
 
-    event.currentTarget.setPointerCapture(pointerId);
+    captureTarget.setPointerCapture(pointerId);
 
     const onPointerMove = (moveEvent: PointerEvent) => {
-      if (moveEvent.pointerId !== pointerId) {
+      if (moveEvent.pointerId !== pointerId || !isMountedRef.current) {
         return;
       }
       const dx = moveEvent.clientX - startClientX;
@@ -170,23 +215,45 @@ export function QuickDayEditor({
       setPanelOffset(next);
     };
 
+    const finishDrag = () => {
+      teardownActiveDrag({ moved });
+    };
+
     const onPointerUp = (upEvent: PointerEvent) => {
       if (upEvent.pointerId !== pointerId) {
         return;
       }
-      event.currentTarget.releasePointerCapture(pointerId);
+      finishDrag();
+    };
+
+    const onPointerCancel = (cancelEvent: PointerEvent) => {
+      if (cancelEvent.pointerId !== pointerId) {
+        return;
+      }
+      finishDrag();
+    };
+
+    const teardown = () => {
+      if (cleanedUp) {
+        return;
+      }
+      cleanedUp = true;
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
-      window.removeEventListener("pointercancel", onPointerUp);
-      setIsDragging(false);
-      if (moved) {
-        suppressBackdropClickRef.current = true;
+      window.removeEventListener("pointercancel", onPointerCancel);
+      if (captureTarget.hasPointerCapture?.(pointerId)) {
+        try {
+          captureTarget.releasePointerCapture(pointerId);
+        } catch {
+          // Элемент мог уже исчезнуть при unmount.
+        }
       }
     };
 
+    activeDragTeardownRef.current = teardown;
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
-    window.addEventListener("pointercancel", onPointerUp);
+    window.addEventListener("pointercancel", onPointerCancel);
   };
 
   const handleBackdropClick = () => {

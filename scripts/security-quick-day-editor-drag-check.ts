@@ -94,6 +94,38 @@ function main(): void {
     /createPortal|role="alertdialog"[\s\S]*fixed inset/,
   );
 
+  // Drag listener lifecycle / teardown
+  assert.match(editor, /activeDragTeardownRef/);
+  assert.match(editor, /teardownActiveDrag/);
+  assert.match(editor, /if \(cleanedUp\) \{\s*return;/);
+  assert.match(
+    editor,
+    /removeEventListener\("pointermove"[\s\S]*removeEventListener\("pointerup"[\s\S]*removeEventListener\("pointercancel"/,
+  );
+  assert.match(
+    editor,
+    /isMountedRef\.current = false[\s\S]*teardownActiveDrag\(\)/,
+  );
+  assert.match(editor, /onPointerCancel/);
+  assert.match(
+    editor,
+    /if \(!enabled\) \{\s*teardownActiveDrag\(\)/,
+  );
+  assert.match(
+    editor,
+    /if \(!canDrag\) \{\s*teardownActiveDrag\(\)/,
+  );
+  assert.match(
+    editor,
+    /teardownActiveDrag\(\);\s*const pointerId/,
+    "новый drag сначала завершает предыдущий незавершённый",
+  );
+  assert.match(editor, /isMountedRef\.current/);
+  assert.match(
+    editor,
+    /if \(!isMountedRef\.current\) \{\s*return;[\s\S]*setIsDragging\(false\)/,
+  );
+
   console.log("security-quick-day-editor-drag-check: OK");
 }
 
