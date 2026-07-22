@@ -57,6 +57,7 @@
     "test:security:official-work-hours": "tsx scripts/security-official-work-hours-check.ts",
     "test:security:extra-work-online-slots": "tsx scripts/security-extra-work-online-slots-check.ts",
     "test:security:online-booking-slot-chains": "tsx scripts/security-online-booking-slot-chains-check.ts",
+    "test:security:public-booking-conservative-busy": "tsx scripts/security-public-booking-conservative-busy-check.ts",
     "test:security:owner-password-reset": "tsx scripts/security-owner-password-reset-check.ts",
     "test:e2e:schedule-cancel-race": "playwright test tests/schedule-cancel-race.spec.ts",
     "test:security:password-reset": "tsx scripts/security-password-reset-check.ts",
