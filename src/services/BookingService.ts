@@ -41,6 +41,11 @@ import {
   getBasePrice,
 } from "@/lib/pricing/price-layer";
 import { evaluateStoredAppliedPromotions } from "@/lib/promo/applied-promotions";
+import {
+  APPOINTMENT_BUSY_TIMING_SELECT,
+  getAppointmentBusyInterval,
+  type AppointmentBusyTimingSnapshot,
+} from "@/lib/schedule/appointment-busy";
 import { resolvePublicOnlineBookingHours } from "@/lib/schedule/master-work-hours";
 import { isBlockingAppointmentStatus } from "@/lib/schedule/non-blocking-appointment-statuses";
 import { SEED_TEST_SERVICE_IDS } from "@/lib/services/seed-test-service-ids";
@@ -54,10 +59,7 @@ import { resolveClientForLead } from "@/services/ClientLinkService";
 import {
   assertRequiredLegalDocumentsPublished,
 } from "@/services/LegalDocumentService";
-import {
-  checkMasterIntervalAvailability,
-  toPublicBusyInterval,
-} from "@/services/MasterAvailabilityService";
+import { checkMasterIntervalAvailability } from "@/services/MasterAvailabilityService";
 import { blocksForDayWhere } from "@/services/ScheduleBlockService";
 import {
   resolveServiceTimingForMaster,
@@ -257,14 +259,7 @@ function buildSlotChainWorkWindows(
 }
 
 function buildSlotChainBlockingIntervals(
-  appointments: Array<{
-    startsAt: Date;
-    endsAt: Date;
-    breakAfterMinutes: number | null;
-    standardDurationMinutes: number | null;
-    standardBreakAfterMinutes: number | null;
-    status: AppointmentStatus;
-  }>,
+  appointments: Array<AppointmentBusyTimingSnapshot & { status: AppointmentStatus }>,
   scheduleBlocks: Array<{
     startsAt: Date | null;
     endsAt: Date | null;
@@ -277,13 +272,7 @@ function buildSlotChainBlockingIntervals(
     if (!isBlockingAppointmentStatus(appointment.status)) {
       continue;
     }
-    const busy = toPublicBusyInterval({
-      startsAt: appointment.startsAt,
-      endsAt: appointment.endsAt,
-      breakAfterMinutes: appointment.breakAfterMinutes,
-      standardDurationMinutes: appointment.standardDurationMinutes,
-      standardBreakAfterMinutes: appointment.standardBreakAfterMinutes,
-    });
+    const busy = getAppointmentBusyInterval(appointment);
     intervals.push({
       startMinutes: dateToStudioMinutes(busy.startsAt),
       endMinutes: dateToStudioMinutes(busy.endsAt),
@@ -394,11 +383,7 @@ async function loadSlotContext(masterId: string, dateKey: string) {
         startsAt: { gte: dayStart, lte: dayEnd },
       },
       select: {
-        startsAt: true,
-        endsAt: true,
-        breakAfterMinutes: true,
-        standardDurationMinutes: true,
-        standardBreakAfterMinutes: true,
+        ...APPOINTMENT_BUSY_TIMING_SELECT,
         status: true,
       },
     }),
@@ -440,7 +425,11 @@ function isSlotAvailable(
   context: NonNullable<Awaited<ReturnType<typeof loadSlotContext>>>,
 ): boolean {
   const startsAt = parseStudioDateTime(dateKey, startTime);
-  const endsAt = addMinutesSafe(startsAt, durationMinutes) ?? startsAt;
+  // Free-at candidate: procedure + break already in endsAt; breakAfterMinutes: 0
+  // so toBusyInterval does not double-apply break. Work-hours fit in the slot
+  // loop already uses duration+break the same way.
+  const endsAt =
+    addMinutesSafe(startsAt, durationMinutes + breakAfterMinutes) ?? startsAt;
   const epoch = getEpochDate();
 
   const availability = checkMasterIntervalAvailability({
@@ -450,14 +439,7 @@ function isSlotAvailable(
     standardWorkEnd: context.workHours.workEnd,
     constrainAppointmentEnd: context.workHours.constrainAppointmentEnd,
     extraWorkWindows: context.extraWorkWindows,
-    appointments: context.appointments.map((appointment) => ({
-      startsAt: appointment.startsAt,
-      endsAt: appointment.endsAt,
-      breakAfterMinutes: appointment.breakAfterMinutes,
-      standardDurationMinutes: appointment.standardDurationMinutes,
-      standardBreakAfterMinutes: appointment.standardBreakAfterMinutes,
-      status: appointment.status,
-    })),
+    appointments: context.appointments,
     scheduleBlocks: context.scheduleBlocks.map((block) => ({
       startsAt: block.startsAt ?? epoch,
       endsAt: block.endsAt ?? epoch,
@@ -466,9 +448,8 @@ function isSlotAvailable(
     candidateInterval: {
       startsAt,
       endsAt,
-      breakAfterMinutes,
+      breakAfterMinutes: 0,
     },
-    usePublicBusyForAppointments: true,
   });
 
   return availability.isAvailable;
@@ -981,7 +962,7 @@ export async function createOnlineBooking(input: OnlineBookingInput) {
   const endTime = addMinutesToTime(
     input.date,
     input.startTime,
-    timing.durationMinutes,
+    timing.durationMinutes + timing.breakAfterMinutes,
   );
 
   const clientLink = await resolveClientForLead({

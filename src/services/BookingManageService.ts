@@ -11,6 +11,10 @@ import {
   createManageToken,
   hashManageToken,
 } from "@/lib/booking/manage-token";
+import {
+  getAppointmentBusyInterval,
+  toAppointmentBusyTimingSnapshot,
+} from "@/lib/schedule/appointment-busy";
 
 export type PublicManageAppointmentStatus = "active" | "cancelled" | "completed";
 
@@ -52,6 +56,12 @@ const manageInclude = {
   service: { select: { publicName: true, durationMinutes: true } },
 } as const;
 
+function resolveBusyEndsAt(appointment: Appointment): Date {
+  return getAppointmentBusyInterval(
+    toAppointmentBusyTimingSnapshot(appointment),
+  ).endsAt;
+}
+
 function resolvePublicStatus(
   appointment: Appointment,
   now: Date = getStudioNow(),
@@ -64,7 +74,7 @@ function resolvePublicStatus(
     return "cancelled";
   }
 
-  if (appointment.endsAt < now) {
+  if (resolveBusyEndsAt(appointment) < now) {
     return "completed";
   }
 
@@ -138,7 +148,7 @@ function canRequestReschedule(
     return true;
   }
 
-  if (appointment.endsAt < now) {
+  if (resolveBusyEndsAt(appointment) < now) {
     return false;
   }
 

@@ -24,6 +24,10 @@ import {
   formatStudioTime,
   getStudioThreeDayRange,
 } from "@/lib/datetime/studio";
+import {
+  getAppointmentBusyInterval,
+  toAppointmentBusyTimingSnapshot,
+} from "@/lib/schedule/appointment-busy";
 
 export type ExportParams = {
   exportType: EmergencyExportType;
@@ -242,13 +246,16 @@ export class EmergencyExportService {
     const rows: ExportRow[] = [];
 
     for (const appointment of appointments) {
+      const busyEnd = getAppointmentBusyInterval(
+        toAppointmentBusyTimingSnapshot(appointment),
+      ).endsAt;
       rows.push({
         sortAt: appointment.startsAt,
         values: [
           formatStudioDate(appointment.startsAt),
           appointment.master.internalName,
           formatStudioTime(appointment.startsAt),
-          formatStudioTime(appointment.endsAt),
+          formatStudioTime(busyEnd),
           "Запись",
           appointment.clientName,
           appointment.clientPhone,

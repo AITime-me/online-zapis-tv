@@ -69,6 +69,8 @@ COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 # страхуют standalone: Turbopack даёт require("nodemailer-<hash>") и битые symlink
 # в multi-stage Docker (MODULE_NOT_FOUND внутри app-контейнера).
 COPY --from=builder /app/node_modules/nodemailer ./node_modules/nodemailer
+# Safe runtime flag marker used by staging/production post-deploy verification.
+COPY --from=builder /app/src/lib/schedule/appointment-full-busy-writes-runtime.mjs ./scripts/ops/full-busy-writes-runtime-marker.mjs
 
 RUN mkdir -p /app/exports/emergency \
   && chown -R nextjs:nodejs /app/exports

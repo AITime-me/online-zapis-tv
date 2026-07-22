@@ -344,6 +344,16 @@ model Appointment {
   standardDurationMinutes   Int?              @map("standard_duration_minutes")
   standardBreakAfterMinutes Int?              @map("standard_break_after_minutes")
   isManualTimeOverride      Boolean           @default(false) @map("is_manual_time_override")
+  /**
+   * 1 = legacy endsAt = procedure end; 2 = canonical endsAt = free-at (busy end).
+   * Phase 1 compatibility: dual-read via getAppointmentBusyInterval.
+   */
+  timingSemanticsVersion    Int               @default(1) @map("timing_semantics_version")
+  /**
+   * Set when app/backfill stores free-at as endsAt (canonical v2 write).
+   * NULL for Phase 1 version-only bumps — used by pre-compat rollback guard.
+   */
+  timingCanonicalStoredAt   DateTime?         @map("timing_canonical_stored_at") @db.Timestamptz
   status                    AppointmentStatus @default(SCHEDULED)
   source                    AppointmentSource @default(INTERNAL)
   promoCode                 String?           @map("promo_code")

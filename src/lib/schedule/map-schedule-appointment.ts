@@ -7,6 +7,7 @@ import {
 import { normalizeMasterNote } from "@/lib/schedule/master-note-validation";
 import { buildPromotionLabels } from "@/lib/schedule/promotion-labels";
 import { parseAppliedPromotions } from "@/lib/promo/applied-promotions";
+import { getAppointmentBusyInterval } from "@/lib/schedule/appointment-busy";
 import type {
   ScheduleAppointmentMasterFields,
   ScheduleAppointmentOperationalFields,
@@ -24,11 +25,22 @@ type AppointmentWithService = Appointment & {
 function mapSharedFields(
   appointment: AppointmentWithService,
 ): ScheduleAppointmentSharedFields {
+  // Staff schedule shows busy free-at (v1 computed / v2 raw endsAt).
+  const busy = getAppointmentBusyInterval({
+    startsAt: appointment.startsAt,
+    endsAt: appointment.endsAt,
+    timingSemanticsVersion: appointment.timingSemanticsVersion,
+    breakAfterMinutes: appointment.breakAfterMinutes,
+    standardBreakAfterMinutes: appointment.standardBreakAfterMinutes,
+    standardDurationMinutes: appointment.standardDurationMinutes,
+    isManualTimeOverride: appointment.isManualTimeOverride,
+  });
+
   return {
     id: appointment.id,
     serviceId: appointment.serviceId,
     startsAt: appointment.startsAt.toISOString(),
-    endsAt: appointment.endsAt.toISOString(),
+    endsAt: busy.endsAt.toISOString(),
     clientName: appointment.clientName,
     serviceName: appointment.service?.publicName ?? null,
     isBold: appointment.isBold,

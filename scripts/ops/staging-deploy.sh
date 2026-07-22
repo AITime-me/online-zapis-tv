@@ -26,6 +26,9 @@ APP_ROLLBACK_STATUS="not_needed"
 DOCKER_HEALTH_STATUS="pending"
 HTTP_HEALTH_STATUS="pending"
 LAST_ERROR_SUMMARY=""
+CURRENT_APP_FULL_BUSY_COMPAT="unknown"
+PREVIOUS_APP_FULL_BUSY_COMPAT="unknown"
+PREVIOUS_APP_COMMIT="unknown"
 
 usage() {
   cat <<'EOF'
@@ -133,6 +136,9 @@ fetch_and_plan_git() {
 
   PREVIOUS_COMMIT_SHA="$current_sha"
   TARGET_COMMIT_SHA="$target_sha"
+  CURRENT_APP_FULL_BUSY_COMPAT="$(
+    ops_classify_commit_full_busy_compat "$TARGET_COMMIT_SHA"
+  )"
 
   if (( local_ahead > 0 )); then
     ops_die "local main contains commits not present on origin/main"
@@ -222,6 +228,20 @@ prepare_rollback_tag() {
   fi
 }
 
+classify_previous_app_image_capability() {
+  local previous_manifest=""
+
+  if [[ -L "${STAGING_DEPLOY_STATE_DIR}/latest" || -f "${STAGING_DEPLOY_STATE_DIR}/latest" ]]; then
+    previous_manifest="$(ops_resolve_manifest_path latest)"
+  fi
+
+  ops_resolve_deployed_image_full_busy_metadata \
+    "$PREVIOUS_APP_IMAGE_ID" \
+    "$previous_manifest"
+  PREVIOUS_APP_COMMIT="$DEPLOYED_IMAGE_COMMIT"
+  PREVIOUS_APP_FULL_BUSY_COMPAT="$DEPLOYED_IMAGE_FULL_BUSY_COMPAT"
+}
+
 persist_state_manifest() {
   local ts short_target
 
@@ -233,12 +253,19 @@ persist_state_manifest() {
 
   ops_ensure_private_dir "$STAGING_DEPLOY_STATE_DIR"
 
+  # APP_FULL_BUSY_COMPAT is retained as a legacy alias for the CURRENT image.
+  # Rollback classification must use PREVIOUS_APP_FULL_BUSY_COMPAT.
   ops_write_manifest_file "$MANIFEST_PATH" \
     "STATE_VERSION=${STAGING_STATE_VERSION}" \
     "TIMESTAMP_UTC=$(date -u +%Y%m%dT%H%M%SZ)" \
     "DEPLOY_MODE=$(ops_escape_manifest_value "$DEPLOY_MODE")" \
     "PREVIOUS_COMMIT_SHA=$(ops_escape_manifest_value "$PREVIOUS_COMMIT_SHA")" \
     "TARGET_COMMIT_SHA=$(ops_escape_manifest_value "$TARGET_COMMIT_SHA")" \
+    "CURRENT_APP_IMAGE_ID=$(ops_escape_manifest_value "${NEW_APP_IMAGE_ID:-}")" \
+    "CURRENT_APP_COMMIT=$(ops_escape_manifest_value "$TARGET_COMMIT_SHA")" \
+    "CURRENT_APP_FULL_BUSY_COMPAT=$(ops_escape_manifest_value "$CURRENT_APP_FULL_BUSY_COMPAT")" \
+    "PREVIOUS_APP_COMMIT=$(ops_escape_manifest_value "$PREVIOUS_APP_COMMIT")" \
+    "PREVIOUS_APP_FULL_BUSY_COMPAT=$(ops_escape_manifest_value "$PREVIOUS_APP_FULL_BUSY_COMPAT")" \
     "BACKUP_PATH=$(ops_escape_manifest_value "$BACKUP_PATH")" \
     "PREVIOUS_APP_IMAGE_ID=$(ops_escape_manifest_value "$PREVIOUS_APP_IMAGE_ID")" \
     "ROLLBACK_IMAGE_TAG=$(ops_escape_manifest_value "$ROLLBACK_IMAGE_TAG")" \
@@ -248,7 +275,17 @@ persist_state_manifest() {
     "APP_ROLLBACK_STATUS=$(ops_escape_manifest_value "$APP_ROLLBACK_STATUS")" \
     "DOCKER_HEALTH_STATUS=$(ops_escape_manifest_value "$DOCKER_HEALTH_STATUS")" \
     "HTTP_HEALTH_STATUS=$(ops_escape_manifest_value "$HTTP_HEALTH_STATUS")" \
-    "LAST_ERROR_SUMMARY=$(ops_escape_manifest_value "${LAST_ERROR_SUMMARY:-}")"
+    "LAST_ERROR_SUMMARY=$(ops_escape_manifest_value "${LAST_ERROR_SUMMARY:-}")" \
+    "COMPAT_COMMIT_SHA=$(ops_escape_manifest_value "${COMPAT_COMMIT_SHA:-$TARGET_COMMIT_SHA}")" \
+    "FULL_BUSY_WRITES_FLAG=$(ops_escape_manifest_value "${FULL_BUSY_WRITES_FLAG:-$(ops_read_env_value APPOINTMENT_FULL_BUSY_END_WRITES_ENABLED "$STAGING_ENV_FILE" || true)}")" \
+    "DEPLOY_AT_UTC=$(ops_escape_manifest_value "${DEPLOY_AT_UTC:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}")" \
+    "PHASE1_VERSION_ONLY_V2_COUNT=$(ops_escape_manifest_value "${PHASE1_VERSION_ONLY_V2_COUNT:-}")" \
+    "CANONICAL_V2_WRITE_COUNT_BEFORE=$(ops_escape_manifest_value "${CANONICAL_V2_WRITE_COUNT_BEFORE:-}")" \
+    "CANONICAL_V2_WRITE_COUNT_AFTER=$(ops_escape_manifest_value "${CANONICAL_V2_WRITE_COUNT_AFTER:-}")" \
+    "FIRST_CANONICAL_V2_WRITE_AT=$(ops_escape_manifest_value "${FIRST_CANONICAL_V2_WRITE_AT:-}")" \
+    "PRE_COMPAT_ROLLBACK_ALLOWED=$(ops_escape_manifest_value "${PRE_COMPAT_ROLLBACK_ALLOWED:-}")" \
+    "ALLOWED_ROLLBACK_TARGET=$(ops_escape_manifest_value "${ALLOWED_ROLLBACK_TARGET:-}")" \
+    "APP_FULL_BUSY_COMPAT=$(ops_escape_manifest_value "$CURRENT_APP_FULL_BUSY_COMPAT")"
 
   ops_update_latest_symlink "$MANIFEST_PATH"
 }
@@ -373,12 +410,20 @@ verify_health() {
 
   if ops_check_http_health; then
     HTTP_HEALTH_STATUS="ok"
-    return 0
+  else
+    HTTP_HEALTH_STATUS="failed"
+    LAST_ERROR_SUMMARY="http health check failed"
+    return 1
   fi
 
-  HTTP_HEALTH_STATUS="failed"
-  LAST_ERROR_SUMMARY="http health check failed"
-  return 1
+  if ! ops_verify_full_busy_writes_runtime_marker \
+    "$STAGING_APP_CONTAINER" \
+    "$STAGING_ENV_FILE"; then
+    LAST_ERROR_SUMMARY="full-busy writes runtime marker verification failed"
+    return 1
+  fi
+
+  return 0
 }
 
 rollback_app_image() {
@@ -391,6 +436,19 @@ rollback_app_image() {
   if [[ "$OPS_DRY_RUN" -eq 1 ]]; then
     APP_ROLLBACK_STATUS="dry_run_skipped"
     return 0
+  fi
+
+  # Automatic health-failure rollback targets the same previous image recorded
+  # in this deploy. Apply the identical target-capability guard.
+  if ! (
+    ops_assert_pre_compat_timing_rollback_allowed \
+      "$STAGING_ENV_FILE" \
+      "$STAGING_COMPOSE_FILE" \
+      "$PREVIOUS_APP_FULL_BUSY_COMPAT"
+  ); then
+    APP_ROLLBACK_STATUS="blocked_timing_guard"
+    LAST_ERROR_SUMMARY="automatic rollback blocked by full-busy timing compatibility guard"
+    return 1
   fi
 
   if ! docker image inspect "$ROLLBACK_IMAGE_TAG" >/dev/null 2>&1; then
@@ -529,6 +587,7 @@ main() {
 
   prepare_rollback_tag
   ops_info "Rollback tag: ${ROLLBACK_IMAGE_TAG}"
+  classify_previous_app_image_capability
 
   init_state_manifest
   ops_info "State manifest: ${MANIFEST_PATH}"

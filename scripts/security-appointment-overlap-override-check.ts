@@ -271,9 +271,9 @@ function testManualApiExposesMachineCodesAndStrictFlag(): void {
     "online create всё ещё без createdBy user",
   );
   assert.match(
-    onlineFn,
-    /usePublicBusyForExistingAppointments:\s*true/,
-    "online create включает public busy в write options",
+    service,
+    /getAppointmentBusyInterval/,
+    "online and internal conflict paths use the central busy resolver",
   );
 
   const updateStart = service.indexOf("export async function updateAppointment");
@@ -286,18 +286,18 @@ function testManualApiExposesMachineCodesAndStrictFlag(): void {
   );
   assert.match(
     service,
-    /if \(endsAt <= startsAt\) \{\s*throw new AppointmentValidationError/,
+    /if \(desiredFreeAt <= startsAt\) \{\s*throw new AppointmentValidationError/,
     "некорректный интервал отклоняется до учёта override",
   );
   assert.match(
     service,
-    /startsAt,\s*endsAt,/,
-    "create сохраняет фактические startsAt/endsAt из startTime/endTime",
+    /startsAt,\s*endsAt:\s*timingWrite\.endsAt,/,
+    "create writes timing through the central adapter",
   );
   assert.match(
     service,
-    /isManualTimeOverride = true/,
-    "нестандартный endTime по-прежнему выставляет isManualTimeOverride",
+    /isManualTimeOverride:\s*timingWrite\.isManualTimeOverride/,
+    "adapter сохраняет manual-time marker для нестандартного endTime",
   );
 }
 

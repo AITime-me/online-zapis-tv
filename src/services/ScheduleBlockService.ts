@@ -1,4 +1,8 @@
-import type { AppointmentStatus, ScheduleBlockType } from "@prisma/client";
+import type { ScheduleBlockType } from "@prisma/client";
+import {
+  APPOINTMENT_BUSY_TIMING_SELECT,
+  getAppointmentBusyInterval,
+} from "@/lib/schedule/appointment-busy";
 import { NON_BLOCKING_APPOINTMENT_STATUSES } from "@/lib/schedule/non-blocking-appointment-statuses";
 import { prisma } from "@/lib/db";
 import {
@@ -90,13 +94,16 @@ async function assertNoAppointmentOverlap(
       status: { notIn: [...NON_BLOCKING_APPOINTMENT_STATUSES] },
       startsAt: { gte: dayStart, lte: dayEnd },
     },
-    select: { id: true, startsAt: true, endsAt: true },
+    select: {
+      ...APPOINTMENT_BUSY_TIMING_SELECT,
+      status: true,
+    },
   });
 
-  const hasOverlap = appointments.some(
-    (appointment) =>
-      appointment.startsAt < endsAt && appointment.endsAt > startsAt,
-  );
+  const hasOverlap = appointments.some((appointment) => {
+    const busy = getAppointmentBusyInterval(appointment);
+    return busy.startsAt < endsAt && busy.endsAt > startsAt;
+  });
 
   if (hasOverlap) {
     throw new ScheduleBlockConflictError(

@@ -430,7 +430,7 @@ ops_validate_staging_env_file() {
   local file="$STAGING_ENV_FILE"
   local app_env auth_secret auth_url schedule_token
   local postgres_user postgres_password postgres_db
-  local trust_proxy mail_provider
+  local trust_proxy mail_provider full_busy_writes
   local mail_from_address smtp_host smtp_user smtp_password smtp_port smtp_secure
 
   ops_check_env_file_permissions "$file"
@@ -487,6 +487,13 @@ ops_validate_staging_env_file() {
     ops_die "TRUST_PROXY_HEADERS must not be true until reverse proxy is configured"
   fi
   ops_report_env_check TRUST_PROXY_HEADERS OK
+
+  full_busy_writes="$(ops_read_env_value APPOINTMENT_FULL_BUSY_END_WRITES_ENABLED "$file" || true)"
+  if [[ -n "$full_busy_writes" && "$full_busy_writes" != "true" && "$full_busy_writes" != "false" ]]; then
+    ops_report_env_check APPOINTMENT_FULL_BUSY_END_WRITES_ENABLED INVALID
+    ops_die "APPOINTMENT_FULL_BUSY_END_WRITES_ENABLED must be true, false, or empty (default false)"
+  fi
+  ops_report_env_check APPOINTMENT_FULL_BUSY_END_WRITES_ENABLED OK
 
   mail_provider="$(ops_read_env_value MAIL_PROVIDER "$file" || true)"
   if ops_is_disabled_mail_provider "$mail_provider"; then
@@ -1069,4 +1076,254 @@ ops_require_interactive_confirmation() {
   if [[ "$answer" != "$expected" ]]; then
     ops_die "confirmation failed; expected exact input: ${expected}"
   fi
+}
+
+# --- appointment full-busy Phase 1: pre-compat rollback guard ---
+
+readonly APPOINTMENT_FULL_BUSY_COMPAT_BOUNDARY_COMMIT="85571896e52c650759fd413d039e65151cff384d"
+
+ops_timing_pre_rollback_sql_file() {
+  printf '%s' "${OPS_REPO_ROOT}/scripts/ops/lib/appointment-timing-pre-rollback-audit.sql"
+}
+
+ops_classify_commit_full_busy_compat() {
+  local commit_sha="$1"
+
+  if [[ -z "$commit_sha" ]]; then
+    printf 'unknown'
+    return 0
+  fi
+  if ! git -C "$OPS_REPO_ROOT" cat-file -e "${APPOINTMENT_FULL_BUSY_COMPAT_BOUNDARY_COMMIT}^{commit}" 2>/dev/null; then
+    printf 'unknown'
+    return 0
+  fi
+  if ! git -C "$OPS_REPO_ROOT" cat-file -e "${commit_sha}^{commit}" 2>/dev/null; then
+    printf 'unknown'
+    return 0
+  fi
+
+  if git -C "$OPS_REPO_ROOT" merge-base --is-ancestor \
+    "$APPOINTMENT_FULL_BUSY_COMPAT_BOUNDARY_COMMIT" \
+    "$commit_sha" 2>/dev/null; then
+    printf 'yes'
+    return 0
+  else
+    local ancestry_status=$?
+    if [[ "$ancestry_status" -eq 1 ]]; then
+      printf 'no'
+    else
+      printf 'unknown'
+    fi
+  fi
+}
+
+ops_classify_deployed_image_full_busy_compat() {
+  local deployed_image_id="$1"
+  local manifest="${2:-}"
+
+  ops_resolve_deployed_image_full_busy_metadata "$deployed_image_id" "$manifest"
+  printf '%s' "$DEPLOYED_IMAGE_FULL_BUSY_COMPAT"
+}
+
+ops_resolve_deployed_image_full_busy_metadata() {
+  local deployed_image_id="$1"
+  local manifest="${2:-}"
+  local recorded_image capability
+
+  DEPLOYED_IMAGE_COMMIT="unknown"
+  DEPLOYED_IMAGE_FULL_BUSY_COMPAT="unknown"
+
+  if [[ -z "$deployed_image_id" || -z "$manifest" || ! -f "$manifest" ]]; then
+    return 0
+  fi
+
+  recorded_image="$(ops_read_manifest_value "$manifest" CURRENT_APP_IMAGE_ID || true)"
+  if [[ -z "$recorded_image" ]]; then
+    recorded_image="$(ops_read_manifest_value "$manifest" NEW_APP_IMAGE_ID || true)"
+  fi
+  if [[ -z "$recorded_image" || "$recorded_image" != "$deployed_image_id" ]]; then
+    return 0
+  fi
+
+  DEPLOYED_IMAGE_COMMIT="$(ops_read_manifest_value "$manifest" CURRENT_APP_COMMIT || true)"
+  if [[ -z "$DEPLOYED_IMAGE_COMMIT" ]]; then
+    DEPLOYED_IMAGE_COMMIT="$(ops_read_manifest_value "$manifest" TARGET_COMMIT_SHA || true)"
+  fi
+  if [[ -z "$DEPLOYED_IMAGE_COMMIT" ]]; then
+    DEPLOYED_IMAGE_COMMIT="unknown"
+  fi
+
+  capability="$(ops_read_manifest_value "$manifest" CURRENT_APP_FULL_BUSY_COMPAT || true)"
+  if [[ -z "$capability" ]]; then
+    # Legacy Phase 1 manifests used APP_FULL_BUSY_COMPAT for the current image.
+    capability="$(ops_read_manifest_value "$manifest" APP_FULL_BUSY_COMPAT || true)"
+  fi
+  case "$capability" in
+    yes|no)
+      DEPLOYED_IMAGE_FULL_BUSY_COMPAT="$capability"
+      return 0
+      ;;
+  esac
+
+  if [[ "$DEPLOYED_IMAGE_COMMIT" != "unknown" ]]; then
+    DEPLOYED_IMAGE_FULL_BUSY_COMPAT="$(
+      ops_classify_commit_full_busy_compat "$DEPLOYED_IMAGE_COMMIT"
+    )"
+  fi
+}
+
+ops_resolve_full_busy_rollback_target() {
+  local manifest="$1"
+  local capability
+
+  ROLLBACK_TARGET_IMAGE_ID="$(
+    ops_read_manifest_value "$manifest" PREVIOUS_APP_IMAGE_ID || true
+  )"
+  ROLLBACK_TARGET_COMMIT="$(
+    ops_read_manifest_value "$manifest" PREVIOUS_APP_COMMIT || true
+  )"
+  if [[ -z "$ROLLBACK_TARGET_COMMIT" ]]; then
+    ROLLBACK_TARGET_COMMIT="$(
+      ops_read_manifest_value "$manifest" PREVIOUS_COMMIT_SHA || true
+    )"
+  fi
+
+  capability="$(
+    ops_read_manifest_value "$manifest" PREVIOUS_APP_FULL_BUSY_COMPAT || true
+  )"
+  case "$capability" in
+    yes|no|unknown)
+      ROLLBACK_TARGET_FULL_BUSY_COMPAT="$capability"
+      ;;
+    *)
+      # Legacy / malformed manifests are never promoted from the current
+      # deployment marker. Unknown targets require the timing audit.
+      ROLLBACK_TARGET_FULL_BUSY_COMPAT="unknown"
+      ;;
+  esac
+}
+
+# Prints only:
+#   PRE_COMPAT_ROLLBACK_ALLOWED=yes|no
+#   CANONICAL_V2_WRITE_COUNT=<n>
+#   PHASE1_VERSION_ONLY_V2_COUNT=<n>
+# Dry-run of a forbidden pre-compat rollback (CANONICAL_V2_WRITE_COUNT > 0)
+# must also exit non-zero before confirm / apply.
+ops_run_appointment_timing_pre_rollback_audit() {
+  local env_file="$1"
+  local compose_file="$2"
+  local sql_file pg_user pg_db output canonical version_only
+
+  sql_file="$(ops_timing_pre_rollback_sql_file)"
+  [[ -f "$sql_file" ]] || ops_die "missing timing pre-rollback SQL: ${sql_file}"
+
+  pg_user="$(ops_read_env_value POSTGRES_USER "$env_file" || true)"
+  pg_db="$(ops_read_env_value POSTGRES_DB "$env_file" || true)"
+  [[ -n "$pg_user" ]] || ops_die "POSTGRES_USER missing for timing audit"
+  [[ -n "$pg_db" ]] || ops_die "POSTGRES_DB missing for timing audit"
+
+  if ! output="$(
+    docker compose -f "$compose_file" --env-file "$env_file" exec -T postgres \
+      psql -v ON_ERROR_STOP=1 -U "$pg_user" -d "$pg_db" -At -F $'\t' \
+      -f - <"$sql_file" 2>/dev/null
+  )"; then
+    ops_die "timing pre-rollback audit failed (database unreachable or SQL error)"
+  fi
+
+  output="$(printf '%s\n' "$output" | tail -n 1)"
+  IFS=$'\t' read -r canonical version_only <<<"$output"
+
+  if [[ -z "${canonical:-}" || -z "${version_only:-}" ]]; then
+    ops_die "timing pre-rollback audit returned malformed output"
+  fi
+  if ! [[ "$canonical" =~ ^[0-9]+$ && "$version_only" =~ ^[0-9]+$ ]]; then
+    ops_die "timing pre-rollback audit returned non-integer counts"
+  fi
+
+  TIMING_CANONICAL_V2_WRITE_COUNT="$canonical"
+  TIMING_PHASE1_VERSION_ONLY_V2_COUNT="$version_only"
+
+  if [[ "$canonical" -gt 0 ]]; then
+    TIMING_PRE_COMPAT_ROLLBACK_ALLOWED="no"
+  else
+    TIMING_PRE_COMPAT_ROLLBACK_ALLOWED="yes"
+  fi
+
+  printf 'PRE_COMPAT_ROLLBACK_ALLOWED=%s\n' "$TIMING_PRE_COMPAT_ROLLBACK_ALLOWED"
+  printf 'CANONICAL_V2_WRITE_COUNT=%s\n' "$TIMING_CANONICAL_V2_WRITE_COUNT"
+  printf 'PHASE1_VERSION_ONLY_V2_COUNT=%s\n' "$TIMING_PHASE1_VERSION_ONLY_V2_COUNT"
+}
+
+ops_assert_pre_compat_timing_rollback_allowed() {
+  local env_file="$1"
+  local compose_file="$2"
+  local target_capability="$3"
+
+  if [[ "$target_capability" == "yes" ]]; then
+    ops_info "rollback target is full-busy-compat (or newer) — timing canonical-write guard skipped"
+    TIMING_PRE_COMPAT_ROLLBACK_ALLOWED="yes"
+    return 0
+  fi
+
+  if [[ "$target_capability" != "no" && "$target_capability" != "unknown" ]]; then
+    ops_die "invalid rollback target full-busy compatibility classification"
+  fi
+
+  ops_run_appointment_timing_pre_rollback_audit "$env_file" "$compose_file"
+
+  if [[ "${TIMING_PRE_COMPAT_ROLLBACK_ALLOWED:-no}" != "yes" ]]; then
+    ops_die "pre-compat rollback forbidden: CANONICAL_V2_WRITE_COUNT=${TIMING_CANONICAL_V2_WRITE_COUNT:-unknown}"
+  fi
+}
+
+# Safe runtime label only — never prints env values or secrets.
+ops_print_full_busy_writes_runtime_label() {
+  local env_file="$1"
+  local val
+  val="$(ops_read_env_value APPOINTMENT_FULL_BUSY_END_WRITES_ENABLED "$env_file" || true)"
+  if [[ "$val" == "true" ]]; then
+    printf 'FULL_BUSY_WRITES_ON'
+  else
+    printf 'FULL_BUSY_WRITES_OFF'
+  fi
+}
+
+ops_get_full_busy_writes_runtime_marker() {
+  local app_container="$1"
+  local marker
+
+  if ! marker="$(
+    docker exec "$app_container" \
+      node /app/scripts/ops/full-busy-writes-runtime-marker.mjs 2>/dev/null
+  )"; then
+    return 1
+  fi
+
+  case "$marker" in
+    FULL_BUSY_WRITES_ON|FULL_BUSY_WRITES_OFF)
+      printf '%s' "$marker"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+ops_verify_full_busy_writes_runtime_marker() {
+  local app_container="$1"
+  local env_file="$2"
+  local expected actual
+
+  expected="$(ops_print_full_busy_writes_runtime_label "$env_file")"
+  if ! actual="$(ops_get_full_busy_writes_runtime_marker "$app_container")"; then
+    ops_warn "full-busy writes runtime marker verification failed"
+    return 1
+  fi
+  if [[ "$actual" != "$expected" ]]; then
+    ops_warn "full-busy writes runtime marker does not match deploy configuration"
+    return 1
+  fi
+
+  # Only the allowlisted marker is emitted; no environment values are printed.
+  ops_info "$actual"
 }

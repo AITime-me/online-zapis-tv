@@ -201,7 +201,9 @@ export function AppointmentEditorForm({
   const shorterThanStandard =
     selectedService != null &&
     !selectedService.unavailable &&
-    actualMinutes < selectedService.durationMinutes;
+    actualMinutes <
+      (selectedService.totalBusyMinutes ??
+        selectedService.durationMinutes + (selectedService.breakAfterMinutes ?? 0));
 
   const save = useCallback(async () => {
     if (!canEdit || isCancellingRef.current || cancelledRef.current) {
@@ -314,7 +316,8 @@ export function AppointmentEditorForm({
       endTime: addMinutesToTime(
         dateKey,
         state.startTime,
-        service.durationMinutes,
+        service.totalBusyMinutes ??
+          service.durationMinutes + (service.breakAfterMinutes ?? 0),
       ),
     };
   };
@@ -702,7 +705,10 @@ export function NewAppointmentForm({
   );
 
   const shorterThanStandard =
-    selectedService != null && actualMinutes < selectedService.durationMinutes;
+    selectedService != null &&
+    actualMinutes <
+      (selectedService.totalBusyMinutes ??
+        selectedService.durationMinutes + (selectedService.breakAfterMinutes ?? 0));
 
   const fieldId = (name: ScheduleEditorFieldKey) => `new-appointment-${name}`;
 
@@ -884,7 +890,12 @@ export function NewAppointmentForm({
                   ...current,
                   startTime,
                   endTime: service
-                    ? addMinutesToTime(dateKey, startTime, service.durationMinutes)
+                    ? addMinutesToTime(
+                        dateKey,
+                        startTime,
+                        service.totalBusyMinutes ??
+                          service.durationMinutes + (service.breakAfterMinutes ?? 0),
+                      )
                     : current.endTime,
                 };
               });
@@ -929,7 +940,8 @@ export function NewAppointmentForm({
                 ? addMinutesToTime(
                     dateKey,
                     current.startTime,
-                    service.durationMinutes,
+                    service.totalBusyMinutes ??
+                      service.durationMinutes + (service.breakAfterMinutes ?? 0),
                   )
                 : current.endTime,
             }));
