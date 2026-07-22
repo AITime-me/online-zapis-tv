@@ -119,11 +119,19 @@ function testCancelUnchanged(): void {
 
 function testConflictStillThrowsDomainError(): void {
   const src = stripComments(read("src/services/AppointmentService.ts"));
+  const conflictLib = stripComments(
+    read("src/lib/schedule/appointment-write-conflicts.ts"),
+  );
 
   assert.match(
     src,
-    /type === "appointment"\)[\s\S]*throw new AppointmentConflictError/,
+    /resolveAppointmentWriteConflict[\s\S]*throw new AppointmentConflictError/,
     "проигравший параллельный запрос получает доменный conflict",
+  );
+  assert.match(
+    conflictLib,
+    /type === "appointment"[\s\S]*APPOINTMENT_OVERLAP/,
+    "appointment-overlap остаётся отдельным доменным кодом",
   );
 }
 

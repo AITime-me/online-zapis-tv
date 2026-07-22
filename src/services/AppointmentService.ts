@@ -37,9 +37,19 @@ import {
 import { createManageToken, createPublicRequestReference, hashManageToken } from "@/lib/booking/manage-token";
 import { recordRequiredPublicFormAcceptances } from "@/services/LegalAcceptanceService";
 import type { AppliedPromotionRecord } from "@/types/applied-promotion";
+import {
+  APPOINTMENT_BUSY_CONFLICT_MESSAGE,
+  resolveAppointmentWriteConflict,
+  type AppointmentConflictCode,
+  type AppointmentConflictType,
+} from "@/lib/schedule/appointment-write-conflicts";
 
-const APPOINTMENT_BUSY_CONFLICT_MESSAGE =
-  "У мастера уже есть запись или перерыв в это время.";
+export {
+  resolveAppointmentWriteConflict,
+  type AppointmentConflictCode,
+  type AppointmentConflictType,
+  type AppointmentWriteConflict,
+} from "@/lib/schedule/appointment-write-conflicts";
 
 /** Максимум повторов Serializable-транзакции при P2034. */
 export const APPOINTMENT_WRITE_SERIALIZABLE_RETRIES = 3;
@@ -51,9 +61,19 @@ export type AppointmentConflictDbClient = Pick<
 >;
 
 export class AppointmentConflictError extends Error {
-  constructor(message = APPOINTMENT_BUSY_CONFLICT_MESSAGE) {
+  readonly code?: AppointmentConflictCode;
+  readonly conflictType?: AppointmentConflictType;
+
+  constructor(
+    message = APPOINTMENT_BUSY_CONFLICT_MESSAGE,
+    meta?: { code: AppointmentConflictCode; conflictType: AppointmentConflictType },
+  ) {
     super(message);
     this.name = "AppointmentConflictError";
+    if (meta) {
+      this.code = meta.code;
+      this.conflictType = meta.conflictType;
+    }
   }
 }
 
@@ -256,6 +276,7 @@ async function assertNoBlockingConflict(
   input: AppointmentWriteInput,
   candidateBreakAfterMinutes: number,
   excludeAppointmentId?: string,
+  writeOptions?: { allowAppointmentOverlap?: boolean },
 ) {
   const startsAt = parseStudioDateTime(input.dateKey, input.startTime);
   const endsAt = parseStudioDateTime(input.dateKey, input.endTime);
@@ -298,16 +319,16 @@ async function assertNoBlockingConflict(
     },
   });
 
-  if (availability.conflicts.some((c) => c.type === "full_day_block")) {
-    throw new AppointmentConflictError("День мастера закрыт");
-  }
+  const blockingConflict = resolveAppointmentWriteConflict(
+    availability.conflicts,
+    writeOptions?.allowAppointmentOverlap === true,
+  );
 
-  if (availability.conflicts.some((c) => c.type === "block")) {
-    throw new AppointmentConflictError("Это время закрыто блоком");
-  }
-
-  if (availability.conflicts.some((c) => c.type === "appointment")) {
-    throw new AppointmentConflictError(APPOINTMENT_BUSY_CONFLICT_MESSAGE);
+  if (blockingConflict) {
+    throw new AppointmentConflictError(blockingConflict.message, {
+      code: blockingConflict.code,
+      conflictType: blockingConflict.conflictType,
+    });
   }
 }
 
@@ -372,11 +393,19 @@ async function resolveTimingFields(
   };
 }
 
+export type CreateAppointmentOptions = {
+  /** Только ручной create: строго true разрешает overlap с другой записью мастера. */
+  allowAppointmentOverlap?: boolean;
+};
+
 export async function createAppointment(
   input: AppointmentWriteInput,
   createdByUserId: string,
+  options?: CreateAppointmentOptions,
 ): Promise<AppointmentDto> {
-  const result = await createAppointmentRecord(input, createdByUserId);
+  const result = await createAppointmentRecord(input, createdByUserId, {
+    allowAppointmentOverlap: options?.allowAppointmentOverlap === true,
+  });
   return result.appointment;
 }
 
@@ -385,6 +414,7 @@ export async function createOnlineAppointment(
     serviceId: string;
   },
 ): Promise<OnlineAppointmentCreateResult> {
+  // Public path never receives overlap override options — overlap stays blocked.
   const result = await createAppointmentRecord(
     {
       ...input,
@@ -415,6 +445,7 @@ type AppointmentCreateRecordResult = {
 async function createAppointmentRecord(
   input: AppointmentWriteInput,
   createdByUserId: string | null,
+  options?: CreateAppointmentOptions,
 ): Promise<AppointmentCreateRecordResult> {
   try {
     if (!input.masterId?.trim()) {
@@ -514,6 +545,10 @@ async function createAppointmentRecord(
         tx,
         input,
         candidateBreakAfterMinutes,
+        undefined,
+        {
+          allowAppointmentOverlap: options?.allowAppointmentOverlap === true,
+        },
       );
 
       const created = await tx.appointment.create({
