@@ -2,6 +2,7 @@
 process.env.SECURITY_BATCH_TEST = "1";
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -181,6 +182,7 @@ function phase1VersionOnlyClassification(row: MigrationTimingRow): number {
     row.timingSemanticsVersion === 1 &&
     row.isManualTimeOverride === false &&
     row.standardDurationMinutes != null &&
+    row.standardDurationMinutes >= 0 &&
     row.endsAt.getTime() > row.startsAt.getTime() &&
     applicableBreak >= 0 &&
     minuteAligned &&
@@ -208,6 +210,7 @@ function testPhase1MigrationClassification(): void {
   );
   assert.match(migration, /"is_manual_time_override"\s*=\s*false/);
   assert.match(migration, /"standard_duration_minutes"\s+IS\s+NOT\s+NULL/i);
+  assert.match(migration, /"standard_duration_minutes"\s*>=\s*0/);
   assert.match(migration, /"ends_at"\s*>\s*"starts_at"/);
   assert.match(
     migration,
@@ -284,6 +287,24 @@ function testPhase1MigrationClassification(): void {
     standardDurationMinutes: null,
   };
   assert.equal(phase1VersionOnlyClassification(missingDuration), 1);
+
+  const negativeDuration: MigrationTimingRow = {
+    ...legacySnapshot({
+      endsAt: at("10:20"),
+      standardDurationMinutes: -10,
+      breakAfterMinutes: 30,
+      standardBreakAfterMinutes: 30,
+      isManualTimeOverride: false,
+    }),
+    timingCanonicalStoredAt: null,
+  };
+  assert.equal(
+    phase1VersionOnlyClassification(negativeDuration),
+    1,
+    "negative standard duration must not pass exact already-full",
+  );
+  assert.equal(negativeDuration.endsAt.getTime(), at("10:20").getTime());
+  assert.equal(negativeDuration.timingCanonicalStoredAt, null);
 
   const negativeBreak: MigrationTimingRow = {
     ...exactAlreadyFull,
@@ -422,10 +443,93 @@ function testRollbackAndDeployManifestGates(): void {
   }
 }
 
+function resolveBashExecutable(): string | null {
+  const candidates = [
+    process.env.BASH_PATH,
+    path.join("C:", "Program Files", "Git", "bin", "bash.exe"),
+    path.join("C:", "Program Files (x86)", "Git", "bin", "bash.exe"),
+    "/bin/bash",
+    "/usr/bin/bash",
+  ].filter((v): v is string => Boolean(v));
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  if (process.platform === "win32") {
+    return null;
+  }
+  return "bash";
+}
+
+function testPhase1MigrationPgRegression(): void {
+  const harnessRel =
+    "scripts/ops/lib/appointment-timing-phase1-migration-pg-regression.sh";
+  const harnessPath = path.join(ROOT, harnessRel);
+  assert.ok(fs.existsSync(harnessPath), "Phase 1 PG migration harness must exist");
+  const harness = fs.readFileSync(harnessPath, "utf8");
+  assert.match(harness, /SKIP: Docker daemon unavailable/);
+  assert.match(harness, /SKIP_EXIT=77/);
+  assert.match(harness, /exit "\$SKIP_EXIT"/);
+  assert.doesNotMatch(harness, /docker info[\s\S]{0,120}exit 0\b/);
+  assert.match(harness, /postgres:16-alpine/);
+  assert.match(harness, /negative_duration/);
+  assert.match(harness, /-10/);
+  assert.match(
+    harness,
+    /20260722190000_appointment_timing_semantics_phase1\/migration\.sql/,
+  );
+  assert.doesNotMatch(
+    harness,
+    /\.env\.staging|\.env\.production|STAGING_|PRODUCTION_/,
+  );
+
+  const bash = resolveBashExecutable();
+  if (!bash) {
+    console.log(
+      "appointment-timing-phase1-migration-pg-regression: SKIP (no usable bash; not runtime PG proof)",
+    );
+    return;
+  }
+
+  const result = spawnSync(bash, [harnessPath], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: process.env,
+  });
+  if (result.error) {
+    console.log(
+      `appointment-timing-phase1-migration-pg-regression: SKIP (cannot exec bash: ${result.error.message}; not runtime PG proof)`,
+    );
+    return;
+  }
+  const status = result.status;
+  const combined = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+  if (status === 0) {
+    assert.match(combined, /PASS/);
+    assert.match(combined, /negative_duration remains v1/);
+    console.log(
+      "appointment-timing-phase1-migration-pg-regression: PASS (runtime PG)",
+    );
+    return;
+  }
+  if (status === 77) {
+    assert.match(combined, /SKIP: Docker daemon unavailable/);
+    console.log(
+      "appointment-timing-phase1-migration-pg-regression: SKIP (exit 77; not runtime PG proof)",
+    );
+    return;
+  }
+  assert.fail(
+    `Phase 1 PG migration harness FAIL (exit ${String(status)}): ${combined.slice(0, 800)}`,
+  );
+}
+
 function main(): void {
   testWriteAdapterInvariants();
   testNoteOnlyUpdateIsNotTimingDirty();
   testPhase1MigrationClassification();
+  testPhase1MigrationPgRegression();
   testBusySelectInventory();
   testTimingWriteInventory();
   testRuntimeAndCompose();

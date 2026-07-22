@@ -27,6 +27,7 @@ SET "timing_semantics_version" = 2
 WHERE "timing_semantics_version" = 1
   AND "is_manual_time_override" = false
   AND "standard_duration_minutes" IS NOT NULL
+  AND "standard_duration_minutes" >= 0
   AND "ends_at" > "starts_at"
   AND COALESCE("break_after_minutes", "standard_break_after_minutes", 0) >= 0
   AND EXTRACT(SECOND FROM ("starts_at" AT TIME ZONE 'Asia/Yekaterinburg')) = 0
