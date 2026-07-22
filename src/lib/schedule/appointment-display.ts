@@ -1,4 +1,4 @@
-import { formatStudioTime } from "@/lib/datetime/date-layer";
+import { formatStudioTimeRange } from "@/lib/datetime/date-layer";
 import type { ScheduleAppointmentOperationalFields } from "@/lib/schedule/appointment-contract";
 import type { ScheduleDayAppointment } from "@/types/schedule";
 
@@ -47,6 +47,10 @@ export function isScheduleAppointmentBold(
   return appointment.isBold || appointment.statusCode === "CONFIRMED";
 }
 
+/**
+ * timeLabel — фактический интервал процедуры (startsAt–endsAt).
+ * breakAfterMinutes / busy-хвост в отображение не входят.
+ */
 export function buildScheduleAppointmentDisplay(
   appointment: Pick<
     ScheduleDayAppointment,
@@ -55,7 +59,7 @@ export function buildScheduleAppointmentDisplay(
     Partial<Pick<ScheduleAppointmentOperationalFields, "clientPhone" | "comment">>,
 ): ScheduleAppointmentDisplay {
   return {
-    timeLabel: formatStudioTime(appointment.startsAt),
+    timeLabel: formatStudioTimeRange(appointment.startsAt, appointment.endsAt),
     serviceTitle: getScheduleAppointmentTitle(appointment.serviceName),
     clientLabel: formatScheduleClientName(appointment.clientName),
     phoneLabel: formatScheduleClientPhone(appointment.clientPhone),
