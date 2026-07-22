@@ -944,8 +944,127 @@ ops_require_interactive_confirmation() {
 
 # --- appointment full-busy Phase 1: pre-compat rollback guard ---
 
+readonly APPOINTMENT_FULL_BUSY_COMPAT_BOUNDARY_COMMIT="85571896e52c650759fd413d039e65151cff384d"
+
 ops_timing_pre_rollback_sql_file() {
   printf '%s' "${OPS_REPO_ROOT}/scripts/ops/lib/appointment-timing-pre-rollback-audit.sql"
+}
+
+ops_classify_commit_full_busy_compat() {
+  local commit_sha="$1"
+
+  if [[ -z "$commit_sha" ]]; then
+    printf 'unknown'
+    return 0
+  fi
+  if ! git -C "$OPS_REPO_ROOT" cat-file -e "${APPOINTMENT_FULL_BUSY_COMPAT_BOUNDARY_COMMIT}^{commit}" 2>/dev/null; then
+    printf 'unknown'
+    return 0
+  fi
+  if ! git -C "$OPS_REPO_ROOT" cat-file -e "${commit_sha}^{commit}" 2>/dev/null; then
+    printf 'unknown'
+    return 0
+  fi
+
+  if git -C "$OPS_REPO_ROOT" merge-base --is-ancestor \
+    "$APPOINTMENT_FULL_BUSY_COMPAT_BOUNDARY_COMMIT" \
+    "$commit_sha" 2>/dev/null; then
+    printf 'yes'
+    return 0
+  else
+    local ancestry_status=$?
+    if [[ "$ancestry_status" -eq 1 ]]; then
+      printf 'no'
+    else
+      printf 'unknown'
+    fi
+  fi
+}
+
+ops_classify_deployed_image_full_busy_compat() {
+  local deployed_image_id="$1"
+  local manifest="${2:-}"
+
+  ops_resolve_deployed_image_full_busy_metadata "$deployed_image_id" "$manifest"
+  printf '%s' "$DEPLOYED_IMAGE_FULL_BUSY_COMPAT"
+}
+
+ops_resolve_deployed_image_full_busy_metadata() {
+  local deployed_image_id="$1"
+  local manifest="${2:-}"
+  local recorded_image capability
+
+  DEPLOYED_IMAGE_COMMIT="unknown"
+  DEPLOYED_IMAGE_FULL_BUSY_COMPAT="unknown"
+
+  if [[ -z "$deployed_image_id" || -z "$manifest" || ! -f "$manifest" ]]; then
+    return 0
+  fi
+
+  recorded_image="$(ops_read_manifest_value "$manifest" CURRENT_APP_IMAGE_ID || true)"
+  if [[ -z "$recorded_image" ]]; then
+    recorded_image="$(ops_read_manifest_value "$manifest" NEW_APP_IMAGE_ID || true)"
+  fi
+  if [[ -z "$recorded_image" || "$recorded_image" != "$deployed_image_id" ]]; then
+    return 0
+  fi
+
+  DEPLOYED_IMAGE_COMMIT="$(ops_read_manifest_value "$manifest" CURRENT_APP_COMMIT || true)"
+  if [[ -z "$DEPLOYED_IMAGE_COMMIT" ]]; then
+    DEPLOYED_IMAGE_COMMIT="$(ops_read_manifest_value "$manifest" TARGET_COMMIT_SHA || true)"
+  fi
+  if [[ -z "$DEPLOYED_IMAGE_COMMIT" ]]; then
+    DEPLOYED_IMAGE_COMMIT="unknown"
+  fi
+
+  capability="$(ops_read_manifest_value "$manifest" CURRENT_APP_FULL_BUSY_COMPAT || true)"
+  if [[ -z "$capability" ]]; then
+    # Legacy Phase 1 manifests used APP_FULL_BUSY_COMPAT for the current image.
+    capability="$(ops_read_manifest_value "$manifest" APP_FULL_BUSY_COMPAT || true)"
+  fi
+  case "$capability" in
+    yes|no)
+      DEPLOYED_IMAGE_FULL_BUSY_COMPAT="$capability"
+      return 0
+      ;;
+  esac
+
+  if [[ "$DEPLOYED_IMAGE_COMMIT" != "unknown" ]]; then
+    DEPLOYED_IMAGE_FULL_BUSY_COMPAT="$(
+      ops_classify_commit_full_busy_compat "$DEPLOYED_IMAGE_COMMIT"
+    )"
+  fi
+}
+
+ops_resolve_full_busy_rollback_target() {
+  local manifest="$1"
+  local capability
+
+  ROLLBACK_TARGET_IMAGE_ID="$(
+    ops_read_manifest_value "$manifest" PREVIOUS_APP_IMAGE_ID || true
+  )"
+  ROLLBACK_TARGET_COMMIT="$(
+    ops_read_manifest_value "$manifest" PREVIOUS_APP_COMMIT || true
+  )"
+  if [[ -z "$ROLLBACK_TARGET_COMMIT" ]]; then
+    ROLLBACK_TARGET_COMMIT="$(
+      ops_read_manifest_value "$manifest" PREVIOUS_COMMIT_SHA || true
+    )"
+  fi
+
+  capability="$(
+    ops_read_manifest_value "$manifest" PREVIOUS_APP_FULL_BUSY_COMPAT || true
+  )"
+  case "$capability" in
+    yes|no|unknown)
+      ROLLBACK_TARGET_FULL_BUSY_COMPAT="$capability"
+      ;;
+    *)
+      # Legacy / malformed manifests are never promoted from the current
+      # deployment marker. Unknown targets require the timing audit.
+      ROLLBACK_TARGET_FULL_BUSY_COMPAT="unknown"
+      ;;
+  esac
 }
 
 # Prints only:
@@ -999,25 +1118,19 @@ ops_run_appointment_timing_pre_rollback_audit() {
   printf 'PHASE1_VERSION_ONLY_V2_COUNT=%s\n' "$TIMING_PHASE1_VERSION_ONLY_V2_COUNT"
 }
 
-ops_rollback_target_is_pre_full_busy_compat() {
-  local manifest="$1"
-  local marker
-  marker="$(ops_read_manifest_value "$manifest" APP_FULL_BUSY_COMPAT || true)"
-  if [[ "$marker" == "yes" ]]; then
-    return 1
-  fi
-  return 0
-}
-
 ops_assert_pre_compat_timing_rollback_allowed() {
   local env_file="$1"
   local compose_file="$2"
-  local manifest="$3"
+  local target_capability="$3"
 
-  if ! ops_rollback_target_is_pre_full_busy_compat "$manifest"; then
+  if [[ "$target_capability" == "yes" ]]; then
     ops_info "rollback target is full-busy-compat (or newer) — timing canonical-write guard skipped"
     TIMING_PRE_COMPAT_ROLLBACK_ALLOWED="yes"
     return 0
+  fi
+
+  if [[ "$target_capability" != "no" && "$target_capability" != "unknown" ]]; then
+    ops_die "invalid rollback target full-busy compatibility classification"
   fi
 
   ops_run_appointment_timing_pre_rollback_audit "$env_file" "$compose_file"

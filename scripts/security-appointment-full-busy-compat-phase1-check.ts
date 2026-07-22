@@ -263,6 +263,12 @@ function testRollbackAndDeployManifestGates(): void {
     "FIRST_CANONICAL_V2_WRITE_AT",
     "PRE_COMPAT_ROLLBACK_ALLOWED",
     "ALLOWED_ROLLBACK_TARGET",
+    "CURRENT_APP_IMAGE_ID",
+    "CURRENT_APP_COMMIT",
+    "CURRENT_APP_FULL_BUSY_COMPAT",
+    "PREVIOUS_APP_IMAGE_ID",
+    "PREVIOUS_APP_COMMIT",
+    "PREVIOUS_APP_FULL_BUSY_COMPAT",
   ];
   for (const file of ["scripts/ops/staging-deploy.sh", "scripts/ops/production-deploy.sh"]) {
     const source = stripComments(read(file));

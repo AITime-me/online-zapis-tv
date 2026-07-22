@@ -9,6 +9,9 @@ ROLLBACK_HELP=0
 MANIFEST_ARG="latest"
 ROLLBACK_MANIFEST=""
 ROLLBACK_RESULT_MANIFEST=""
+ROLLBACK_TARGET_IMAGE_ID=""
+ROLLBACK_TARGET_COMMIT=""
+ROLLBACK_TARGET_FULL_BUSY_COMPAT="unknown"
 
 usage() {
   cat <<'EOF'
@@ -80,6 +83,8 @@ print_rollback_plan() {
   ops_info "Target commit: ${target:-unknown}"
   ops_info "Rollback image tag: ${rollback_tag:-missing}"
   ops_info "Expected previous image: ${previous_image:-unknown}"
+  ops_info "Rollback target commit: ${ROLLBACK_TARGET_COMMIT:-unknown}"
+  ops_info "Rollback target full-busy compatibility: ${ROLLBACK_TARGET_FULL_BUSY_COMPAT}"
   ops_info "Current app image: ${current_image:-unknown}"
   ops_info "Database will NOT be restored."
   if [[ "$OPS_DRY_RUN" -eq 1 ]]; then
@@ -101,6 +106,8 @@ write_rollback_manifest() {
     "PREVIOUS_COMMIT_SHA=$(ops_escape_manifest_value "$(ops_read_manifest_value "$ROLLBACK_MANIFEST" PREVIOUS_COMMIT_SHA || true)")" \
     "TARGET_COMMIT_SHA=$(ops_escape_manifest_value "$(ops_read_manifest_value "$ROLLBACK_MANIFEST" TARGET_COMMIT_SHA || true)")" \
     "PREVIOUS_APP_IMAGE_ID=$(ops_escape_manifest_value "$(ops_read_manifest_value "$ROLLBACK_MANIFEST" PREVIOUS_APP_IMAGE_ID || true)")" \
+    "ROLLBACK_TARGET_APP_COMMIT=$(ops_escape_manifest_value "$ROLLBACK_TARGET_COMMIT")" \
+    "ROLLBACK_TARGET_APP_FULL_BUSY_COMPAT=$(ops_escape_manifest_value "$ROLLBACK_TARGET_FULL_BUSY_COMPAT")" \
     "APP_ROLLBACK_STATUS=$(ops_escape_manifest_value "$status")" \
     "DOCKER_HEALTH_STATUS=$(ops_escape_manifest_value "${DOCKER_HEALTH_STATUS:-pending}")" \
     "HTTP_HEALTH_STATUS=$(ops_escape_manifest_value "${HTTP_HEALTH_STATUS:-pending}")"
@@ -122,13 +129,14 @@ main() {
   fi
 
   load_manifest
+  ops_resolve_full_busy_rollback_target "$ROLLBACK_MANIFEST"
   print_rollback_plan
 
   # timing pre-rollback audit → eligibility (before confirm / dry-run success)
   ops_assert_pre_compat_timing_rollback_allowed \
     "$STAGING_ENV_FILE" \
     "$STAGING_COMPOSE_FILE" \
-    "$ROLLBACK_MANIFEST"
+    "$ROLLBACK_TARGET_FULL_BUSY_COMPAT"
 
   if [[ "$OPS_DRY_RUN" -eq 0 ]]; then
     ops_require_interactive_confirmation "ROLLBACK" "Type ROLLBACK to restore the previous app image:"
@@ -166,10 +174,10 @@ perform_rollback() {
   ops_assert_pre_compat_timing_rollback_allowed \
     "$STAGING_ENV_FILE" \
     "$STAGING_COMPOSE_FILE" \
-    "$ROLLBACK_MANIFEST"
+    "${ROLLBACK_TARGET_FULL_BUSY_COMPAT:-unknown}"
 
   rollback_tag="$(ops_read_manifest_value "$ROLLBACK_MANIFEST" ROLLBACK_IMAGE_TAG || true)"
-  expected_image_id="$(ops_read_manifest_value "$ROLLBACK_MANIFEST" PREVIOUS_APP_IMAGE_ID || true)"
+  expected_image_id="${ROLLBACK_TARGET_IMAGE_ID:-}"
 
   if [[ -z "$rollback_tag" ]]; then
     ops_die "ROLLBACK_IMAGE_TAG missing in manifest"

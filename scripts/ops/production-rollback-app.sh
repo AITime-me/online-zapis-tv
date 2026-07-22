@@ -11,6 +11,9 @@ ROLLBACK_MANIFEST=""
 ROLLBACK_RESULT_MANIFEST=""
 DOCKER_HEALTH_STATUS="pending"
 HTTP_HEALTH_STATUS="pending"
+ROLLBACK_TARGET_IMAGE_ID=""
+ROLLBACK_TARGET_COMMIT=""
+ROLLBACK_TARGET_FULL_BUSY_COMPAT="unknown"
 
 usage() {
   cat <<'EOF'
@@ -91,6 +94,8 @@ print_rollback_plan() {
   ops_info "App image rollback available: ${rollback_available:-unknown}"
   ops_info "Rollback image tag: ${rollback_tag:-missing}"
   ops_info "Expected previous image: ${previous_image:-missing}"
+  ops_info "Rollback target commit: ${ROLLBACK_TARGET_COMMIT:-unknown}"
+  ops_info "Rollback target full-busy compatibility: ${ROLLBACK_TARGET_FULL_BUSY_COMPAT}"
   ops_info "Current app image: ${current_image:-unknown}"
   ops_info "PostgreSQL and database schema will NOT be restored."
   if [[ "$migration_status" == "applied" ]]; then
@@ -128,6 +133,8 @@ write_rollback_manifest() {
     "PREVIOUS_COMMIT_SHA=$(ops_escape_manifest_value "$(ops_read_manifest_value "$ROLLBACK_MANIFEST" PREVIOUS_COMMIT_SHA || true)")" \
     "TARGET_COMMIT_SHA=$(ops_escape_manifest_value "$(ops_read_manifest_value "$ROLLBACK_MANIFEST" TARGET_COMMIT_SHA || true)")" \
     "PREVIOUS_APP_IMAGE_ID=$(ops_escape_manifest_value "$(ops_read_manifest_value "$ROLLBACK_MANIFEST" PREVIOUS_APP_IMAGE_ID || true)")" \
+    "ROLLBACK_TARGET_APP_COMMIT=$(ops_escape_manifest_value "$ROLLBACK_TARGET_COMMIT")" \
+    "ROLLBACK_TARGET_APP_FULL_BUSY_COMPAT=$(ops_escape_manifest_value "$ROLLBACK_TARGET_FULL_BUSY_COMPAT")" \
     "MIGRATION_STATUS_AT_ROLLBACK=$(ops_escape_manifest_value "$(ops_read_manifest_value "$ROLLBACK_MANIFEST" MIGRATION_STATUS || true)")" \
     "APP_ROLLBACK_STATUS=$(ops_escape_manifest_value "$status")" \
     "DOCKER_HEALTH_STATUS=$(ops_escape_manifest_value "${DOCKER_HEALTH_STATUS:-pending}")" \
@@ -152,6 +159,7 @@ main() {
   fi
 
   load_manifest
+  ops_resolve_full_busy_rollback_target "$ROLLBACK_MANIFEST"
   ops_assess_rollback_migration_risk "$ROLLBACK_MANIFEST"
   print_rollback_plan
   assert_previous_app_rollback_available
@@ -160,7 +168,7 @@ main() {
   ops_assert_pre_compat_timing_rollback_allowed \
     "$PRODUCTION_ENV_FILE" \
     "$PRODUCTION_COMPOSE_FILE" \
-    "$ROLLBACK_MANIFEST"
+    "$ROLLBACK_TARGET_FULL_BUSY_COMPAT"
 
   if [[ "$OPS_DRY_RUN" -eq 1 ]]; then
     ops_info "Dry-run complete — no Docker changes were made."
@@ -200,10 +208,10 @@ perform_rollback() {
   ops_assert_pre_compat_timing_rollback_allowed \
     "$PRODUCTION_ENV_FILE" \
     "$PRODUCTION_COMPOSE_FILE" \
-    "$ROLLBACK_MANIFEST"
+    "${ROLLBACK_TARGET_FULL_BUSY_COMPAT:-unknown}"
 
   rollback_tag="$(ops_read_manifest_value "$ROLLBACK_MANIFEST" ROLLBACK_IMAGE_TAG || true)"
-  expected_image_id="$(ops_read_manifest_value "$ROLLBACK_MANIFEST" PREVIOUS_APP_IMAGE_ID || true)"
+  expected_image_id="${ROLLBACK_TARGET_IMAGE_ID:-}"
 
   if ! docker image inspect "$rollback_tag" >/dev/null 2>&1; then
     ops_die "rollback image not found: ${rollback_tag}"
