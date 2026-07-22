@@ -8,6 +8,7 @@ process.env.SECURITY_BATCH_TEST = "1";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import type { AppointmentStatus } from "@prisma/client";
 import {
   filterSlotsByReachableChains,
   firstGridStartOnOrAfter,
@@ -24,6 +25,7 @@ import {
 } from "../src/lib/datetime/date-layer";
 import { buildScheduleAppointmentDisplay } from "../src/lib/schedule/appointment-display";
 import { resolveAppointmentWriteConflict } from "../src/lib/schedule/appointment-write-conflicts";
+import { isBlockingAppointmentStatus } from "../src/lib/schedule/non-blocking-appointment-statuses";
 import {
   checkMasterIntervalAvailability,
   toBusyInterval,
@@ -65,7 +67,7 @@ function shortenedManualAppointment(overrides: {
   breakAfterMinutes?: number | null;
   standardDurationMinutes?: number | null;
   standardBreakAfterMinutes?: number | null;
-  status?: "SCHEDULED" | "CANCELLED" | "RESCHEDULED" | "CONFIRMED";
+  status?: AppointmentStatus;
 } = {}) {
   return {
     startsAt: at("10:00"),
@@ -213,7 +215,7 @@ function filterPublicSlotsLikeBooking(input: {
     gridOriginMinutes: parseTimeToMinutes(input.gridOrigin),
     workWindows,
     blockingIntervals: input.appointments
-      .filter((appointment) => appointment.status === "SCHEDULED")
+      .filter((appointment) => isBlockingAppointmentStatus(appointment.status))
       .map(publicBusyBlockingInterval),
     onlineTimings: input.onlineTimings,
   });
@@ -476,13 +478,80 @@ function testAddingAppointmentNeverAddsEarlierSlots(): void {
   );
 }
 
-function testCancelledAndRescheduledDoNotBlock(): void {
-  for (const status of ["CANCELLED", "RESCHEDULED"] as const) {
-    const result = publicAvailabilityForCandidate(
+function testBlockingStatusesMatchProductionHelper(): void {
+  const blockingStatuses: AppointmentStatus[] = [
+    "SCHEDULED",
+    "CONFIRMED",
+    "COMPLETED",
+    "NO_SHOW",
+  ];
+  const nonBlockingStatuses: AppointmentStatus[] = [
+    "CANCELLED",
+    "RESCHEDULED",
+  ];
+
+  for (const status of blockingStatuses) {
+    assert.equal(
+      isBlockingAppointmentStatus(status),
+      true,
+      `${status}: helper must treat as blocking`,
+    );
+    const availability = publicAvailabilityForCandidate(
       [shortenedManualAppointment({ status })],
       candidateAt("11:40", 90, 30),
     );
-    assert.equal(result.isAvailable, true, `${status} must not block`);
+    assert.equal(
+      availability.isAvailable,
+      false,
+      `${status}: public availability must block 11:40`,
+    );
+
+    const chainSlots = filterPublicSlotsLikeBooking({
+      appointments: [shortenedManualAppointment({ status })],
+      candidateDuration: 90,
+      candidateBreak: 30,
+      slotStep: 60,
+      gridOrigin: "08:40",
+      lastStart: "17:40",
+      onlineTimings: [{ durationMinutes: 90, breakAfterMinutes: 30 }],
+      chainsEnabled: true,
+    });
+    assert.ok(
+      !chainSlots.includes("11:40"),
+      `${status}: chain harness must block 11:40 via isBlockingAppointmentStatus`,
+    );
+  }
+
+  for (const status of nonBlockingStatuses) {
+    assert.equal(
+      isBlockingAppointmentStatus(status),
+      false,
+      `${status}: helper must treat as non-blocking`,
+    );
+    const availability = publicAvailabilityForCandidate(
+      [shortenedManualAppointment({ status })],
+      candidateAt("11:40", 90, 30),
+    );
+    assert.equal(
+      availability.isAvailable,
+      true,
+      `${status}: must not block public availability`,
+    );
+
+    const chainSlots = filterPublicSlotsLikeBooking({
+      appointments: [shortenedManualAppointment({ status })],
+      candidateDuration: 90,
+      candidateBreak: 30,
+      slotStep: 60,
+      gridOrigin: "08:40",
+      lastStart: "17:40",
+      onlineTimings: [{ durationMinutes: 90, breakAfterMinutes: 30 }],
+      chainsEnabled: true,
+    });
+    assert.ok(
+      chainSlots.includes("11:40"),
+      `${status}: chain harness must not treat as blocking`,
+    );
   }
 }
 
@@ -570,8 +639,22 @@ function testStaticWiring(): void {
   assert.match(booking, /standardBreakAfterMinutes:\s*true/);
   assert.match(
     booking,
+    /isBlockingAppointmentStatus/,
+    "BookingService filters appointments via production helper",
+  );
+  assert.match(
+    booking,
     /availableSlots\.includes\(input\.startTime\)/,
     "POST createOnlineBooking re-checks slot list",
+  );
+
+  const harness = stripComments(
+    read("scripts/security-public-booking-conservative-busy-check.ts"),
+  );
+  assert.match(
+    harness,
+    /isBlockingAppointmentStatus\(appointment\.status\)/,
+    "chain harness must use production status helper, not SCHEDULED-only",
   );
 
   const appointment = stripComments(read("src/services/AppointmentService.ts"));
@@ -613,7 +696,7 @@ function main(): void {
   testOverlappingAppointmentsTakeMaxBusy();
   testDuplicateManualDoesNotWidenSlots();
   testAddingAppointmentNeverAddsEarlierSlots();
-  testCancelledAndRescheduledDoNotBlock();
+  testBlockingStatusesMatchProductionHelper();
   testScheduleBlockRemainsStrict();
   testFullDayBlockRemainsStrict();
   testManagerOverlapOverrideStillWorksOnActualBusy();
