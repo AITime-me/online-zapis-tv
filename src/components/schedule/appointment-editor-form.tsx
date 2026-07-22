@@ -673,6 +673,15 @@ export function NewAppointmentForm({
     isBold: false,
   });
   const [error, setError] = useState<string | null>(null);
+  const [showOverlapConfirm, setShowOverlapConfirm] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
+  const submitButtonRef = useRef<HTMLButtonElement | null>(null);
+  const overlapCancelButtonRef = useRef<HTMLButtonElement | null>(null);
+  const overlapConfirmButtonRef = useRef<HTMLButtonElement | null>(null);
+  const overlapDialogRef = useRef<HTMLDivElement | null>(null);
+
+  isSubmittingRef.current = isSubmitting;
 
   const selectedService = options.services.find(
     (service) => service.id === form.serviceId,
@@ -688,27 +697,143 @@ export function NewAppointmentForm({
 
   const fieldId = (name: ScheduleEditorFieldKey) => `new-appointment-${name}`;
 
-  const handleCreate = async () => {
+  const restoreFocusToSubmit = useCallback(() => {
+    queueMicrotask(() => {
+      submitButtonRef.current?.focus();
+    });
+  }, []);
+
+  const dismissOverlapConfirm = useCallback(() => {
+    if (isSubmittingRef.current) {
+      return;
+    }
+    setShowOverlapConfirm(false);
+    restoreFocusToSubmit();
+  }, [restoreFocusToSubmit]);
+
+  useEffect(() => {
+    if (!showOverlapConfirm) {
+      return;
+    }
+
+    overlapCancelButtonRef.current?.focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        // Не прерываем уже идущий повторный submit — иначе возможны гонки UI.
+        if (isSubmittingRef.current) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        dismissOverlapConfirm();
+        return;
+      }
+
+      if (event.key !== "Tab") {
+        return;
+      }
+
+      const cancelBtn = overlapCancelButtonRef.current;
+      const confirmBtn = overlapConfirmButtonRef.current;
+      const dialog = overlapDialogRef.current;
+      if (!cancelBtn || !confirmBtn || !dialog) {
+        return;
+      }
+
+      const focusables = [cancelBtn, confirmBtn].filter(
+        (button) => !button.disabled,
+      );
+      if (focusables.length === 0) {
+        event.preventDefault();
+        return;
+      }
+
+      const active = document.activeElement;
+      const activeInsideDialog = active instanceof Node && dialog.contains(active);
+
+      if (focusables.length === 1) {
+        event.preventDefault();
+        focusables[0].focus();
+        return;
+      }
+
+      if (!activeInsideDialog) {
+        event.preventDefault();
+        (event.shiftKey ? confirmBtn : cancelBtn).focus();
+        return;
+      }
+
+      if (event.shiftKey) {
+        if (active === cancelBtn) {
+          event.preventDefault();
+          confirmBtn.focus();
+        }
+      } else if (active === confirmBtn) {
+        event.preventDefault();
+        cancelBtn.focus();
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [dismissOverlapConfirm, showOverlapConfirm]);
+
+  const submitCreate = async (allowAppointmentOverlap: boolean) => {
+    if (isSubmittingRef.current) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    isSubmittingRef.current = true;
     onSaveStatus("saving");
     setError(null);
 
     try {
+      const payloadBody: Record<string, unknown> = {
+        masterId,
+        dateKey,
+        ...form,
+        serviceId: form.serviceId || null,
+        comment: form.comment || null,
+        importantNote: form.importantNote || null,
+      };
+      if (allowAppointmentOverlap) {
+        payloadBody.allowAppointmentOverlap = true;
+      }
+
       const response = await fetch("/api/appointments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          masterId,
-          dateKey,
-          ...form,
-          serviceId: form.serviceId || null,
-          comment: form.comment || null,
-          importantNote: form.importantNote || null,
-        }),
+        body: JSON.stringify(payloadBody),
       });
-      const payload = await response.json();
+      const payload = (await response.json()) as {
+        ok?: boolean;
+        error?: string;
+        code?: string;
+        conflictType?: string;
+      };
+
       if (!response.ok) {
+        if (
+          response.status === 409 &&
+          payload.code === "APPOINTMENT_OVERLAP" &&
+          !allowAppointmentOverlap
+        ) {
+          setShowOverlapConfirm(true);
+          onSaveStatus("idle");
+          return;
+        }
+
+        setShowOverlapConfirm(false);
         throw new Error(payload.error ?? "Ошибка создания");
       }
+
+      setShowOverlapConfirm(false);
       clientDebugLog("schedule.appointment.saved", { action: "post" });
       onSaveStatus("saved");
       await onCreated();
@@ -717,7 +842,18 @@ export function NewAppointmentForm({
         createError instanceof Error ? createError.message : "Ошибка создания";
       setError(message);
       onSaveStatus("error", message);
+    } finally {
+      isSubmittingRef.current = false;
+      setIsSubmitting(false);
     }
+  };
+
+  const handleCreate = () => {
+    void submitCreate(false);
+  };
+
+  const handleConfirmOverlapCreate = () => {
+    void submitCreate(true);
   };
 
   return (
@@ -920,18 +1056,67 @@ export function NewAppointmentForm({
 
       {error ? <p className="mt-2 text-[10px] text-red-600">{error}</p> : null}
 
+      {showOverlapConfirm ? (
+        <div
+          ref={overlapDialogRef}
+          className="mt-2 border border-amber-300 bg-amber-50 p-2"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="new-appointment-overlap-confirm-title"
+          aria-describedby="new-appointment-overlap-confirm-desc"
+        >
+          <p
+            id="new-appointment-overlap-confirm-title"
+            className="font-medium text-amber-950"
+          >
+            Предупреждение
+          </p>
+          <p
+            id="new-appointment-overlap-confirm-desc"
+            className="mt-1 text-[10px] text-amber-900"
+          >
+            На это время у мастера уже есть запись
+          </p>
+          <div className="mt-2 flex gap-2">
+            <button
+              ref={overlapCancelButtonRef}
+              type="button"
+              onClick={dismissOverlapConfirm}
+              disabled={isSubmitting}
+              className="border border-[#dadce0] bg-white px-2 py-1 text-[10px] disabled:opacity-50"
+            >
+              Отмена
+            </button>
+            <button
+              ref={overlapConfirmButtonRef}
+              type="button"
+              onClick={handleConfirmOverlapCreate}
+              disabled={isSubmitting}
+              className="bg-[#1a73e8] px-2 py-1 text-[10px] text-white disabled:opacity-50"
+            >
+              {isSubmitting ? "Создание…" : "Создать всё равно"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="mt-2 flex gap-2">
         <button
+          ref={submitButtonRef}
           type="button"
-          onClick={() => void handleCreate()}
-          className="bg-[#1a73e8] px-2 py-1 text-[10px] text-white"
+          onClick={handleCreate}
+          disabled={isSubmitting || showOverlapConfirm}
+          tabIndex={showOverlapConfirm ? -1 : undefined}
+          className="bg-[#1a73e8] px-2 py-1 text-[10px] text-white disabled:opacity-50"
         >
-          Добавить
+          {isSubmitting ? "Создание…" : "Добавить"}
         </button>
         <button
           type="button"
           onClick={onCancel}
-          className="border border-[#dadce0] px-2 py-1 text-[10px]"
+          disabled={isSubmitting || showOverlapConfirm}
+          tabIndex={showOverlapConfirm ? -1 : undefined}
+          className="border border-[#dadce0] px-2 py-1 text-[10px] disabled:opacity-50"
         >
           Отмена
         </button>
