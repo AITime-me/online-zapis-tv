@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Internal health monitor v1 (simple): read-only host checks for staging + production.
-# Detect and journal only. No restarts, restores, migrations, cleanup, or alerts.
+# Detect and journal only. Optional Telegram notify after the result (never remediates).
 set -Eeuo pipefail
 
 readonly IHM_SELF_UNIT="online-zapis-tv-internal-health-monitor.service"
 readonly IHM_STATE_DIR_DEFAULT="/var/lib/online-zapis-tv/health-monitor"
 readonly IHM_LOCK_NAME="run.lock"
 readonly IHM_JOURNAL_NAME="journal.jsonl"
+readonly IHM_TELEGRAM_STATE_NAME="telegram-notify-state.json"
+readonly IHM_TELEGRAM_CONFIG_DEFAULT="/etc/online-zapis-tv/health-monitor.env"
+readonly IHM_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly IHM_TELEGRAM_NOTIFIER="${IHM_SCRIPT_DIR}/internal-health-monitor-telegram.py"
 
 readonly IHM_DISK_WARN_PERCENT=75
 readonly IHM_DISK_CRIT_PERCENT=90
@@ -37,8 +41,11 @@ readonly IHM_STAGING_BACKUP_TIMER="online-zapis-tv-staging-backup.timer"
 readonly IHM_STAGING_BACKUP_SERVICE="online-zapis-tv-staging-backup.service"
 
 IHM_STATE_DIR="${IHM_STATE_DIR_DEFAULT}"
+IHM_TELEGRAM_CONFIG="${IHM_TELEGRAM_CONFIG:-$IHM_TELEGRAM_CONFIG_DEFAULT}"
+IHM_TELEGRAM_DRY_RUN_DIR="${IHM_TELEGRAM_DRY_RUN_DIR:-}"
 IHM_FIXTURE=""
 IHM_HELP=0
+IHM_SKIP_TELEGRAM=0
 
 IHM_OVERALL="healthy"
 IHM_FAIL_COUNT=0
@@ -59,6 +66,7 @@ Options:
   --state-dir PATH    State directory (default: /var/lib/online-zapis-tv/health-monitor)
   --fixture MODE      Local fixture without Docker/systemd:
                       healthy | warning | critical | technical_error
+                      (skips Telegram notify)
 
 Exit codes:
   0   healthy
@@ -66,8 +74,8 @@ Exit codes:
   20  critical
   30  technical_error
 
-This script never restarts containers, restores databases, migrates, prunes Docker,
-or sends alerts.
+This script never restarts containers, restores databases, migrates, or prunes Docker.
+Optional Telegram notifications may be sent after the health result (detect only; no auto-fix).
 EOF
 }
 
@@ -552,7 +560,111 @@ print_footer() {
   esac
 }
 
+ihm_python3_bin() {
+  # Optional absolute override for local/Windows regression tests.
+  if [[ -n "${IHM_PYTHON3:-}" ]]; then
+    if [[ -x "$IHM_PYTHON3" ]] || [[ -f "$IHM_PYTHON3" ]]; then
+      if "$IHM_PYTHON3" -c 'import urllib.request' >/dev/null 2>&1; then
+        printf '%s\n' "$IHM_PYTHON3"
+        return 0
+      fi
+    fi
+    return 1
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    return 1
+  fi
+  if ! python3 -c 'import urllib.request' >/dev/null 2>&1; then
+    return 1
+  fi
+  command -v python3
+}
+
+build_telegram_payload() {
+  local first=1 record level label code detail
+  local -a problem_items=()
+
+  for record in "${IHM_CHECK_RECORDS[@]+"${IHM_CHECK_RECORDS[@]}"}"; do
+    IFS=$'\t' read -r level label code detail <<<"$record"
+    if [[ "$level" == "healthy" || -z "$level" ]]; then
+      continue
+    fi
+    if [[ -n "$code" && -n "$detail" ]]; then
+      problem_items+=("{\"id\":\"$(json_escape "$label")\",\"status\":\"$(json_escape "$level")\",\"code\":\"$(json_escape "$code")\",\"detail\":\"$(json_escape "$detail")\"}")
+    elif [[ -n "$code" ]]; then
+      problem_items+=("{\"id\":\"$(json_escape "$label")\",\"status\":\"$(json_escape "$level")\",\"code\":\"$(json_escape "$code")\"}")
+    elif [[ -n "$detail" ]]; then
+      problem_items+=("{\"id\":\"$(json_escape "$label")\",\"status\":\"$(json_escape "$level")\",\"detail\":\"$(json_escape "$detail")\"}")
+    else
+      problem_items+=("{\"id\":\"$(json_escape "$label")\",\"status\":\"$(json_escape "$level")\"}")
+    fi
+  done
+
+  printf '{"overallStatus":"%s","problems":[' "$(json_escape "$IHM_OVERALL")"
+  first=1
+  for record in "${problem_items[@]+"${problem_items[@]}"}"; do
+    if [[ "$first" -eq 1 ]]; then
+      first=0
+    else
+      printf ','
+    fi
+    printf '%s' "$record"
+  done
+  printf ']}\n'
+}
+
+maybe_notify_telegram() {
+  local bin state_path dry_args=()
+
+  if [[ "$IHM_SKIP_TELEGRAM" -eq 1 && -z "$IHM_TELEGRAM_DRY_RUN_DIR" ]]; then
+    return 0
+  fi
+
+  if [[ ! -f "$IHM_TELEGRAM_NOTIFIER" ]]; then
+    echo "INFO telegram: notifier script missing, skipping" >&2
+    return 0
+  fi
+
+  if ! bin="$(ihm_python3_bin)"; then
+    echo "INFO telegram: python3 unavailable, skipping" >&2
+    return 0
+  fi
+
+  state_path="${IHM_STATE_DIR}/${IHM_TELEGRAM_STATE_NAME}"
+  mkdir -p "$IHM_STATE_DIR" 2>/dev/null || true
+
+  if [[ -n "$IHM_TELEGRAM_DRY_RUN_DIR" ]]; then
+    dry_args=(--dry-run-dir "$IHM_TELEGRAM_DRY_RUN_DIR")
+  fi
+
+  # Payload on stdin; config path only in argv (never token/chat id).
+  set +e
+  build_telegram_payload | "$bin" "$IHM_TELEGRAM_NOTIFIER" \
+    --config "$IHM_TELEGRAM_CONFIG" \
+    --state "$state_path" \
+    "${dry_args[@]+"${dry_args[@]}"}"
+  set -e
+  return 0
+}
+
+exit_with_overall() {
+  local code=0
+  case "$IHM_OVERALL" in
+    healthy) code=0 ;;
+    warning) code=10 ;;
+    critical) code=20 ;;
+    *) code=30 ;;
+  esac
+  # Fixtures skip Telegram unless a dry-run dir is provided for local tests.
+  if [[ "$IHM_SKIP_TELEGRAM" -eq 1 && -z "$IHM_TELEGRAM_DRY_RUN_DIR" ]]; then
+    exit "$code"
+  fi
+  maybe_notify_telegram
+  exit "$code"
+}
+
 run_fixture() {
+  IHM_SKIP_TELEGRAM=1
   echo "INTERNAL_HEALTH_MONITOR START"
   case "$IHM_FIXTURE" in
     healthy)
@@ -589,12 +701,7 @@ run_fixture() {
   print_footer
   mkdir -p "$IHM_STATE_DIR"
   append_jsonl
-  case "$IHM_OVERALL" in
-    healthy) exit 0 ;;
-    warning) exit 10 ;;
-    critical) exit 20 ;;
-    *) exit 30 ;;
-  esac
+  exit_with_overall
 }
 
 acquire_lock_or_skip() {
@@ -644,12 +751,7 @@ run_live() {
   fi
 
   print_footer
-  case "$IHM_OVERALL" in
-    healthy) exit 0 ;;
-    warning) exit 10 ;;
-    critical) exit 20 ;;
-    *) exit 30 ;;
-  esac
+  exit_with_overall
 }
 
 main() {

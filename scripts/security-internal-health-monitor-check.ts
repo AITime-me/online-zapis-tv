@@ -11,12 +11,14 @@ import path from "node:path";
 const ROOT = process.cwd();
 
 const SCRIPT = "scripts/ops/internal-health-monitor.sh";
+const TELEGRAM_PY = "scripts/ops/internal-health-monitor-telegram.py";
+const TELEGRAM_MJS_REMOVED = "scripts/ops/internal-health-monitor-telegram.mjs";
 const SERVICE = "deploy/systemd/host/online-zapis-tv-internal-health-monitor.service";
 const TIMER = "deploy/systemd/host/online-zapis-tv-internal-health-monitor.timer";
 const LOGROTATE = "deploy/logrotate/online-zapis-tv-health-monitor";
 const DOCS = "docs/operations/internal-health-monitor.md";
 
-const REQUIRED_FILES = [SCRIPT, SERVICE, TIMER, LOGROTATE, DOCS] as const;
+const REQUIRED_FILES = [SCRIPT, TELEGRAM_PY, SERVICE, TIMER, LOGROTATE, DOCS] as const;
 
 const CONTAINERS = [
   "tvoe-vremya-production-app",
@@ -105,6 +107,10 @@ function assertRequiredFiles(): void {
   for (const rel of REQUIRED_FILES) {
     assert.ok(fs.existsSync(path.join(ROOT, rel)), `missing ${rel}`);
   }
+  assert.ok(
+    !fs.existsSync(path.join(ROOT, TELEGRAM_MJS_REMOVED)),
+    `${TELEGRAM_MJS_REMOVED} must be removed (Python-only notifier)`,
+  );
 }
 
 function assertScriptSafety(): void {
@@ -141,6 +147,14 @@ function assertScriptSafety(): void {
   assert.match(executable, /:ro/);
   assert.match(executable, /flock -n/);
   assert.match(executable, /journal\.jsonl/);
+  assert.match(executable, /internal-health-monitor-telegram\.py/);
+  assert.match(executable, /maybe_notify_telegram/);
+  assert.match(executable, /ihm_python3_bin/);
+  assert.match(executable, /IHM_TELEGRAM_CONFIG/);
+  assert.doesNotMatch(executable, /internal-health-monitor-telegram\.mjs/);
+  assert.doesNotMatch(executable, /ihm_telegram_runner/);
+  assert.doesNotMatch(executable, /source\s+[\"']?\$\{?IHM_TELEGRAM_CONFIG/);
+  assert.doesNotMatch(executable, /TELEGRAM_BOT_TOKEN=/);
 
   assert.doesNotMatch(executable, /pg_restore\s+--clean/);
   assert.doesNotMatch(executable, /\bpsql\b/);
@@ -200,6 +214,25 @@ function assertUnitsAndDocs(): void {
   assert.match(docs, /Confirm removal|удаление завершено/i);
   assert.match(docs, /Interpreting OK|интерпретировать OK/i);
   assert.match(docs, /What a human should do|Что делать человеку/i);
+  assert.match(docs, /Telegram|telegram/);
+  assert.match(docs, /health-monitor\.env/);
+  assert.match(docs, /TELEGRAM_BOT_TOKEN/);
+  assert.match(docs, /root:deploy/);
+  assert.match(docs, /--test-send/);
+  assert.match(docs, /internal-health-monitor-telegram\.py/);
+  assert.match(docs, /python3/);
+  assert.doesNotMatch(docs, /internal-health-monitor-telegram\.mjs/);
+  assert.doesNotMatch(docs, /Node fallback|If only Node/i);
+  assert.doesNotMatch(docs, /```bash\s*\n```bash/);
+
+  const telegramPy = readFile(TELEGRAM_PY);
+  assert.match(telegramPy, /urllib\.request/);
+  assert.match(telegramPy, /api\.telegram\.org/);
+  assert.match(telegramPy, /TELEGRAM_BOT_TOKEN/);
+  assert.match(telegramPy, /TELEGRAM_CHAT_ID/);
+  assert.match(telegramPy, /os\.replace/);
+  assert.doesNotMatch(telegramPy, /\bsmtplib\b/i);
+  assert.doesNotMatch(telegramPy, /nodemailer/i);
 }
 
 function assertBashSyntaxAndFixtures(): void {
@@ -255,6 +288,10 @@ function assertPackageScript(): void {
   assert.equal(
     pkg.scripts["test:security:internal-health-monitor"],
     "tsx scripts/security-internal-health-monitor-check.ts",
+  );
+  assert.equal(
+    pkg.scripts["test:internal-health-monitor-telegram"],
+    "tsx scripts/internal-health-monitor-telegram-check.ts",
   );
 }
 

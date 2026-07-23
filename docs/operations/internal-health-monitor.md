@@ -2,13 +2,15 @@
 
 Host-wide **read-only** technical monitor for staging + production on one Ubuntu server.
 It detects problems, prints a short report, writes one JSONL line per run, and exits with a severity code.
-It does **not** fix anything.
+It does **not** perform automatic remediation.
+Optional Telegram Bot API notifications may be sent after a run (detect + notify only).
 
 Canonical files in git:
 
 | File | Role |
 | --- | --- |
 | `scripts/ops/internal-health-monitor.sh` | Host script |
+| `scripts/ops/internal-health-monitor-telegram.py` | Telegram notifier (Python 3 stdlib only) |
 | `deploy/systemd/host/online-zapis-tv-internal-health-monitor.service` | oneshot service |
 | `deploy/systemd/host/online-zapis-tv-internal-health-monitor.timer` | every 15 minutes |
 | `deploy/logrotate/online-zapis-tv-health-monitor` | JSONL rotation |
@@ -18,7 +20,9 @@ Installed paths (manual):
 | Path | Purpose |
 | --- | --- |
 | `/usr/local/lib/online-zapis-tv/internal-health-monitor.sh` | Installed script |
-| `/var/lib/online-zapis-tv/health-monitor/` | Lock + `journal.jsonl` |
+| `/usr/local/lib/online-zapis-tv/internal-health-monitor-telegram.py` | Telegram notifier (Python) |
+| `/var/lib/online-zapis-tv/health-monitor/` | Lock + `journal.jsonl` + Telegram state |
+| `/etc/online-zapis-tv/health-monitor.env` | Telegram credentials (not in Git) |
 | `/etc/systemd/system/online-zapis-tv-internal-health-monitor.service` | Unit |
 | `/etc/systemd/system/online-zapis-tv-internal-health-monitor.timer` | Timer |
 | `/etc/logrotate.d/online-zapis-tv-health-monitor` | logrotate |
@@ -43,16 +47,17 @@ Installed paths (manual):
 - `docker system prune` / `docker image prune` / `rm -rf`
 - Restore databases, run SQL, apply migrations
 - Change env, Compose, or git checkouts
-- Send email / SMTP / webhooks / alerts
+- Send email / SMTP (Telegram Bot API is optional; see §18)
 - Pull Docker images during a check
 - Automatic remediation of any kind
 
 ## 3. Server requirements
 
-- Ubuntu host with `deploy` user, Docker, systemd, `curl`, `flock`, `timeout`, `awk`, `grep`
+- Ubuntu host with `deploy` user, Docker, systemd, `curl`, `flock`, `timeout`, `awk`, `grep`, `python3`
 - Local image `postgres:17-alpine` already present (monitor will **not** pull it)
 - Staging checkout `/opt/online-zapis-tv`, production `/opt/online-zapis-tv-production`
 - Existing backup timers already installed
+- Optional Telegram: config file `/etc/online-zapis-tv/health-monitor.env` (see §18)
 
 ## 4. Copy files manually
 
@@ -61,8 +66,11 @@ From an approved git checkout (example: staging tree at a reviewed SHA):
 ```bash
 sudo mkdir -p /usr/local/lib/online-zapis-tv
 sudo cp scripts/ops/internal-health-monitor.sh /usr/local/lib/online-zapis-tv/internal-health-monitor.sh
+sudo cp scripts/ops/internal-health-monitor-telegram.py /usr/local/lib/online-zapis-tv/internal-health-monitor-telegram.py
 sudo chown root:deploy /usr/local/lib/online-zapis-tv/internal-health-monitor.sh
+sudo chown root:deploy /usr/local/lib/online-zapis-tv/internal-health-monitor-telegram.py
 sudo chmod 0750 /usr/local/lib/online-zapis-tv/internal-health-monitor.sh
+sudo chmod 0750 /usr/local/lib/online-zapis-tv/internal-health-monitor-telegram.py
 
 sudo mkdir -p /var/lib/online-zapis-tv/health-monitor
 sudo chown deploy:deploy /var/lib/online-zapis-tv/health-monitor
@@ -76,6 +84,7 @@ sudo cp deploy/systemd/host/online-zapis-tv-internal-health-monitor.timer /etc/s
 sudo cp deploy/logrotate/online-zapis-tv-health-monitor /etc/logrotate.d/online-zapis-tv-health-monitor
 ```
 
+Telegram credentials are **not** copied from Git. Create them separately (see §18).
 ## 5. Syntax check
 
 ```bash
@@ -88,8 +97,10 @@ Locally from the repo (no host install):
 ```bash
 bash -n scripts/ops/internal-health-monitor.sh
 bash scripts/ops/internal-health-monitor.sh --help
+python3 -m py_compile scripts/ops/internal-health-monitor-telegram.py
 bash scripts/ops/internal-health-monitor.sh --fixture healthy
 npm run test:security:internal-health-monitor
+npm run test:internal-health-monitor-telegram
 ```
 
 ## 6. Manual dry / fixture / live run
@@ -171,16 +182,26 @@ sudo rm -f /etc/systemd/system/online-zapis-tv-internal-health-monitor.service
 sudo rm -f /etc/systemd/system/online-zapis-tv-internal-health-monitor.timer
 sudo rm -f /etc/logrotate.d/online-zapis-tv-health-monitor
 sudo rm -f /usr/local/lib/online-zapis-tv/internal-health-monitor.sh
+sudo rm -f /usr/local/lib/online-zapis-tv/internal-health-monitor-telegram.py
 sudo systemctl daemon-reload
 ```
 
 State directory (optional keep for history):
 
 ```bash
-# optional
-sudo rm -rf /var/lib/online-zapis-tv/health-monitor
+# optional — removes JSONL and Telegram notify state
+sudo rm -f /var/lib/online-zapis-tv/health-monitor/journal.jsonl
+sudo rm -f /var/lib/online-zapis-tv/health-monitor/telegram-notify-state.json
+sudo rm -f /var/lib/online-zapis-tv/health-monitor/run.lock
+sudo rmdir /var/lib/online-zapis-tv/health-monitor 2>/dev/null || true
 ```
 
+Telegram config (optional remove):
+
+```bash
+# optional
+sudo rm -f /etc/online-zapis-tv/health-monitor.env
+```
 ## 15. Confirm removal
 
 ```bash
@@ -230,5 +251,68 @@ Timer schedule (from simple v1 plan): `*-*-* *:0/15:00 Asia/Yekaterinburg`, `Per
 | Backup stale / missing / unreadable | Investigate backup timer/service; verify dumps under the backup directories. |
 | `postgres:17-alpine` missing | Load/pull the image in a controlled maintenance window (monitor itself never pulls). |
 | technical_error on queries | Check permissions for `deploy`, Docker socket group, python3/curl availability. |
+| Telegram disabled / failed | Monitor checks still stand. Fix `/etc/online-zapis-tv/health-monitor.env` permissions or bot token; re-run `--test-send`. |
 
-External public uptime alerts remain with the existing Timeweb HTTP monitor. This internal v1 only journals host/infrastructure signals.
+**Important:** `SuccessExitStatus=10 20` means warning/critical do **not** mark the systemd unit as failed. Health is in `journalctl` / JSONL / Telegram — not in `systemctl is-failed`.
+
+External public uptime alerts remain with the existing Timeweb HTTP monitor.
+
+## 18. Telegram notifications (optional)
+
+Minimal Bot API alerts for first problem, changed problem set, and recovery. No SMTP. Secrets never enter Git.
+
+### Config file (outside Git)
+
+```bash
+sudo mkdir -p /etc/online-zapis-tv
+sudo chown root:deploy /etc/online-zapis-tv
+sudo chmod 0750 /etc/online-zapis-tv
+
+sudo install -o root -g deploy -m 0640 /dev/null /etc/online-zapis-tv/health-monitor.env
+sudo -u deploy nano /etc/online-zapis-tv/health-monitor.env
+```
+
+File contents (exact keys only):
+
+```bash
+TELEGRAM_BOT_TOKEN=123456:ABC...
+TELEGRAM_CHAT_ID=123456789
+```
+
+Do **not** `source` this file in shell. The notifier parses only these two keys.
+
+Permissions:
+
+| Path | Owner | Mode |
+| --- | --- | --- |
+| `/etc/online-zapis-tv` | `root:deploy` | `0750` |
+| `/etc/online-zapis-tv/health-monitor.env` | `root:deploy` | `0640` |
+
+### Behaviour
+
+- First transition to warning → one Telegram message
+- Transition to critical / technical_error or changed problem set → new message
+- Identical fingerprint every 15 minutes → no message
+- Return to healthy after a prior alert → one recovery message, then state reset
+- Missing/invalid config → monitor continues; stderr: `INFO telegram: disabled (...)`
+- Telegram API failure → monitor exit code unchanged
+
+State file (atomic replace): `/var/lib/online-zapis-tv/health-monitor/telegram-notify-state.json`
+
+### Test send (token must not appear in output)
+
+```bash
+sudo -u deploy python3 /usr/local/lib/online-zapis-tv/internal-health-monitor-telegram.py \
+  --config /etc/online-zapis-tv/health-monitor.env \
+  --state /var/lib/online-zapis-tv/health-monitor/telegram-notify-state.json \
+  --test-send
+```
+
+Expected stderr (no token): `INFO telegram: test message sent`
+
+### Local regression
+
+```bash
+npm run test:internal-health-monitor-telegram
+npm run test:security:internal-health-monitor
+```
