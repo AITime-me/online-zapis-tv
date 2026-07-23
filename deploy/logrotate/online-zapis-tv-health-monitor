@@ -1,0 +1,10 @@
+/var/lib/online-zapis-tv/health-monitor/journal.jsonl {
+  weekly
+  rotate 8
+  compress
+  delaycompress
+  missingok
+  notifempty
+  copytruncate
+  create 0640 deploy deploy
+}

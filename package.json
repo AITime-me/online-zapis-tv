@@ -69,6 +69,7 @@
     "test:security:production-compose": "tsx scripts/security-production-compose-check.ts",
     "test:security:production-https": "tsx scripts/security-production-https-check.ts",
     "test:security:production-ops": "tsx scripts/security-production-ops-check.ts",
+    "test:security:internal-health-monitor": "tsx scripts/security-internal-health-monitor-check.ts",
     "test:security:production-backup": "tsx scripts/security-production-backup-check.ts",
     "test:security:production-restore": "tsx scripts/security-production-restore-check.ts",
     "test:security:production-bootstrap": "tsx scripts/security-production-bootstrap-check.ts",
