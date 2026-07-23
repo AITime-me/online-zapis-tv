@@ -831,9 +831,14 @@ export async function updateAppointment(
 
   const becameCompleted =
     existing.status !== "COMPLETED" && appointment.status === "COMPLETED";
+  const hasExplicitClientConnect =
+    hasClientIdChange &&
+    typeof input.clientId === "string" &&
+    input.clientId.trim().length > 0;
   const shouldSync =
     becameCompleted ||
-    (options?.retryClientLink === true && appointment.status === "COMPLETED");
+    (options?.retryClientLink === true && appointment.status === "COMPLETED") ||
+    (appointment.status === "COMPLETED" && hasExplicitClientConnect);
 
   const clientLink = shouldSync
     ? await syncCompletedAppointmentClientLink(appointment.id)

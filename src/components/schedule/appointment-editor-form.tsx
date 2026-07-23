@@ -527,6 +527,7 @@ export function AppointmentEditorForm({
       }
 
       // Явный link PATCH: не ждём blur/debounce и abort'им stale autosave.
+      // Source of truth (selectedClientId/form/banner) меняем только после response.ok.
       clearPendingSave();
       linkActionGenerationRef.current += 1;
       const generation = linkActionGenerationRef.current;
@@ -535,23 +536,6 @@ export function AppointmentEditorForm({
 
       const nextName = action.clientName;
       const nextPhone = action.clientPhone;
-      setSelectedClientId(action.clientId);
-      selectedClientIdRef.current = action.clientId;
-      setClientLinkDirty(false);
-      clientLinkDirtyRef.current = false;
-      setDuplicateCandidates([]);
-      if (nextName !== undefined || nextPhone !== undefined) {
-        setForm((current) => ({
-          ...current,
-          ...(nextName !== undefined ? { clientName: nextName } : {}),
-          ...(nextPhone !== undefined && nextPhone != null
-            ? { clientPhone: nextPhone }
-            : {}),
-        }));
-      }
-      setLinkBanner(
-        action.clientId ? "Выбран клиент из базы" : "Клиент не связан",
-      );
 
       const abortController = new AbortController();
       saveAbortRef.current = abortController;
@@ -595,6 +579,20 @@ export function AppointmentEditorForm({
           throw new Error(payload.error ?? "Ошибка сохранения связи");
         }
 
+        setSelectedClientId(action.clientId);
+        selectedClientIdRef.current = action.clientId;
+        setClientLinkDirty(false);
+        clientLinkDirtyRef.current = false;
+        if (nextName !== undefined || nextPhone !== undefined) {
+          setForm((current) => ({
+            ...current,
+            ...(nextName !== undefined ? { clientName: nextName } : {}),
+            ...(nextPhone !== undefined && nextPhone != null
+              ? { clientPhone: nextPhone }
+              : {}),
+          }));
+        }
+
         const linkMessage =
           action.clientId === null
             ? "Клиент не связан"
@@ -610,7 +608,14 @@ export function AppointmentEditorForm({
         clientDebugLog("schedule.appointment.saved", {
           action: "persistClientLinkAction",
         });
-        await onSaved();
+
+        try {
+          await onSaved();
+        } catch {
+          // PATCH уже успешен — ошибка refresh не маскируется как ошибка связи.
+          setError("Связь сохранена, но не удалось обновить список");
+          onSaveStatus("saved", "Связь сохранена, список не обновлён");
+        }
       } catch (linkError) {
         if (
           abortController.signal.aborted ||
@@ -620,6 +625,7 @@ export function AppointmentEditorForm({
         ) {
           return;
         }
+        // При ошибке PATCH исходные selectedClientId/form/banner не менялись.
         const message =
           linkError instanceof Error
             ? linkError.message
@@ -912,7 +918,11 @@ export function AppointmentEditorForm({
 
       {canEdit ? (
         <div className="mt-2 rounded border border-[#e8eaed] bg-[#f8f9fa] px-2 py-1.5 text-[10px] text-zinc-700">
-          <p className="font-medium">{linkBanner ?? clientLinkLabel}</p>
+          <p className="font-medium">
+            {isLinkActionPending
+              ? "Сохраняем связь…"
+              : (linkBanner ?? clientLinkLabel)}
+          </p>
           <div className="mt-1 flex flex-wrap gap-2">
             {selectedClientId ? (
               <button

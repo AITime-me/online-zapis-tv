@@ -2,8 +2,10 @@
  * Регрессия: COMPLETED → CRM client link, suggest privacy, UI persistence,
  * public/MASTER DTO boundary + optional Prisma/PostgreSQL integration suite.
  *
- * DB suite: PASSED только при реальном доступе к DATABASE_URL.
- * При недоступной БД печатает SKIPPED (не считается успехом DB-proof).
+ * DB suite требует явный opt-in:
+ *   RUN_APPOINTMENT_CLIENT_LINK_DB_TESTS=1
+ *   DB_TEST_TARGET=staging
+ * Без opt-in печатает SKIPPED (не считается успехом DB-proof).
  */
 process.env.SECURITY_BATCH_TEST = "1";
 
@@ -93,6 +95,11 @@ function testServiceWiring(): void {
     /Object\.prototype\.hasOwnProperty\.call\([\s\S]*?"clientId"[\s\S]*?\)/,
   );
   assert.match(service, /hasClientIdChange/);
+  assert.match(service, /hasExplicitClientConnect/);
+  assert.match(
+    service,
+    /appointment\.status === "COMPLETED" && hasExplicitClientConnect/,
+  );
   assert.match(
     service,
     /assertLinkableClientForAppointment\([\s\S]*?,\s*tx\)/,
@@ -254,6 +261,38 @@ function testUiExplicitPersistenceContract(): void {
     form,
     /if \(clientLinkDirtyRef\.current\) \{\s*payloadBody\.clientId = selectedClientIdRef\.current;/,
   );
+
+  // Source of truth меняется только после response.ok (не до PATCH).
+  const persistStart = form.indexOf(
+    "const persistClientLinkAction = useCallback",
+  );
+  assert.ok(persistStart >= 0);
+  const persistFn = form.slice(
+    persistStart,
+    form.indexOf("const applyPickedClient"),
+  );
+  const okIdx = persistFn.indexOf("if (!response.ok)");
+  const setSelectedAfterOk = persistFn.indexOf(
+    "setSelectedClientId(action.clientId)",
+    okIdx,
+  );
+  assert.ok(okIdx >= 0, "persist must check response.ok");
+  assert.ok(
+    setSelectedAfterOk > okIdx,
+    "final selectedClientId must change only after response.ok",
+  );
+  assert.doesNotMatch(
+    persistFn.slice(0, okIdx),
+    /setSelectedClientId\(action\.clientId\)/,
+  );
+  assert.doesNotMatch(
+    persistFn.slice(0, okIdx),
+    /setLinkBanner\(\s*"Клиент не связан"/,
+  );
+  assert.match(form, /Сохраняем связь…/);
+  assert.match(form, /disabled=\{!canEdit \|\| isLinkActionPending\}/);
+  assert.match(form, /disabled=\{isLinkActionPending\}/);
+  assert.match(form, /Связь сохранена, но не удалось обновить список/);
 }
 
 function testNoCrmNotesInAppointmentText(): void {
@@ -272,55 +311,108 @@ function testClientMergeKeepsAppointmentLinks(): void {
   assert.match(merge, /clientId:\s*targetClientId|clientId:\s*input\.targetClientId/);
 }
 
-async function probeDatabase(): Promise<
+async function resolveDbSuiteGate(): Promise<
   | { ok: true; prisma: typeof import("../src/lib/db").prisma }
   | { ok: false; reason: string }
 > {
   if (!process.env.DATABASE_URL) {
     return { ok: false, reason: "no DATABASE_URL" };
   }
+  if (process.env.RUN_APPOINTMENT_CLIENT_LINK_DB_TESTS !== "1") {
+    return { ok: false, reason: "explicit staging opt-in required" };
+  }
+  if (process.env.DB_TEST_TARGET !== "staging") {
+    return {
+      ok: false,
+      reason: "DB_TEST_TARGET must be staging",
+    };
+  }
+
   const { prisma } = await import("../src/lib/db");
   try {
     await prisma.$queryRaw`SELECT 1`;
   } catch {
     return { ok: false, reason: "DB unreachable" };
   }
+
+  console.log("DB integration target: staging");
   return { ok: true, prisma };
 }
 
-function uniquePhone(seed: string): string {
-  const digits = `${Date.now()}${seed}`.replace(/\D/g, "").slice(-7);
-  return `+7900${digits.padStart(7, "0").slice(0, 7)}`;
+const phoneRunPrefix = Date.now().toString().slice(-6);
+let phoneCounter = 0;
+const issuedPhones = new Set<string>();
+
+/** Гарантированно уникальные тестовые телефоны в рамках одного запуска. */
+function uniquePhone(seed?: string): string {
+  void seed;
+  phoneCounter += 1;
+  const n = (Number(phoneRunPrefix) * 10_000 + phoneCounter) % 10_000_000;
+  const phone = `+7900${String(n).padStart(7, "0")}`;
+  assert.ok(
+    !issuedPhones.has(phone),
+    "uniquePhone must never reuse a generated number",
+  );
+  issuedPhones.add(phone);
+  return phone;
+}
+
+function testUniquePhoneGenerator(): void {
+  const phones = [
+    uniquePhone("09a"),
+    uniquePhone("09b"),
+    uniquePhone("17a"),
+    uniquePhone("17m"),
+    uniquePhone("x"),
+    uniquePhone("y"),
+    uniquePhone("z"),
+  ];
+  assert.equal(new Set(phones).size, phones.length);
+  const norms = phones.map((phone) => {
+    assert.ok(isUsableClientPhone(phone), `usable: ${phone}`);
+    const normalized = normalizePhone(phone);
+    assert.ok(normalized);
+    return normalized;
+  });
+  assert.equal(new Set(norms).size, norms.length);
+}
+
+const DB_SCENARIO_NAMES = [
+  "db.existing-phone-links",
+  "db.no-match-creates",
+  "db.status-transitions",
+  "db.lastVisit-monotonic",
+  "db.technical-and-invalid-phone",
+  "db.duplicate-candidates",
+  "db.manual-duplicate-resolve",
+  "db.completed-disconnect-no-relink",
+  "db.same-fio-other-phone",
+  "db.idempotent-resync",
+  "db.completed-reschedule-completed",
+  "db.service-completed-workflow",
+  "db.parallel-same-phone",
+  "db.parallel-suffix-equivalent",
+  "db.manual-create-selected-client",
+  "db.manual-patch-connect-disconnect",
+  "db.reject-archived-merged",
+  "db.autosave-no-create",
+  "db.explicit-retry",
+  "db.comment-importantNote-clean",
+] as const;
+
+function skipAllDbScenarios(reason: string): void {
+  for (const name of DB_SCENARIO_NAMES) {
+    dbOutcomes.push({ name, outcome: "SKIPPED", detail: reason });
+  }
+  console.log(
+    `security-appointment-completed-client-link-check: DB suite SKIPPED (${reason})`,
+  );
 }
 
 async function runDbIntegrationSuite(): Promise<void> {
-  const probe = await probeDatabase();
+  const probe = await resolveDbSuiteGate();
   if (!probe.ok) {
-    const names = [
-      "db.existing-phone-links",
-      "db.no-match-creates",
-      "db.status-transitions",
-      "db.lastVisit-monotonic",
-      "db.technical-and-invalid-phone",
-      "db.duplicate-candidates",
-      "db.same-fio-other-phone",
-      "db.idempotent-resync",
-      "db.completed-reschedule-completed",
-      "db.parallel-same-phone",
-      "db.parallel-suffix-equivalent",
-      "db.manual-create-selected-client",
-      "db.manual-patch-connect-disconnect",
-      "db.reject-archived-merged",
-      "db.autosave-no-create",
-      "db.explicit-retry",
-      "db.comment-importantNote-clean",
-    ];
-    for (const name of names) {
-      dbOutcomes.push({ name, outcome: "SKIPPED", detail: probe.reason });
-    }
-    console.log(
-      `security-appointment-completed-client-link-check: DB suite SKIPPED (${probe.reason})`,
-    );
+    skipAllDbScenarios(probe.reason);
     return;
   }
 
@@ -348,14 +440,7 @@ async function runDbIntegrationSuite(): Promise<void> {
   });
 
   if (!master || !service || !user) {
-    dbOutcomes.push({
-      name: "db.suite",
-      outcome: "SKIPPED",
-      detail: "missing master/service/admin user",
-    });
-    console.log(
-      "security-appointment-completed-client-link-check: DB suite SKIPPED (fixtures)",
-    );
+    skipAllDbScenarios("missing master/service/admin user");
     await prisma.$disconnect();
     return;
   }
@@ -629,6 +714,96 @@ async function runDbIntegrationSuite(): Promise<void> {
       dbOutcomes.push({ name: "db.duplicate-candidates", outcome: "PASSED" });
     }
 
+    // 8b. manual duplicate resolve + disconnect without auto-relink
+    {
+      const phone = uniquePhone("08b");
+      const normalized = normalizePhone(phone)!;
+      const selected = await prisma.client.create({
+        data: {
+          fullName: `${tag} DupPick`,
+          phone,
+          normalizedPhone: normalized,
+          status: "INACTIVE",
+        },
+      });
+      const otherVisit = new Date("2090-01-01T00:00:00+05:00");
+      const other = await prisma.client.create({
+        data: {
+          fullName: `${tag} DupOther`,
+          phone,
+          normalizedPhone: normalized,
+          status: "ACTIVE",
+          lastVisitAt: otherVisit,
+          tags: ["keep-me"],
+        },
+      });
+      createdClientIds.push(selected.id, other.id);
+      const appt = await createCompletedRaw({
+        phone,
+        name: `${tag} DupResolveAppt`,
+        startsAt: new Date("2099-09-08T14:00:00+05:00"),
+        endsAt: new Date("2099-09-08T15:00:00+05:00"),
+      });
+      const dup = await syncCompletedAppointmentClientLink(appt.id);
+      assert.equal(dup.status, "duplicate");
+
+      const resolved = await updateAppointment(appt.id, {
+        clientId: selected.id,
+        clientName: selected.fullName,
+        clientPhone: selected.phone,
+      });
+      assert.equal(resolved.appointment.clientId, selected.id);
+      assert.ok(
+        resolved.clientLink.status === "already_linked" ||
+          resolved.clientLink.status === "linked",
+        `expected already_linked/linked, got ${resolved.clientLink.status}`,
+      );
+
+      const refreshedSelected = await prisma.client.findUnique({
+        where: { id: selected.id },
+      });
+      const refreshedOther = await prisma.client.findUnique({
+        where: { id: other.id },
+      });
+      assert.equal(refreshedSelected?.status, "ACTIVE");
+      assert.equal(
+        refreshedSelected?.lastVisitAt?.toISOString(),
+        appt.startsAt.toISOString(),
+      );
+      assert.ok(refreshedSelected?.tags.includes(service!.publicName));
+      assert.equal(refreshedOther?.status, "ACTIVE");
+      assert.equal(
+        refreshedOther?.lastVisitAt?.toISOString(),
+        otherVisit.toISOString(),
+      );
+      assert.deepEqual(refreshedOther?.tags, ["keep-me"]);
+      assert.equal(
+        await prisma.client.count({ where: { normalizedPhone: normalized } }),
+        2,
+      );
+      dbOutcomes.push({
+        name: "db.manual-duplicate-resolve",
+        outcome: "PASSED",
+      });
+
+      const cleared = await updateAppointment(appt.id, { clientId: null });
+      assert.equal(cleared.appointment.clientId, null);
+      assert.equal(cleared.clientLink.status, "not_applicable");
+      const afterClear = await prisma.appointment.findUnique({
+        where: { id: appt.id },
+      });
+      assert.equal(afterClear?.clientId, null);
+      assert.equal(afterClear?.status, "COMPLETED");
+      assert.equal(
+        await prisma.client.count({ where: { normalizedPhone: normalized } }),
+        2,
+      );
+      dbOutcomes.push({
+        name: "db.completed-disconnect-no-relink",
+        outcome: "PASSED",
+      });
+    }
+
     // 9. same FIO other phone → create
     {
       const phoneA = uniquePhone("09a");
@@ -697,6 +872,80 @@ async function runDbIntegrationSuite(): Promise<void> {
       dbOutcomes.push({ name: "db.idempotent-resync", outcome: "PASSED" });
       dbOutcomes.push({
         name: "db.completed-reschedule-completed",
+        outcome: "PASSED",
+      });
+    }
+
+    // 11b. real AppointmentService COMPLETED workflow
+    {
+      const phone = uniquePhone("11b");
+      const created = await createAppointment(
+        {
+          masterId: master.id,
+          dateKey: "2099-09-21",
+          startTime: "10:00",
+          endTime: "10:30",
+          serviceId: service.id,
+          clientName: `${tag} Workflow`,
+          clientPhone: phone,
+          status: "SCHEDULED",
+          source: "INTERNAL",
+        },
+        user.id,
+        { allowAppointmentOverlap: true },
+      );
+      createdAppointmentIds.push(created.appointment.id);
+      assert.equal(created.clientLink.status, "not_applicable");
+      assert.equal(created.appointment.clientId, null);
+
+      const completed = await updateAppointment(
+        created.appointment.id,
+        { status: "COMPLETED" },
+        { allowAppointmentOverlap: true },
+      );
+      assert.ok(
+        completed.clientLink.status === "created" ||
+          completed.clientLink.status === "linked",
+        `expected create/link, got ${completed.clientLink.status}`,
+      );
+      const clientId = completed.appointment.clientId;
+      assert.ok(clientId);
+      createdClientIds.push(clientId);
+
+      const commented = await updateAppointment(created.appointment.id, {
+        comment: "workflow-comment",
+      });
+      assert.equal(commented.clientLink.status, "not_applicable");
+      assert.equal(commented.appointment.clientId, clientId);
+      assert.equal(
+        await prisma.client.count({
+          where: { normalizedPhone: normalizePhone(phone)! },
+        }),
+        1,
+      );
+
+      await updateAppointment(created.appointment.id, {
+        status: "RESCHEDULED",
+      });
+      const again = await updateAppointment(
+        created.appointment.id,
+        { status: "COMPLETED" },
+        { allowAppointmentOverlap: true },
+      );
+      assert.equal(again.appointment.clientId, clientId);
+      assert.notEqual(again.clientLink.status, "created");
+      assert.ok(
+        again.clientLink.status === "already_linked" ||
+          again.clientLink.status === "linked",
+      );
+      assert.equal(
+        await prisma.client.count({
+          where: { normalizedPhone: normalizePhone(phone)! },
+        }),
+        1,
+      );
+      dbOutcomes.push({
+        name: "db.service-completed-workflow",
         outcome: "PASSED",
       });
     }
@@ -1008,6 +1257,7 @@ async function runDbIntegrationSuite(): Promise<void> {
 async function main(): Promise<void> {
   testPhoneUsability();
   testPhoneMatchKey();
+  testUniquePhoneGenerator();
   testSourceLabelsDistinct();
   testServiceWiring();
   testApiContracts();
@@ -1015,18 +1265,26 @@ async function main(): Promise<void> {
   testUiExplicitPersistenceContract();
   testNoCrmNotesInAppointmentText();
   testClientMergeKeepsAppointmentLinks();
+  console.log(
+    "security-appointment-completed-client-link-check: STATIC PASSED",
+  );
   await runDbIntegrationSuite();
 
   const passed = dbOutcomes.filter((o) => o.outcome === "PASSED");
   const skipped = dbOutcomes.filter((o) => o.outcome === "SKIPPED");
   console.log(
-    `security-appointment-completed-client-link-check: DB PASSED=${passed.length} SKIPPED=${skipped.length}`,
+    `security-appointment-completed-client-link-check: DB PASSED=${passed.length}`,
+  );
+  for (const item of passed) {
+    console.log(`  DB PASSED ${item.name}`);
+  }
+  console.log(
+    `security-appointment-completed-client-link-check: DB SKIPPED=${skipped.length}`,
   );
   for (const item of skipped) {
-    console.log(`  SKIPPED ${item.name}${item.detail ? ` (${item.detail})` : ""}`);
-  }
-  for (const item of passed) {
-    console.log(`  PASSED ${item.name}`);
+    console.log(
+      `  DB SKIPPED ${item.name}${item.detail ? ` (${item.detail})` : ""}`,
+    );
   }
   console.log("security-appointment-completed-client-link-check: OK");
 }
