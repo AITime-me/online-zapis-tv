@@ -82,7 +82,7 @@ function assertServerRejectsPatchAfterCancel(): void {
   assert.match(src, /export async function cancelAppointment/);
   assert.match(
     src,
-    /if \(existing\.status === "CANCELLED"\)[\s\S]*return mapAppointment\(existing\)/,
+    /if \(existing\.status === "CANCELLED"\)[\s\S]*return mapOperationalAppointment\(existing\)/,
   );
   assert.match(src, /Запись не найдена/);
 }

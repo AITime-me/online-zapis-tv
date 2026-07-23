@@ -17,6 +17,7 @@ type RouteContext = {
 
 type ManualUpdateAppointmentBody = Partial<AppointmentWriteInput> & {
   allowAppointmentOverlap?: unknown;
+  retryClientLink?: unknown;
 };
 
 export async function PATCH(request: Request, context: RouteContext) {
@@ -33,13 +34,26 @@ export async function PATCH(request: Request, context: RouteContext) {
   try {
     const body = (await request.json()) as ManualUpdateAppointmentBody;
     const allowAppointmentOverlap = body.allowAppointmentOverlap === true;
+    const retryClientLink = body.retryClientLink === true;
     const appointmentInput: Partial<AppointmentWriteInput> = { ...body };
     Reflect.deleteProperty(appointmentInput, "allowAppointmentOverlap");
+    Reflect.deleteProperty(appointmentInput, "retryClientLink");
 
-    const appointment = await updateAppointment(id, appointmentInput, {
-      allowAppointmentOverlap,
+    const result = await updateAppointment(
+      id,
+      retryClientLink && Object.keys(appointmentInput).length === 0
+        ? {}
+        : appointmentInput,
+      {
+        allowAppointmentOverlap,
+        retryClientLink,
+      },
+    );
+    return NextResponse.json({
+      ok: true,
+      appointment: result.appointment,
+      clientLink: result.clientLink,
     });
-    return NextResponse.json({ ok: true, appointment });
   } catch (error) {
     if (error instanceof AppointmentConflictError) {
       return NextResponse.json(

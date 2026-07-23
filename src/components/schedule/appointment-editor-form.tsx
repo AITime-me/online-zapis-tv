@@ -24,6 +24,19 @@ import {
 } from "@/components/schedule/appointment-master-display";
 import { isMasterScheduleAppointment } from "@/lib/schedule/appointment-contract";
 import { CLIENT_RESCHEDULE_APPOINTMENT_NOTICE } from "@/lib/schedule/client-reschedule-notice";
+import {
+  ClientSuggestField,
+  describeClientLinkUi,
+  type ClientSuggestItem,
+} from "@/components/schedule/client-suggest-field";
+import { isUsableClientPhone } from "@/lib/phone/usable-client-phone";
+import type { AppointmentClientLinkResult } from "@/types/appointment-client-link";
+import {
+  clientLinkRetryButtonLabel,
+  describeClientLinkActionMessage,
+  resolveNextClientLinkUiState,
+  shouldOfferClientLinkRetry,
+} from "@/lib/schedule/client-link-ui";
 
 export type { EditorOptions };
 
@@ -156,6 +169,35 @@ export function AppointmentEditorForm({
   const [error, setError] = useState<string | null>(null);
   const [showOverlapConfirm, setShowOverlapConfirm] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(() =>
+    isOperationalScheduleAppointment(appointment)
+      ? appointment.clientId
+      : null,
+  );
+  const [clientLinkDirty, setClientLinkDirty] = useState(false);
+  const [linkBanner, setLinkBanner] = useState<string | null>(null);
+  const [lastClientLinkResult, setLastClientLinkResult] =
+    useState<AppointmentClientLinkResult | null>(null);
+  const [isLinkActionPending, setIsLinkActionPending] = useState(false);
+  const [duplicateCandidates, setDuplicateCandidates] = useState<
+    Array<{ id: string; fullName: string; phone: string | null }>
+  >([]);
+  const appointmentIdRef = useRef(appointment.id);
+  const selectedClientIdRef = useRef(selectedClientId);
+  const clientLinkDirtyRef = useRef(clientLinkDirty);
+  const lastClientLinkResultRef = useRef(lastClientLinkResult);
+  const duplicateCandidatesRef = useRef(duplicateCandidates);
+  const linkActionGenerationRef = useRef(0);
+  const linkActionInFlightRef = useRef(false);
+  // Debounced save читает актуальный clientId до commit effect.
+  // eslint-disable-next-line react-hooks/refs -- intentional sync for async save
+  selectedClientIdRef.current = selectedClientId;
+  // eslint-disable-next-line react-hooks/refs -- intentional sync for async save
+  clientLinkDirtyRef.current = clientLinkDirty;
+  // eslint-disable-next-line react-hooks/refs -- intentional sync for async save
+  lastClientLinkResultRef.current = lastClientLinkResult;
+  // eslint-disable-next-line react-hooks/refs -- intentional sync for async save
+  duplicateCandidatesRef.current = duplicateCandidates;
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isCancellingRef = useRef(false);
   const cancelledRef = useRef(false);
@@ -190,6 +232,20 @@ export function AppointmentEditorForm({
     // eslint-disable-next-line react-hooks/set-state-in-effect -- controlled editor reset from refreshed appointment prop
     setForm(toFormState(appointment));
     setShowOverlapConfirm(false);
+    setSelectedClientId(
+      isOperationalScheduleAppointment(appointment)
+        ? appointment.clientId
+        : null,
+    );
+    setClientLinkDirty(false);
+    setDuplicateCandidates([]);
+    // Сбрасываем CRM-state только при смене записи, чтобы error после partial
+    // success не терялся на onSaved refresh той же карточки.
+    if (appointmentIdRef.current !== appointment.id) {
+      appointmentIdRef.current = appointment.id;
+      setLastClientLinkResult(null);
+      setLinkBanner(null);
+    }
   }, [appointment]);
 
   useEffect(() => {
@@ -216,7 +272,12 @@ export function AppointmentEditorForm({
 
   const save = useCallback(
     async (allowAppointmentOverlap = false) => {
-      if (!canEdit || isCancellingRef.current || cancelledRef.current) {
+      if (
+        !canEdit ||
+        isCancellingRef.current ||
+        cancelledRef.current ||
+        linkActionInFlightRef.current
+      ) {
         return;
       }
 
@@ -225,6 +286,7 @@ export function AppointmentEditorForm({
         return;
       }
 
+      const generationAtStart = linkActionGenerationRef.current;
       clearPendingSave();
       const abortController = new AbortController();
       saveAbortRef.current = abortController;
@@ -250,6 +312,9 @@ export function AppointmentEditorForm({
         if (allowAppointmentOverlap) {
           payloadBody.allowAppointmentOverlap = true;
         }
+        if (clientLinkDirtyRef.current) {
+          payloadBody.clientId = selectedClientIdRef.current;
+        }
 
         const response = await fetch(`/api/appointments/${appointment.id}`, {
           method: "PATCH",
@@ -261,7 +326,9 @@ export function AppointmentEditorForm({
         if (
           abortController.signal.aborted ||
           isCancellingRef.current ||
-          cancelledRef.current
+          cancelledRef.current ||
+          generationAtStart !== linkActionGenerationRef.current ||
+          linkActionInFlightRef.current
         ) {
           return;
         }
@@ -271,6 +338,7 @@ export function AppointmentEditorForm({
           error?: string;
           code?: string;
           conflictType?: string;
+          clientLink?: AppointmentClientLinkResult;
         };
 
         if (!response.ok) {
@@ -288,12 +356,42 @@ export function AppointmentEditorForm({
           throw new Error(payload.error ?? "Ошибка сохранения");
         }
 
-        if (isCancellingRef.current || cancelledRef.current) {
+        if (
+          isCancellingRef.current ||
+          cancelledRef.current ||
+          generationAtStart !== linkActionGenerationRef.current
+        ) {
           return;
         }
 
         setShowOverlapConfirm(false);
-        onSaveStatus("saved");
+        setClientLinkDirty(false);
+        const nextLinkUi = resolveNextClientLinkUiState({
+          previous: {
+            lastResult: lastClientLinkResultRef.current,
+            candidates: duplicateCandidatesRef.current,
+          },
+          incoming: payload.clientLink,
+        });
+        lastClientLinkResultRef.current = nextLinkUi.lastResult;
+        duplicateCandidatesRef.current = nextLinkUi.candidates;
+        setLastClientLinkResult(nextLinkUi.lastResult);
+        setDuplicateCandidates(nextLinkUi.candidates);
+        const incomingMeaningful =
+          payload.clientLink != null &&
+          payload.clientLink.status !== "not_applicable";
+        if (incomingMeaningful) {
+          const linkMessage = describeClientLinkActionMessage({
+            clientLink: nextLinkUi.lastResult,
+            clientId: selectedClientIdRef.current,
+          });
+          if (linkMessage) {
+            setLinkBanner(linkMessage);
+          }
+          onSaveStatus("saved", linkMessage ?? undefined);
+        } else {
+          onSaveStatus("saved");
+        }
         clientDebugLog("schedule.appointment.saved", { action: "patch" });
         await onSaved();
       } catch (saveError) {
@@ -301,6 +399,7 @@ export function AppointmentEditorForm({
           abortController.signal.aborted ||
           isCancellingRef.current ||
           cancelledRef.current ||
+          generationAtStart !== linkActionGenerationRef.current ||
           (saveError instanceof DOMException && saveError.name === "AbortError") ||
           (saveError instanceof Error && saveError.name === "AbortError")
         ) {
@@ -332,7 +431,8 @@ export function AppointmentEditorForm({
       !canEdit ||
       isCancellingRef.current ||
       cancelledRef.current ||
-      showOverlapConfirmRef.current
+      showOverlapConfirmRef.current ||
+      linkActionInFlightRef.current
     ) {
       return;
     }
@@ -344,7 +444,8 @@ export function AppointmentEditorForm({
       if (
         isCancellingRef.current ||
         cancelledRef.current ||
-        showOverlapConfirmRef.current
+        showOverlapConfirmRef.current ||
+        linkActionInFlightRef.current
       ) {
         return;
       }
@@ -405,7 +506,8 @@ export function AppointmentEditorForm({
     if (
       isCancellingRef.current ||
       cancelledRef.current ||
-      showOverlapConfirmRef.current
+      showOverlapConfirmRef.current ||
+      linkActionInFlightRef.current
     ) {
       return;
     }
@@ -424,6 +526,278 @@ export function AppointmentEditorForm({
   const handleConfirmOverlapSave = () => {
     void save(true);
   };
+
+  const persistClientLinkAction = useCallback(
+    async (action: {
+      clientId: string | null;
+      clientName?: string;
+      clientPhone?: string | null;
+    }) => {
+      if (
+        !canEdit ||
+        isCancellingRef.current ||
+        cancelledRef.current ||
+        linkActionInFlightRef.current
+      ) {
+        return;
+      }
+
+      // Явный link PATCH: не ждём blur/debounce и abort'им stale autosave.
+      // Source of truth (selectedClientId/form/banner) меняем только после response.ok.
+      clearPendingSave();
+      linkActionGenerationRef.current += 1;
+      const generation = linkActionGenerationRef.current;
+      linkActionInFlightRef.current = true;
+      setIsLinkActionPending(true);
+
+      const nextName = action.clientName;
+      const nextPhone = action.clientPhone;
+
+      const abortController = new AbortController();
+      saveAbortRef.current = abortController;
+      onSaveStatus("saving");
+      setError(null);
+
+      try {
+        const payloadBody: Record<string, unknown> = {
+          clientId: action.clientId,
+        };
+        if (nextName !== undefined) {
+          payloadBody.clientName = nextName;
+        }
+        if (nextPhone !== undefined && nextPhone != null) {
+          payloadBody.clientPhone = nextPhone;
+        }
+
+        const response = await fetch(`/api/appointments/${appointment.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          signal: abortController.signal,
+          body: JSON.stringify(payloadBody),
+        });
+
+        if (
+          abortController.signal.aborted ||
+          generation !== linkActionGenerationRef.current ||
+          isCancellingRef.current ||
+          cancelledRef.current
+        ) {
+          return;
+        }
+
+        const payload = (await response.json()) as {
+          ok?: boolean;
+          error?: string;
+          clientLink?: AppointmentClientLinkResult;
+        };
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Ошибка сохранения связи");
+        }
+
+        setSelectedClientId(action.clientId);
+        selectedClientIdRef.current = action.clientId;
+        setClientLinkDirty(false);
+        clientLinkDirtyRef.current = false;
+        if (nextName !== undefined || nextPhone !== undefined) {
+          setForm((current) => ({
+            ...current,
+            ...(nextName !== undefined ? { clientName: nextName } : {}),
+            ...(nextPhone !== undefined && nextPhone != null
+              ? { clientPhone: nextPhone }
+              : {}),
+          }));
+        }
+
+        const linkResult = payload.clientLink ?? null;
+        const nextLinkUi = resolveNextClientLinkUiState({
+          previous: {
+            lastResult: lastClientLinkResultRef.current,
+            candidates: duplicateCandidatesRef.current,
+          },
+          incoming: linkResult,
+          clearedByDisconnect: action.clientId === null,
+        });
+        lastClientLinkResultRef.current = nextLinkUi.lastResult;
+        duplicateCandidatesRef.current = nextLinkUi.candidates;
+        setLastClientLinkResult(nextLinkUi.lastResult);
+        setDuplicateCandidates(nextLinkUi.candidates);
+        const linkMessage =
+          action.clientId === null
+            ? "Клиент не связан"
+            : (describeClientLinkActionMessage({
+                clientLink: nextLinkUi.lastResult,
+                clientId: action.clientId,
+              }) ?? "Клиент связан с записью");
+        setLinkBanner(linkMessage);
+        onSaveStatus("saved", linkMessage);
+        clientDebugLog("schedule.appointment.saved", {
+          action: "persistClientLinkAction",
+        });
+
+        try {
+          await onSaved();
+        } catch {
+          // PATCH уже успешен — ошибка refresh не маскируется как ошибка связи.
+          setError("Связь сохранена, но не удалось обновить список");
+          onSaveStatus("saved", "Связь сохранена, список не обновлён");
+        }
+      } catch (linkError) {
+        if (
+          abortController.signal.aborted ||
+          generation !== linkActionGenerationRef.current ||
+          (linkError instanceof DOMException && linkError.name === "AbortError") ||
+          (linkError instanceof Error && linkError.name === "AbortError")
+        ) {
+          return;
+        }
+        // При ошибке PATCH исходные selectedClientId/form/banner не менялись.
+        const message =
+          linkError instanceof Error
+            ? linkError.message
+            : "Ошибка сохранения связи";
+        setError(message);
+        onSaveStatus("error", message);
+      } finally {
+        if (generation === linkActionGenerationRef.current) {
+          linkActionInFlightRef.current = false;
+          setIsLinkActionPending(false);
+        }
+        if (saveAbortRef.current === abortController) {
+          saveAbortRef.current = null;
+        }
+      }
+    },
+    [appointment.id, canEdit, clearPendingSave, onSaved, onSaveStatus],
+  );
+
+  const applyPickedClient = (client: ClientSuggestItem) => {
+    void persistClientLinkAction({
+      clientId: client.id,
+      clientName: client.fullName,
+      clientPhone: client.phone,
+    });
+  };
+
+  const clearClientLink = () => {
+    void persistClientLinkAction({ clientId: null });
+  };
+
+  const handleRetryClientLink = async () => {
+    if (!canEdit || linkActionInFlightRef.current) {
+      return;
+    }
+    clearPendingSave();
+    linkActionGenerationRef.current += 1;
+    const generation = linkActionGenerationRef.current;
+    linkActionInFlightRef.current = true;
+    setIsLinkActionPending(true);
+    onSaveStatus("saving");
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/appointments/${appointment.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ retryClientLink: true }),
+      });
+      const payload = (await response.json()) as {
+        ok?: boolean;
+        error?: string;
+        clientLink?: AppointmentClientLinkResult;
+      };
+      if (
+        generation !== linkActionGenerationRef.current ||
+        isCancellingRef.current ||
+        cancelledRef.current
+      ) {
+        return;
+      }
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Ошибка привязки");
+      }
+
+      const linkResult = payload.clientLink ?? null;
+      const nextLinkUi = resolveNextClientLinkUiState({
+        previous: {
+          lastResult: lastClientLinkResultRef.current,
+          candidates: duplicateCandidatesRef.current,
+        },
+        incoming: linkResult,
+      });
+      lastClientLinkResultRef.current = nextLinkUi.lastResult;
+      duplicateCandidatesRef.current = nextLinkUi.candidates;
+      setLastClientLinkResult(nextLinkUi.lastResult);
+      setDuplicateCandidates(nextLinkUi.candidates);
+      if (
+        linkResult?.status === "created" ||
+        linkResult?.status === "linked" ||
+        linkResult?.status === "already_linked"
+      ) {
+        setSelectedClientId(linkResult.clientId);
+        selectedClientIdRef.current = linkResult.clientId;
+      }
+      const effectiveClientId = selectedClientIdRef.current;
+      const linkMessage = describeClientLinkActionMessage({
+        clientLink: nextLinkUi.lastResult,
+        clientId: effectiveClientId,
+      });
+      if (linkMessage) {
+        setLinkBanner(linkMessage);
+      }
+      setError(null);
+      onSaveStatus("saved", linkMessage ?? undefined);
+
+      try {
+        await onSaved();
+      } catch {
+        setError("Синхронизация выполнена, но не удалось обновить список");
+        onSaveStatus("saved", "Синхронизация выполнена, список не обновлён");
+      }
+    } catch (retryError) {
+      if (
+        generation !== linkActionGenerationRef.current ||
+        (retryError instanceof DOMException && retryError.name === "AbortError") ||
+        (retryError instanceof Error && retryError.name === "AbortError")
+      ) {
+        return;
+      }
+      const message =
+        retryError instanceof Error ? retryError.message : "Ошибка привязки";
+      setLastClientLinkResult({ status: "error", message });
+      setError(message);
+      onSaveStatus("error", message);
+    } finally {
+      if (generation === linkActionGenerationRef.current) {
+        linkActionInFlightRef.current = false;
+        setIsLinkActionPending(false);
+      }
+    }
+  };
+
+  // selectedClientId — source of truth после init; не подставлять props.clientId после null.
+  const clientLinkLabel = describeClientLinkUi({
+    statusCode: form.status,
+    clientId: selectedClientId,
+    clientPhone: form.clientPhone,
+    isUsablePhone: isUsableClientPhone(form.clientPhone),
+  });
+  const showClientLinkRetry = shouldOfferClientLinkRetry({
+    statusCode: form.status,
+    clientId: selectedClientId,
+    lastClientLink: lastClientLinkResult,
+  });
+  const retryButtonLabel = clientLinkRetryButtonLabel({
+    clientId: selectedClientId,
+    lastClientLink: lastClientLinkResult,
+  });
+  const clientLinkBannerText =
+    linkBanner ??
+    describeClientLinkActionMessage({
+      clientLink: lastClientLinkResult,
+      clientId: selectedClientId,
+    }) ??
+    clientLinkLabel;
 
   const handleCancel = async () => {
     if (
@@ -582,12 +956,36 @@ export function AppointmentEditorForm({
         htmlFor={fieldId("clientName")}
         className="mt-2 flex flex-col gap-0.5"
       >
-        <input
-          id={fieldId("clientName")}
+        <ClientSuggestField
+          mode="name"
+          inputId={fieldId("clientName")}
           value={form.clientName}
-          onChange={(event) => updateField("clientName", event.target.value)}
+          disabled={!canEdit || isLinkActionPending}
+          onValueChange={(value) => {
+            setForm((current) => ({ ...current, clientName: value }));
+            const cleared = resolveNextClientLinkUiState({
+              previous: {
+                lastResult: lastClientLinkResultRef.current,
+                candidates: duplicateCandidatesRef.current,
+              },
+              incoming: null,
+              identityChanged: true,
+            });
+            lastClientLinkResultRef.current = cleared.lastResult;
+            duplicateCandidatesRef.current = cleared.candidates;
+            setLastClientLinkResult(cleared.lastResult);
+            setDuplicateCandidates(cleared.candidates);
+            if (selectedClientId) {
+              setSelectedClientId(null);
+              setClientLinkDirty(true);
+              setLinkBanner("Клиент не связан");
+            } else {
+              setLinkBanner(null);
+            }
+            scheduleSave();
+          }}
           onBlur={handleBlur}
-          className="border border-[#dadce0] px-1 py-0.5"
+          onPick={applyPickedClient}
         />
       </EditorField>
 
@@ -596,14 +994,94 @@ export function AppointmentEditorForm({
         htmlFor={fieldId("clientPhone")}
         className="mt-2 flex flex-col gap-0.5"
       >
-        <input
-          id={fieldId("clientPhone")}
+        <ClientSuggestField
+          mode="phone"
+          inputId={fieldId("clientPhone")}
           value={form.clientPhone}
-          onChange={(event) => updateField("clientPhone", event.target.value)}
+          disabled={!canEdit || isLinkActionPending}
+          onValueChange={(value) => {
+            setForm((current) => ({ ...current, clientPhone: value }));
+            const cleared = resolveNextClientLinkUiState({
+              previous: {
+                lastResult: lastClientLinkResultRef.current,
+                candidates: duplicateCandidatesRef.current,
+              },
+              incoming: null,
+              identityChanged: true,
+            });
+            lastClientLinkResultRef.current = cleared.lastResult;
+            duplicateCandidatesRef.current = cleared.candidates;
+            setLastClientLinkResult(cleared.lastResult);
+            setDuplicateCandidates(cleared.candidates);
+            if (selectedClientId) {
+              setSelectedClientId(null);
+              setClientLinkDirty(true);
+              setLinkBanner("Клиент не связан");
+            } else {
+              setLinkBanner(null);
+            }
+            scheduleSave();
+          }}
           onBlur={handleBlur}
-          className="border border-[#dadce0] px-1 py-0.5"
+          onPick={applyPickedClient}
         />
       </EditorField>
+
+      {canEdit ? (
+        <div className="mt-2 rounded border border-[#e8eaed] bg-[#f8f9fa] px-2 py-1.5 text-[10px] text-zinc-700">
+          <p className="font-medium">
+            {isLinkActionPending
+              ? "Сохраняем связь…"
+              : clientLinkBannerText}
+          </p>
+          <div className="mt-1 flex flex-wrap gap-2">
+            {selectedClientId ? (
+              <button
+                type="button"
+                className="underline disabled:opacity-50"
+                disabled={isLinkActionPending}
+                onClick={clearClientLink}
+              >
+                Снять связь
+              </button>
+            ) : null}
+            {showClientLinkRetry ? (
+              <button
+                type="button"
+                className="underline disabled:opacity-50"
+                disabled={isLinkActionPending}
+                onClick={() => void handleRetryClientLink()}
+              >
+                {retryButtonLabel}
+              </button>
+            ) : null}
+          </div>
+          {duplicateCandidates.length > 0 ? (
+            <ul className="mt-1 space-y-1">
+              {duplicateCandidates.map((candidate) => (
+                <li key={candidate.id}>
+                  <button
+                    type="button"
+                    className="text-left underline disabled:opacity-50"
+                    disabled={isLinkActionPending}
+                    onClick={() =>
+                      applyPickedClient({
+                        id: candidate.id,
+                        fullName: candidate.fullName,
+                        phone: candidate.phone,
+                        status: "ACTIVE",
+                      })
+                    }
+                  >
+                    {candidate.fullName}
+                    {candidate.phone ? ` · ${candidate.phone}` : ""}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="mt-2 grid grid-cols-2 gap-2">
         <EditorField field="status" htmlFor={fieldId("status")}>
@@ -778,6 +1256,7 @@ export function NewAppointmentForm({
     importantNote: "",
     isBold: false,
   });
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showOverlapConfirm, setShowOverlapConfirm] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -919,6 +1398,9 @@ export function NewAppointmentForm({
         comment: form.comment || null,
         importantNote: form.importantNote || null,
       };
+      if (selectedClientId) {
+        payloadBody.clientId = selectedClientId;
+      }
       if (allowAppointmentOverlap) {
         payloadBody.allowAppointmentOverlap = true;
       }
@@ -933,6 +1415,7 @@ export function NewAppointmentForm({
         error?: string;
         code?: string;
         conflictType?: string;
+        clientLink?: AppointmentClientLinkResult;
       };
 
       if (!response.ok) {
@@ -952,7 +1435,16 @@ export function NewAppointmentForm({
 
       setShowOverlapConfirm(false);
       clientDebugLog("schedule.appointment.saved", { action: "post" });
-      onSaveStatus("saved");
+      onSaveStatus(
+        "saved",
+        describeClientLinkActionMessage({
+          clientLink: payload.clientLink,
+          clientId:
+            typeof payloadBody.clientId === "string"
+              ? payloadBody.clientId
+              : null,
+        }) ?? undefined,
+      );
       await onCreated();
     } catch (createError) {
       const message =
@@ -1065,13 +1557,22 @@ export function NewAppointmentForm({
         htmlFor={fieldId("clientName")}
         className="mt-2 flex flex-col gap-0.5"
       >
-        <input
-          id={fieldId("clientName")}
+        <ClientSuggestField
+          mode="name"
+          inputId={fieldId("clientName")}
           value={form.clientName}
-          onChange={(event) =>
-            setForm((current) => ({ ...current, clientName: event.target.value }))
-          }
-          className="border border-[#dadce0] px-1 py-0.5"
+          onValueChange={(value) => {
+            setForm((current) => ({ ...current, clientName: value }));
+            setSelectedClientId(null);
+          }}
+          onPick={(client) => {
+            setForm((current) => ({
+              ...current,
+              clientName: client.fullName,
+              clientPhone: client.phone ?? current.clientPhone,
+            }));
+            setSelectedClientId(client.id);
+          }}
         />
       </EditorField>
 
@@ -1080,13 +1581,22 @@ export function NewAppointmentForm({
         htmlFor={fieldId("clientPhone")}
         className="mt-2 flex flex-col gap-0.5"
       >
-        <input
-          id={fieldId("clientPhone")}
+        <ClientSuggestField
+          mode="phone"
+          inputId={fieldId("clientPhone")}
           value={form.clientPhone}
-          onChange={(event) =>
-            setForm((current) => ({ ...current, clientPhone: event.target.value }))
-          }
-          className="border border-[#dadce0] px-1 py-0.5"
+          onValueChange={(value) => {
+            setForm((current) => ({ ...current, clientPhone: value }));
+            setSelectedClientId(null);
+          }}
+          onPick={(client) => {
+            setForm((current) => ({
+              ...current,
+              clientName: client.fullName,
+              clientPhone: client.phone ?? current.clientPhone,
+            }));
+            setSelectedClientId(client.id);
+          }}
         />
       </EditorField>
 

@@ -31,6 +31,7 @@ export type ScheduleAppointmentOperationalFields = ScheduleAppointmentSharedFiel
   comment: string | null;
   importantNote: string | null;
   appliedPromotions: AppliedPromotionRecord[];
+  clientId: string | null;
 };
 
 export type ScheduleAppointmentVisibility = "operational" | "master" | "viewOnly";

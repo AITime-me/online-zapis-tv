@@ -343,10 +343,9 @@ function testPatchRouteSupportsOverlapOverride(): void {
     read("src/app/api/appointments/[id]/route.ts"),
   );
   assert.match(patchRoute, /allowAppointmentOverlap === true/);
-  assert.match(
-    patchRoute,
-    /updateAppointment\(\s*id,\s*appointmentInput,\s*\{\s*allowAppointmentOverlap,?\s*\}\s*\)/,
-  );
+  assert.match(patchRoute, /updateAppointment\(/);
+  assert.match(patchRoute, /allowAppointmentOverlap,/);
+  assert.match(patchRoute, /retryClientLink/);
   assert.match(
     patchRoute,
     /error\.code \? \{ code: error\.code \}/,
