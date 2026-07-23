@@ -16,7 +16,7 @@ import type {
   ScheduleAppointmentVisibility,
 } from "@/lib/schedule/appointment-contract";
 import type { ScheduleDayAppointment } from "@/types/schedule";
-import type { Appointment, AppointmentSource, AppointmentStatus } from "@prisma/client";
+import type { Appointment } from "@prisma/client";
 
 type AppointmentWithService = Appointment & {
   service: { publicName: string } | null;
@@ -86,6 +86,7 @@ export function mapScheduleDayAppointmentOperational(
     comment: appointment.comment,
     importantNote: appointment.importantNote,
     appliedPromotions: parseAppliedPromotions(appointment.appliedPromotions),
+    clientId: appointment.clientId ?? null,
   };
 }
 

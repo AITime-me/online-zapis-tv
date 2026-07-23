@@ -27,17 +27,22 @@ export async function POST(request: Request) {
   try {
     const body = (await request.json()) as ManualCreateAppointmentBody;
     const allowAppointmentOverlap = body.allowAppointmentOverlap === true;
-    const {
-      allowAppointmentOverlap: _ignoredOverlapFlag,
-      ...appointmentInput
-    } = body;
+    const appointmentInput: AppointmentWriteInput = { ...body };
+    Reflect.deleteProperty(
+      appointmentInput as Record<string, unknown>,
+      "allowAppointmentOverlap",
+    );
 
-    const appointment = await createAppointment(
+    const result = await createAppointment(
       appointmentInput,
       authResult.user.id,
       { allowAppointmentOverlap },
     );
-    return NextResponse.json({ ok: true, appointment });
+    return NextResponse.json({
+      ok: true,
+      appointment: result.appointment,
+      clientLink: result.clientLink,
+    });
   } catch (error) {
     if (error instanceof AppointmentConflictError) {
       return NextResponse.json(

@@ -53,7 +53,7 @@ async function main() {
       },
       user.id,
     );
-    createdIds.push(first.id);
+    createdIds.push(first.appointment.id);
 
     const stored = await prisma.appointment.findUnique({
       where: { id: first.id },
@@ -101,7 +101,7 @@ async function main() {
       },
       user.id,
     );
-    createdIds.push(second.id);
+    createdIds.push(second.appointment.id);
 
     console.log("OK: integration break conflict checks passed");
     console.log(`  service duration=${service.durationMinutes}, break=${service.breakAfterMinutes}`);

@@ -257,7 +257,7 @@ async function tryPrismaIntegration(): Promise<"ok" | "skipped"> {
       },
       user.id,
     );
-    createdIds.push(a.id);
+    createdIds.push(a.appointment.id);
 
     try {
       await createAppointment(
@@ -283,7 +283,7 @@ async function tryPrismaIntegration(): Promise<"ok" | "skipped"> {
       user.id,
       { allowAppointmentOverlap: true },
     );
-    createdIds.push(b.id);
+    createdIds.push(b.appointment.id);
 
     try {
       await createAppointment(
@@ -309,7 +309,7 @@ async function tryPrismaIntegration(): Promise<"ok" | "skipped"> {
       user.id,
       { allowAppointmentOverlap: true },
     );
-    createdIds.push(c.id);
+    createdIds.push(c.appointment.id);
 
     const d = await createAppointment(
       {
@@ -320,7 +320,7 @@ async function tryPrismaIntegration(): Promise<"ok" | "skipped"> {
       user.id,
       { allowAppointmentOverlap: true },
     );
-    createdIds.push(d.id);
+    createdIds.push(d.appointment.id);
 
     const stored = await prisma.appointment.findMany({
       where: { id: { in: createdIds } },

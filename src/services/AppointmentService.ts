@@ -48,6 +48,11 @@ import {
   buildAppointmentTimingWriteData,
   isAppointmentTimingDirty,
 } from "@/lib/schedule/appointment-timing-write";
+import {
+  assertLinkableClientForAppointment,
+  syncCompletedAppointmentClientLink,
+} from "@/services/AppointmentClientLinkService";
+import type { AppointmentClientLinkResult } from "@/types/appointment-client-link";
 
 export {
   resolveAppointmentWriteConflict,
@@ -55,6 +60,8 @@ export {
   type AppointmentConflictType,
   type AppointmentWriteConflict,
 } from "@/lib/schedule/appointment-write-conflicts";
+
+export type { AppointmentClientLinkResult };
 
 /** Максимум повторов Serializable-транзакции при P2034. */
 export const APPOINTMENT_WRITE_SERIALIZABLE_RETRIES = 3;
@@ -184,6 +191,13 @@ export type AppointmentDto = {
   statusCode: AppointmentStatus;
   sourceCode: AppointmentSource;
   appliedPromotions: AppliedPromotionRecord[];
+  /** Только для OWNER/MANAGER operational путей; MASTER DTO не использует. */
+  clientId: string | null;
+};
+
+export type AppointmentMutationResult = {
+  appointment: AppointmentDto;
+  clientLink: AppointmentClientLinkResult;
 };
 
 /** Результат ONLINE create: DTO без секрета + одноразовая выдача raw token клиенту. */
@@ -216,7 +230,19 @@ function mapAppointment(
     statusCode: appointment.status,
     sourceCode: appointment.source,
     appliedPromotions: parseAppliedPromotions(appointment.appliedPromotions),
+    clientId: appointment.clientId ?? null,
   };
+}
+
+async function reloadAppointmentDto(id: string): Promise<AppointmentDto> {
+  const appointment = await prisma.appointment.findUnique({
+    where: { id },
+    include: { service: true },
+  });
+  if (!appointment) {
+    throw new AppointmentValidationError("Запись не найдена");
+  }
+  return mapAppointment(appointment);
 }
 
 async function loadConflictContext(
@@ -358,17 +384,42 @@ export type UpdateAppointmentOptions = {
    * уже была и остаётся блокирующей (не RESCHEDULED/CANCELLED → active).
    */
   allowAppointmentOverlap?: boolean;
+  /** Явный повтор CRM-привязки для COMPLETED (не через autosave полей). */
+  retryClientLink?: boolean;
 };
 
 export async function createAppointment(
   input: AppointmentWriteInput,
   createdByUserId: string,
   options?: CreateAppointmentOptions,
-): Promise<AppointmentDto> {
+): Promise<AppointmentMutationResult> {
+  if (input.clientId) {
+    try {
+      await assertLinkableClientForAppointment(input.clientId);
+    } catch {
+      throw new AppointmentValidationError(
+        "Выбранный клиент недоступен для привязки",
+      );
+    }
+  }
+
   const result = await createAppointmentRecord(input, createdByUserId, {
     allowAppointmentOverlap: options?.allowAppointmentOverlap === true,
   });
-  return result.appointment;
+
+  const shouldSync = result.appointment.statusCode === "COMPLETED";
+  const clientLink = shouldSync
+    ? await syncCompletedAppointmentClientLink(result.appointment.id)
+    : ({ status: "not_applicable" } satisfies AppointmentClientLinkResult);
+
+  const appointment =
+    clientLink.status === "created" ||
+    clientLink.status === "linked" ||
+    clientLink.status === "already_linked"
+      ? await reloadAppointmentDto(result.appointment.id)
+      : result.appointment;
+
+  return { appointment, clientLink };
 }
 
 export async function createOnlineAppointment(
@@ -578,7 +629,7 @@ export async function updateAppointment(
   id: string,
   input: Partial<AppointmentWriteInput>,
   options?: UpdateAppointmentOptions,
-): Promise<AppointmentDto> {
+): Promise<AppointmentMutationResult> {
   const existing = await prisma.appointment.findUnique({
     where: { id },
     include: { service: true },
@@ -594,6 +645,21 @@ export async function updateAppointment(
     throw new AppointmentValidationError(
       "Запись уже отменена и не может быть изменена",
     );
+  }
+
+  const retryOnly =
+    options?.retryClientLink === true &&
+    Object.keys(input).length === 0;
+
+  if (retryOnly) {
+    if (existing.status !== "COMPLETED") {
+      throw new AppointmentValidationError(
+        "Повторная привязка доступна только для выполненной записи",
+      );
+    }
+    const clientLink = await syncCompletedAppointmentClientLink(id);
+    const appointment = await reloadAppointmentDto(id);
+    return { appointment, clientLink };
   }
 
   const existingSnapshot = toBusyTimingSnapshot(existing);
@@ -655,6 +721,21 @@ export async function updateAppointment(
     status: merged.status,
     source: merged.source,
   };
+
+  if (Object.prototype.hasOwnProperty.call(input, "clientId")) {
+    if (input.clientId === null) {
+      nonTimingData.client = { disconnect: true };
+    } else if (typeof input.clientId === "string" && input.clientId.trim()) {
+      try {
+        await assertLinkableClientForAppointment(input.clientId.trim());
+      } catch {
+        throw new AppointmentValidationError(
+          "Выбранный клиент недоступен для привязки",
+        );
+      }
+      nonTimingData.client = { connect: { id: input.clientId.trim() } };
+    }
+  }
 
   let data: Prisma.AppointmentUpdateInput = nonTimingData;
 
@@ -723,7 +804,25 @@ export async function updateAppointment(
         include: { service: true },
       });
 
-  return mapAppointment(appointment);
+  const becameCompleted =
+    existing.status !== "COMPLETED" && appointment.status === "COMPLETED";
+  const shouldSync =
+    becameCompleted ||
+    (options?.retryClientLink === true && appointment.status === "COMPLETED");
+
+  const clientLink = shouldSync
+    ? await syncCompletedAppointmentClientLink(appointment.id)
+    : ({ status: "not_applicable" } satisfies AppointmentClientLinkResult);
+
+  const appointmentDto =
+    clientLink.status === "created" ||
+    clientLink.status === "linked" ||
+    clientLink.status === "already_linked" ||
+    Object.prototype.hasOwnProperty.call(input, "clientId")
+      ? await reloadAppointmentDto(appointment.id)
+      : mapAppointment(appointment);
+
+  return { appointment: appointmentDto, clientLink };
 }
 
 export async function cancelAppointment(id: string): Promise<AppointmentDto> {
