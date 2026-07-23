@@ -30,6 +30,11 @@ import {
   WRITE_SCHEDULE_ROLES,
   CLIENTS_ADMIN_ROLES,
 } from "../src/lib/auth/api-access";
+import {
+  clientLinkRetryButtonLabel,
+  describeClientLinkActionMessage,
+  shouldOfferClientLinkRetry,
+} from "../src/lib/schedule/client-link-ui";
 
 const ROOT = process.cwd();
 
@@ -256,7 +261,7 @@ function testUiExplicitPersistenceContract(): void {
   assert.match(form, /onPick=\{applyPickedClient\}/);
   assert.match(form, /retryClientLink:\s*true/);
   assert.match(form, /ClientSuggestField/);
-  assert.match(form, /Повторить привязку/);
+  assert.match(form, /\{retryButtonLabel\}/);
   assert.match(
     form,
     /if \(clientLinkDirtyRef\.current\) \{\s*payloadBody\.clientId = selectedClientIdRef\.current;/,
@@ -293,6 +298,105 @@ function testUiExplicitPersistenceContract(): void {
   assert.match(form, /disabled=\{!canEdit \|\| isLinkActionPending\}/);
   assert.match(form, /disabled=\{isLinkActionPending\}/);
   assert.match(form, /Связь сохранена, но не удалось обновить список/);
+
+  // Partial success CRM-sync: retry available with existing clientId.
+  assert.match(form, /lastClientLinkResult/);
+  assert.match(form, /shouldOfferClientLinkRetry/);
+  assert.match(form, /describeClientLinkActionMessage/);
+  assert.match(form, /from "@\/lib\/schedule\/client-link-ui"/);
+  assert.match(form, /showClientLinkRetry \? \(/);
+  assert.match(form, /retryButtonLabel/);
+  assert.doesNotMatch(
+    form,
+    /form\.status === "COMPLETED" && !selectedClientId \? \(/,
+  );
+
+  const retryStart = form.indexOf("const handleRetryClientLink = async");
+  assert.ok(retryStart >= 0);
+  const retryFn = form.slice(
+    retryStart,
+    form.indexOf("// selectedClientId — source of truth"),
+  );
+  const retryOkIdx = retryFn.indexOf("if (!response.ok)");
+  const setLastAfterOk = retryFn.indexOf(
+    "setLastClientLinkResult(linkResult)",
+    retryOkIdx,
+  );
+  const onSavedIdx = retryFn.indexOf("await onSaved()", retryOkIdx);
+  assert.ok(retryOkIdx >= 0);
+  assert.ok(
+    setLastAfterOk > retryOkIdx,
+    "successful PATCH result fixed before onSaved",
+  );
+  assert.ok(onSavedIdx > setLastAfterOk);
+  assert.match(
+    retryFn,
+    /Синхронизация выполнена, но не удалось обновить список/,
+  );
+  assert.match(retryFn, /setError\(null\)/);
+
+  // MASTER / view-only early return must not render CRM retry UI.
+  const readOnlyIdx = form.indexOf("if (!canEdit) {");
+  assert.ok(readOnlyIdx >= 0);
+  const editableCrmIdx = form.indexOf("{canEdit ? (");
+  assert.ok(editableCrmIdx > readOnlyIdx);
+  const readOnlySlice = form.slice(readOnlyIdx, editableCrmIdx);
+  assert.doesNotMatch(readOnlySlice, /lastClientLinkResult|showClientLinkRetry|Повторить синхронизацию/);
+}
+
+function testClientLinkUiHelpers(): void {
+  assert.equal(
+    describeClientLinkActionMessage({
+      clientLink: { status: "error", message: "x" },
+      clientId: "c1",
+    }),
+    "Клиент связан, но данные визита не обновлены",
+  );
+  assert.equal(
+    describeClientLinkActionMessage({
+      clientLink: { status: "error", message: "x" },
+      clientId: null,
+    }),
+    "Не удалось привязать клиента",
+  );
+  assert.equal(
+    shouldOfferClientLinkRetry({
+      statusCode: "COMPLETED",
+      clientId: "c1",
+      lastClientLink: { status: "error", message: "x" },
+    }),
+    true,
+  );
+  assert.equal(
+    shouldOfferClientLinkRetry({
+      statusCode: "COMPLETED",
+      clientId: "c1",
+      lastClientLink: { status: "already_linked", clientId: "c1" },
+    }),
+    false,
+  );
+  assert.equal(
+    shouldOfferClientLinkRetry({
+      statusCode: "COMPLETED",
+      clientId: null,
+      lastClientLink: null,
+    }),
+    true,
+  );
+  assert.equal(
+    clientLinkRetryButtonLabel({
+      clientId: "c1",
+      lastClientLink: { status: "error", message: "x" },
+    }),
+    "Повторить синхронизацию",
+  );
+  assert.equal(
+    clientLinkRetryButtonLabel({
+      clientId: null,
+      lastClientLink: { status: "error", message: "x" },
+    }),
+    "Повторить привязку",
+  );
 }
 
 function testNoCrmNotesInAppointmentText(): void {
@@ -1263,6 +1367,7 @@ async function main(): Promise<void> {
   testApiContracts();
   testMasterAndPublicPrivacy();
   testUiExplicitPersistenceContract();
+  testClientLinkUiHelpers();
   testNoCrmNotesInAppointmentText();
   testClientMergeKeepsAppointmentLinks();
   console.log(

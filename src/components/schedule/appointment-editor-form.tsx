@@ -31,32 +31,13 @@ import {
 } from "@/components/schedule/client-suggest-field";
 import { isUsableClientPhone } from "@/lib/phone/usable-client-phone";
 import type { AppointmentClientLinkResult } from "@/types/appointment-client-link";
+import {
+  clientLinkRetryButtonLabel,
+  describeClientLinkActionMessage,
+  shouldOfferClientLinkRetry,
+} from "@/lib/schedule/client-link-ui";
 
 export type { EditorOptions };
-
-function clientLinkStatusMessage(
-  clientLink: AppointmentClientLinkResult | undefined,
-): string | null {
-  if (!clientLink) {
-    return null;
-  }
-  switch (clientLink.status) {
-    case "created":
-      return "Клиент создан и связан с записью";
-    case "linked":
-    case "already_linked":
-      return "Клиент связан с записью";
-    case "duplicate":
-      return "Найдено несколько клиентов с этим телефоном — выберите вручную";
-    case "skipped_technical_phone":
-    case "skipped_invalid_phone":
-      return "Создание клиента пропущено: телефон непригоден";
-    case "error":
-      return "Не удалось привязать клиента — можно повторить";
-    default:
-      return null;
-  }
-}
 
 type AppointmentFormState = {
   startTime: string;
@@ -194,10 +175,13 @@ export function AppointmentEditorForm({
   );
   const [clientLinkDirty, setClientLinkDirty] = useState(false);
   const [linkBanner, setLinkBanner] = useState<string | null>(null);
+  const [lastClientLinkResult, setLastClientLinkResult] =
+    useState<AppointmentClientLinkResult | null>(null);
   const [isLinkActionPending, setIsLinkActionPending] = useState(false);
   const [duplicateCandidates, setDuplicateCandidates] = useState<
     Array<{ id: string; fullName: string; phone: string | null }>
   >([]);
+  const appointmentIdRef = useRef(appointment.id);
   const selectedClientIdRef = useRef(selectedClientId);
   const clientLinkDirtyRef = useRef(clientLinkDirty);
   const linkActionGenerationRef = useRef(0);
@@ -248,6 +232,13 @@ export function AppointmentEditorForm({
     );
     setClientLinkDirty(false);
     setDuplicateCandidates([]);
+    // Сбрасываем CRM-state только при смене записи, чтобы error после partial
+    // success не терялся на onSaved refresh той же карточки.
+    if (appointmentIdRef.current !== appointment.id) {
+      appointmentIdRef.current = appointment.id;
+      setLastClientLinkResult(null);
+      setLinkBanner(null);
+    }
   }, [appointment]);
 
   useEffect(() => {
@@ -368,11 +359,17 @@ export function AppointmentEditorForm({
 
         setShowOverlapConfirm(false);
         setClientLinkDirty(false);
-        const linkMessage = clientLinkStatusMessage(payload.clientLink);
+        if (payload.clientLink) {
+          setLastClientLinkResult(payload.clientLink);
+        }
+        const linkMessage = describeClientLinkActionMessage({
+          clientLink: payload.clientLink,
+          clientId: selectedClientIdRef.current,
+        });
         setLinkBanner(linkMessage);
         if (payload.clientLink?.status === "duplicate") {
           setDuplicateCandidates(payload.clientLink.candidates);
-        } else {
+        } else if (payload.clientLink) {
           setDuplicateCandidates([]);
         }
         onSaveStatus("saved", linkMessage ?? undefined);
@@ -593,14 +590,18 @@ export function AppointmentEditorForm({
           }));
         }
 
+        const linkResult = payload.clientLink ?? null;
+        setLastClientLinkResult(linkResult);
         const linkMessage =
           action.clientId === null
             ? "Клиент не связан"
-            : (clientLinkStatusMessage(payload.clientLink) ??
-              "Клиент связан с записью");
+            : (describeClientLinkActionMessage({
+                clientLink: linkResult,
+                clientId: action.clientId,
+              }) ?? "Клиент связан с записью");
         setLinkBanner(linkMessage);
-        if (payload.clientLink?.status === "duplicate") {
-          setDuplicateCandidates(payload.clientLink.candidates);
+        if (linkResult?.status === "duplicate") {
+          setDuplicateCandidates(linkResult.candidates);
         } else {
           setDuplicateCandidates([]);
         }
@@ -663,10 +664,12 @@ export function AppointmentEditorForm({
     }
     clearPendingSave();
     linkActionGenerationRef.current += 1;
+    const generation = linkActionGenerationRef.current;
     linkActionInFlightRef.current = true;
     setIsLinkActionPending(true);
     onSaveStatus("saving");
     setError(null);
+
     try {
       const response = await fetch(`/api/appointments/${appointment.id}`, {
         method: "PATCH",
@@ -678,33 +681,65 @@ export function AppointmentEditorForm({
         error?: string;
         clientLink?: AppointmentClientLinkResult;
       };
+      if (
+        generation !== linkActionGenerationRef.current ||
+        isCancellingRef.current ||
+        cancelledRef.current
+      ) {
+        return;
+      }
       if (!response.ok) {
         throw new Error(payload.error ?? "Ошибка привязки");
       }
-      const linkMessage = clientLinkStatusMessage(payload.clientLink);
+
+      const linkResult = payload.clientLink ?? null;
+      setLastClientLinkResult(linkResult);
+      if (
+        linkResult?.status === "created" ||
+        linkResult?.status === "linked" ||
+        linkResult?.status === "already_linked"
+      ) {
+        setSelectedClientId(linkResult.clientId);
+        selectedClientIdRef.current = linkResult.clientId;
+      }
+      const effectiveClientId = selectedClientIdRef.current;
+      const linkMessage = describeClientLinkActionMessage({
+        clientLink: linkResult,
+        clientId: effectiveClientId,
+      });
       setLinkBanner(linkMessage);
-      if (payload.clientLink?.status === "duplicate") {
-        setDuplicateCandidates(payload.clientLink.candidates);
+      if (linkResult?.status === "duplicate") {
+        setDuplicateCandidates(linkResult.candidates);
       } else {
         setDuplicateCandidates([]);
       }
-      if (
-        payload.clientLink?.status === "created" ||
-        payload.clientLink?.status === "linked" ||
-        payload.clientLink?.status === "already_linked"
-      ) {
-        setSelectedClientId(payload.clientLink.clientId);
-      }
+      setError(null);
       onSaveStatus("saved", linkMessage ?? undefined);
-      await onSaved();
+
+      try {
+        await onSaved();
+      } catch {
+        setError("Синхронизация выполнена, но не удалось обновить список");
+        onSaveStatus("saved", "Синхронизация выполнена, список не обновлён");
+      }
     } catch (retryError) {
+      if (
+        generation !== linkActionGenerationRef.current ||
+        (retryError instanceof DOMException && retryError.name === "AbortError") ||
+        (retryError instanceof Error && retryError.name === "AbortError")
+      ) {
+        return;
+      }
       const message =
         retryError instanceof Error ? retryError.message : "Ошибка привязки";
+      setLastClientLinkResult({ status: "error", message });
       setError(message);
       onSaveStatus("error", message);
     } finally {
-      linkActionInFlightRef.current = false;
-      setIsLinkActionPending(false);
+      if (generation === linkActionGenerationRef.current) {
+        linkActionInFlightRef.current = false;
+        setIsLinkActionPending(false);
+      }
     }
   };
 
@@ -715,6 +750,22 @@ export function AppointmentEditorForm({
     clientPhone: form.clientPhone,
     isUsablePhone: isUsableClientPhone(form.clientPhone),
   });
+  const showClientLinkRetry = shouldOfferClientLinkRetry({
+    statusCode: form.status,
+    clientId: selectedClientId,
+    lastClientLink: lastClientLinkResult,
+  });
+  const retryButtonLabel = clientLinkRetryButtonLabel({
+    clientId: selectedClientId,
+    lastClientLink: lastClientLinkResult,
+  });
+  const clientLinkBannerText =
+    linkBanner ??
+    describeClientLinkActionMessage({
+      clientLink: lastClientLinkResult,
+      clientId: selectedClientId,
+    }) ??
+    clientLinkLabel;
 
   const handleCancel = async () => {
     if (
@@ -921,7 +972,7 @@ export function AppointmentEditorForm({
           <p className="font-medium">
             {isLinkActionPending
               ? "Сохраняем связь…"
-              : (linkBanner ?? clientLinkLabel)}
+              : clientLinkBannerText}
           </p>
           <div className="mt-1 flex flex-wrap gap-2">
             {selectedClientId ? (
@@ -934,14 +985,14 @@ export function AppointmentEditorForm({
                 Снять связь
               </button>
             ) : null}
-            {form.status === "COMPLETED" && !selectedClientId ? (
+            {showClientLinkRetry ? (
               <button
                 type="button"
                 className="underline disabled:opacity-50"
                 disabled={isLinkActionPending}
                 onClick={() => void handleRetryClientLink()}
               >
-                Повторить привязку
+                {retryButtonLabel}
               </button>
             ) : null}
           </div>
@@ -1324,7 +1375,16 @@ export function NewAppointmentForm({
 
       setShowOverlapConfirm(false);
       clientDebugLog("schedule.appointment.saved", { action: "post" });
-      onSaveStatus("saved", clientLinkStatusMessage(payload.clientLink) ?? undefined);
+      onSaveStatus(
+        "saved",
+        describeClientLinkActionMessage({
+          clientLink: payload.clientLink,
+          clientId:
+            typeof payloadBody.clientId === "string"
+              ? payloadBody.clientId
+              : null,
+        }) ?? undefined,
+      );
       await onCreated();
     } catch (createError) {
       const message =
