@@ -1,6 +1,6 @@
 /**
  * Regression tests for health-monitor Telegram notify (dedupe / recovery / secrets).
- * Uses Node .mjs notifier in --dry-run-dir mode (no network).
+ * Runs the production Python notifier in --dry-run-dir mode (no network).
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 
 const ROOT = process.cwd();
-const NOTIFIER = path.join(ROOT, "scripts/ops/internal-health-monitor-telegram.mjs");
+const NOTIFIER = path.join(ROOT, "scripts/ops/internal-health-monitor-telegram.py");
 const MONITOR = path.join(ROOT, "scripts/ops/internal-health-monitor.sh");
 const FAKE_TOKEN = "0000000000:FAKE-TOKEN-FOR-TESTS-ONLY-NOT-REAL";
 
@@ -23,14 +23,65 @@ function resolveBash(): string {
   return "bash";
 }
 
+function resolvePython3(): string {
+  const candidates: string[] = [];
+  if (process.env.PYTHON3) {
+    candidates.push(process.env.PYTHON3);
+  }
+  if (process.env.LOCALAPPDATA) {
+    for (const ver of ["Python312", "Python313", "Python311"]) {
+      candidates.push(
+        path.join(process.env.LOCALAPPDATA, "Programs", "Python", ver, "python.exe"),
+      );
+    }
+  }
+  candidates.push("python3", "python");
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (
+      (candidate.includes(path.sep) || candidate.includes("/")) &&
+      !fs.existsSync(candidate)
+    ) {
+      continue;
+    }
+    const probe = spawnSync(candidate, ["-c", "import urllib.request"], {
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    if (probe.status === 0) {
+      return candidate;
+    }
+  }
+  throw new Error("python3 with urllib.request is required for Telegram regression tests");
+}
+
+function toBashPath(winPath: string): string {
+  if (process.platform !== "win32") {
+    return winPath;
+  }
+  const normalized = path.resolve(winPath).replace(/\\/g, "/");
+  return normalized.replace(/^([A-Za-z]):/, "/$1");
+}
+
+/** Env for monitor integration: force the same Python binary used by unit tests. */
+function envWithPython3(pythonBin: string, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return {
+    ...base,
+    IHM_PYTHON3: toBashPath(pythonBin),
+  };
+}
+
 function runNotifier(
+  pythonBin: string,
   args: string[],
   stdinPayload: string,
 ): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync(process.execPath, [NOTIFIER, ...args], {
+  const result = spawnSync(pythonBin, [NOTIFIER, ...args], {
     cwd: ROOT,
     encoding: "utf8",
     input: stdinPayload,
+    windowsHide: true,
   });
   return {
     status: result.status,
@@ -75,7 +126,10 @@ function assertNoSecretLeak(text: string): void {
 }
 
 function main(): void {
-  assert.ok(fs.existsSync(NOTIFIER), "notifier script missing");
+  assert.ok(fs.existsSync(NOTIFIER), "Python notifier script missing");
+  assert.ok(!fs.existsSync(path.join(ROOT, "scripts/ops/internal-health-monitor-telegram.mjs")), ".mjs notifier must be removed");
+
+  const pythonBin = resolvePython3();
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ihm-tg-"));
 
   try {
@@ -116,6 +170,7 @@ function main(): void {
     const healthyPayload = payload("healthy", []);
 
     let res = runNotifier(
+      pythonBin,
       ["--config", config, "--state", statePath, "--dry-run-dir", dryDir],
       warningPayload,
     );
@@ -132,6 +187,7 @@ function main(): void {
 
     clearMessage(dryDir);
     res = runNotifier(
+      pythonBin,
       ["--config", config, "--state", statePath, "--dry-run-dir", dryDir],
       warningPayload,
     );
@@ -140,6 +196,7 @@ function main(): void {
     assert.equal(messageExists(dryDir), false);
 
     res = runNotifier(
+      pythonBin,
       ["--config", config, "--state", statePath, "--dry-run-dir", dryDir],
       warningChangedPayload,
     );
@@ -152,6 +209,7 @@ function main(): void {
 
     clearMessage(dryDir);
     res = runNotifier(
+      pythonBin,
       ["--config", config, "--state", statePath, "--dry-run-dir", dryDir],
       criticalPayload,
     );
@@ -163,6 +221,7 @@ function main(): void {
 
     clearMessage(dryDir);
     res = runNotifier(
+      pythonBin,
       ["--config", config, "--state", statePath, "--dry-run-dir", dryDir],
       criticalPayload,
     );
@@ -171,6 +230,7 @@ function main(): void {
     assert.equal(messageExists(dryDir), false);
 
     res = runNotifier(
+      pythonBin,
       ["--config", config, "--state", statePath, "--dry-run-dir", dryDir],
       healthyPayload,
     );
@@ -188,6 +248,7 @@ function main(): void {
 
     clearMessage(dryDir);
     res = runNotifier(
+      pythonBin,
       ["--config", config, "--state", statePath, "--dry-run-dir", dryDir],
       healthyPayload,
     );
@@ -196,6 +257,7 @@ function main(): void {
     assert.equal(messageExists(dryDir), false);
 
     res = runNotifier(
+      pythonBin,
       [
         "--config",
         path.join(tmpRoot, "missing.env"),
@@ -211,6 +273,8 @@ function main(): void {
     assertNoSecretLeak(res.stdout + res.stderr);
 
     const bash = resolveBash();
+    const monitorEnv = envWithPython3(pythonBin);
+
     const monitorState = path.join(tmpRoot, "monitor-state");
     fs.mkdirSync(monitorState);
     const dryMonitor = path.join(tmpRoot, "monitor-dry");
@@ -223,7 +287,7 @@ function main(): void {
         cwd: ROOT,
         encoding: "utf8",
         env: {
-          ...process.env,
+          ...monitorEnv,
           IHM_TELEGRAM_CONFIG: missingConfig,
           IHM_TELEGRAM_DRY_RUN_DIR: dryMonitor,
         },
@@ -244,7 +308,7 @@ function main(): void {
         cwd: ROOT,
         encoding: "utf8",
         env: {
-          ...process.env,
+          ...monitorEnv,
           IHM_TELEGRAM_CONFIG: config,
           IHM_TELEGRAM_DRY_RUN_DIR: criticalDry,
         },
@@ -261,6 +325,7 @@ function main(): void {
     const badStateDir = path.join(tmpRoot, "bad-state-as-file");
     fs.writeFileSync(badStateDir, "not-a-dir");
     res = runNotifier(
+      pythonBin,
       ["--config", config, "--state", path.join(badStateDir, "x.json"), "--dry-run-dir", dryDir],
       warningPayload,
     );
@@ -270,6 +335,7 @@ function main(): void {
 
     clearMessage(dryDir);
     res = runNotifier(
+      pythonBin,
       ["--config", config, "--state", statePath, "--dry-run-dir", dryDir, "--test-send"],
       "",
     );
@@ -290,6 +356,7 @@ function main(): void {
     clearMessage(dryDir);
     const evilState = path.join(tmpRoot, "evil-state.json");
     res = runNotifier(
+      pythonBin,
       ["--config", evilConfig, "--state", evilState, "--dry-run-dir", dryDir],
       warningPayload,
     );
@@ -298,7 +365,7 @@ function main(): void {
     assertNoSecretLeak(res.stdout + res.stderr);
     assert.doesNotMatch(res.stdout + res.stderr, /\$\(evil\)/);
 
-    console.log("internal-health-monitor-telegram-check: OK");
+    console.log(`internal-health-monitor-telegram-check: OK (python=${pythonBin})`);
   } finally {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }

@@ -2,15 +2,15 @@
 
 Host-wide **read-only** technical monitor for staging + production on one Ubuntu server.
 It detects problems, prints a short report, writes one JSONL line per run, and exits with a severity code.
-It does **not** fix anything.
+It does **not** perform automatic remediation.
+Optional Telegram Bot API notifications may be sent after a run (detect + notify only).
 
 Canonical files in git:
 
 | File | Role |
 | --- | --- |
 | `scripts/ops/internal-health-monitor.sh` | Host script |
-| `scripts/ops/internal-health-monitor-telegram.py` | Telegram notifier (Python stdlib; preferred on Ubuntu) |
-| `scripts/ops/internal-health-monitor-telegram.mjs` | Telegram notifier fallback (Node built-ins; used in local tests) |
+| `scripts/ops/internal-health-monitor-telegram.py` | Telegram notifier (Python 3 stdlib only) |
 | `deploy/systemd/host/online-zapis-tv-internal-health-monitor.service` | oneshot service |
 | `deploy/systemd/host/online-zapis-tv-internal-health-monitor.timer` | every 15 minutes |
 | `deploy/logrotate/online-zapis-tv-health-monitor` | JSONL rotation |
@@ -21,7 +21,6 @@ Installed paths (manual):
 | --- | --- |
 | `/usr/local/lib/online-zapis-tv/internal-health-monitor.sh` | Installed script |
 | `/usr/local/lib/online-zapis-tv/internal-health-monitor-telegram.py` | Telegram notifier (Python) |
-| `/usr/local/lib/online-zapis-tv/internal-health-monitor-telegram.mjs` | Telegram notifier (Node fallback) |
 | `/var/lib/online-zapis-tv/health-monitor/` | Lock + `journal.jsonl` + Telegram state |
 | `/etc/online-zapis-tv/health-monitor.env` | Telegram credentials (not in Git) |
 | `/etc/systemd/system/online-zapis-tv-internal-health-monitor.service` | Unit |
@@ -48,7 +47,7 @@ Installed paths (manual):
 - `docker system prune` / `docker image prune` / `rm -rf`
 - Restore databases, run SQL, apply migrations
 - Change env, Compose, or git checkouts
-- Send email / SMTP / webhooks (Telegram Bot API is optional and separate; see §18)
+- Send email / SMTP (Telegram Bot API is optional; see §18)
 - Pull Docker images during a check
 - Automatic remediation of any kind
 
@@ -68,13 +67,10 @@ From an approved git checkout (example: staging tree at a reviewed SHA):
 sudo mkdir -p /usr/local/lib/online-zapis-tv
 sudo cp scripts/ops/internal-health-monitor.sh /usr/local/lib/online-zapis-tv/internal-health-monitor.sh
 sudo cp scripts/ops/internal-health-monitor-telegram.py /usr/local/lib/online-zapis-tv/internal-health-monitor-telegram.py
-sudo cp scripts/ops/internal-health-monitor-telegram.mjs /usr/local/lib/online-zapis-tv/internal-health-monitor-telegram.mjs
 sudo chown root:deploy /usr/local/lib/online-zapis-tv/internal-health-monitor.sh
 sudo chown root:deploy /usr/local/lib/online-zapis-tv/internal-health-monitor-telegram.py
-sudo chown root:deploy /usr/local/lib/online-zapis-tv/internal-health-monitor-telegram.mjs
 sudo chmod 0750 /usr/local/lib/online-zapis-tv/internal-health-monitor.sh
 sudo chmod 0750 /usr/local/lib/online-zapis-tv/internal-health-monitor-telegram.py
-sudo chmod 0750 /usr/local/lib/online-zapis-tv/internal-health-monitor-telegram.mjs
 
 sudo mkdir -p /var/lib/online-zapis-tv/health-monitor
 sudo chown deploy:deploy /var/lib/online-zapis-tv/health-monitor
@@ -101,8 +97,10 @@ Locally from the repo (no host install):
 ```bash
 bash -n scripts/ops/internal-health-monitor.sh
 bash scripts/ops/internal-health-monitor.sh --help
+python3 -m py_compile scripts/ops/internal-health-monitor-telegram.py
 bash scripts/ops/internal-health-monitor.sh --fixture healthy
 npm run test:security:internal-health-monitor
+npm run test:internal-health-monitor-telegram
 ```
 
 ## 6. Manual dry / fixture / live run
@@ -185,7 +183,6 @@ sudo rm -f /etc/systemd/system/online-zapis-tv-internal-health-monitor.timer
 sudo rm -f /etc/logrotate.d/online-zapis-tv-health-monitor
 sudo rm -f /usr/local/lib/online-zapis-tv/internal-health-monitor.sh
 sudo rm -f /usr/local/lib/online-zapis-tv/internal-health-monitor-telegram.py
-sudo rm -f /usr/local/lib/online-zapis-tv/internal-health-monitor-telegram.mjs
 sudo systemctl daemon-reload
 ```
 
@@ -305,17 +302,7 @@ State file (atomic replace): `/var/lib/online-zapis-tv/health-monitor/telegram-n
 ### Test send (token must not appear in output)
 
 ```bash
-```bash
 sudo -u deploy python3 /usr/local/lib/online-zapis-tv/internal-health-monitor-telegram.py \
-  --config /etc/online-zapis-tv/health-monitor.env \
-  --state /var/lib/online-zapis-tv/health-monitor/telegram-notify-state.json \
-  --test-send
-```
-
-If only Node is available:
-
-```bash
-sudo -u deploy node /usr/local/lib/online-zapis-tv/internal-health-monitor-telegram.mjs \
   --config /etc/online-zapis-tv/health-monitor.env \
   --state /var/lib/online-zapis-tv/health-monitor/telegram-notify-state.json \
   --test-send

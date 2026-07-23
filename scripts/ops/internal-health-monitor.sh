@@ -10,8 +10,7 @@ readonly IHM_JOURNAL_NAME="journal.jsonl"
 readonly IHM_TELEGRAM_STATE_NAME="telegram-notify-state.json"
 readonly IHM_TELEGRAM_CONFIG_DEFAULT="/etc/online-zapis-tv/health-monitor.env"
 readonly IHM_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly IHM_TELEGRAM_NOTIFIER_MJS="${IHM_SCRIPT_DIR}/internal-health-monitor-telegram.mjs"
-readonly IHM_TELEGRAM_NOTIFIER_PY="${IHM_SCRIPT_DIR}/internal-health-monitor-telegram.py"
+readonly IHM_TELEGRAM_NOTIFIER="${IHM_SCRIPT_DIR}/internal-health-monitor-telegram.py"
 
 readonly IHM_DISK_WARN_PERCENT=75
 readonly IHM_DISK_CRIT_PERCENT=90
@@ -75,8 +74,8 @@ Exit codes:
   20  critical
   30  technical_error
 
-This script never restarts containers, restores databases, migrates, prunes Docker,
-or sends alerts.
+This script never restarts containers, restores databases, migrates, or prunes Docker.
+Optional Telegram notifications may be sent after the health result (detect only; no auto-fix).
 EOF
 }
 
@@ -561,31 +560,24 @@ print_footer() {
   esac
 }
 
-ihm_telegram_runner() {
-  # Prefer working python3 (typical on Ubuntu host). Fall back to Node for local/dev.
-  if [[ -f "$IHM_TELEGRAM_NOTIFIER_PY" ]] && command -v python3 >/dev/null 2>&1; then
-    if python3 -c 'import urllib.request' >/dev/null 2>&1; then
-      echo "python3|$IHM_TELEGRAM_NOTIFIER_PY"
-      return 0
+ihm_python3_bin() {
+  # Optional absolute override for local/Windows regression tests.
+  if [[ -n "${IHM_PYTHON3:-}" ]]; then
+    if [[ -x "$IHM_PYTHON3" ]] || [[ -f "$IHM_PYTHON3" ]]; then
+      if "$IHM_PYTHON3" -c 'import urllib.request' >/dev/null 2>&1; then
+        printf '%s\n' "$IHM_PYTHON3"
+        return 0
+      fi
     fi
+    return 1
   fi
-  if [[ -f "$IHM_TELEGRAM_NOTIFIER_MJS" ]]; then
-    if command -v node >/dev/null 2>&1; then
-      echo "node|$IHM_TELEGRAM_NOTIFIER_MJS"
-      return 0
-    fi
-    if command -v nodejs >/dev/null 2>&1; then
-      echo "nodejs|$IHM_TELEGRAM_NOTIFIER_MJS"
-      return 0
-    fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    return 1
   fi
-  if [[ -f "$IHM_TELEGRAM_NOTIFIER_PY" ]] && command -v python >/dev/null 2>&1; then
-    if python -c 'import urllib.request' >/dev/null 2>&1; then
-      echo "python|$IHM_TELEGRAM_NOTIFIER_PY"
-      return 0
-    fi
+  if ! python3 -c 'import urllib.request' >/dev/null 2>&1; then
+    return 1
   fi
-  return 1
+  command -v python3
 }
 
 build_telegram_payload() {
@@ -622,18 +614,21 @@ build_telegram_payload() {
 }
 
 maybe_notify_telegram() {
-  local runner bin notifier state_path dry_args=()
+  local bin state_path dry_args=()
 
   if [[ "$IHM_SKIP_TELEGRAM" -eq 1 && -z "$IHM_TELEGRAM_DRY_RUN_DIR" ]]; then
     return 0
   fi
 
-  if ! runner="$(ihm_telegram_runner)"; then
-    echo "INFO telegram: notifier runtime missing (node or python3), skipping" >&2
+  if [[ ! -f "$IHM_TELEGRAM_NOTIFIER" ]]; then
+    echo "INFO telegram: notifier script missing, skipping" >&2
     return 0
   fi
-  bin="${runner%%|*}"
-  notifier="${runner#*|}"
+
+  if ! bin="$(ihm_python3_bin)"; then
+    echo "INFO telegram: python3 unavailable, skipping" >&2
+    return 0
+  fi
 
   state_path="${IHM_STATE_DIR}/${IHM_TELEGRAM_STATE_NAME}"
   mkdir -p "$IHM_STATE_DIR" 2>/dev/null || true
@@ -644,7 +639,7 @@ maybe_notify_telegram() {
 
   # Payload on stdin; config path only in argv (never token/chat id).
   set +e
-  build_telegram_payload | "$bin" "$notifier" \
+  build_telegram_payload | "$bin" "$IHM_TELEGRAM_NOTIFIER" \
     --config "$IHM_TELEGRAM_CONFIG" \
     --state "$state_path" \
     "${dry_args[@]+"${dry_args[@]}"}"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Telegram notifier fallback (stdlib only). Prefer Node .mjs when available."""
+"""Telegram notifier for internal health monitor (Python 3 stdlib only)."""
 from __future__ import annotations
 
 import argparse
