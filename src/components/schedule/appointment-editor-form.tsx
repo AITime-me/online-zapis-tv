@@ -194,11 +194,14 @@ export function AppointmentEditorForm({
   );
   const [clientLinkDirty, setClientLinkDirty] = useState(false);
   const [linkBanner, setLinkBanner] = useState<string | null>(null);
+  const [isLinkActionPending, setIsLinkActionPending] = useState(false);
   const [duplicateCandidates, setDuplicateCandidates] = useState<
     Array<{ id: string; fullName: string; phone: string | null }>
   >([]);
   const selectedClientIdRef = useRef(selectedClientId);
   const clientLinkDirtyRef = useRef(clientLinkDirty);
+  const linkActionGenerationRef = useRef(0);
+  const linkActionInFlightRef = useRef(false);
   // Debounced save читает актуальный clientId до commit effect.
   // eslint-disable-next-line react-hooks/refs -- intentional sync for async save
   selectedClientIdRef.current = selectedClientId;
@@ -271,7 +274,12 @@ export function AppointmentEditorForm({
 
   const save = useCallback(
     async (allowAppointmentOverlap = false) => {
-      if (!canEdit || isCancellingRef.current || cancelledRef.current) {
+      if (
+        !canEdit ||
+        isCancellingRef.current ||
+        cancelledRef.current ||
+        linkActionInFlightRef.current
+      ) {
         return;
       }
 
@@ -280,6 +288,7 @@ export function AppointmentEditorForm({
         return;
       }
 
+      const generationAtStart = linkActionGenerationRef.current;
       clearPendingSave();
       const abortController = new AbortController();
       saveAbortRef.current = abortController;
@@ -319,7 +328,9 @@ export function AppointmentEditorForm({
         if (
           abortController.signal.aborted ||
           isCancellingRef.current ||
-          cancelledRef.current
+          cancelledRef.current ||
+          generationAtStart !== linkActionGenerationRef.current ||
+          linkActionInFlightRef.current
         ) {
           return;
         }
@@ -347,7 +358,11 @@ export function AppointmentEditorForm({
           throw new Error(payload.error ?? "Ошибка сохранения");
         }
 
-        if (isCancellingRef.current || cancelledRef.current) {
+        if (
+          isCancellingRef.current ||
+          cancelledRef.current ||
+          generationAtStart !== linkActionGenerationRef.current
+        ) {
           return;
         }
 
@@ -368,6 +383,7 @@ export function AppointmentEditorForm({
           abortController.signal.aborted ||
           isCancellingRef.current ||
           cancelledRef.current ||
+          generationAtStart !== linkActionGenerationRef.current ||
           (saveError instanceof DOMException && saveError.name === "AbortError") ||
           (saveError instanceof Error && saveError.name === "AbortError")
         ) {
@@ -399,7 +415,8 @@ export function AppointmentEditorForm({
       !canEdit ||
       isCancellingRef.current ||
       cancelledRef.current ||
-      showOverlapConfirmRef.current
+      showOverlapConfirmRef.current ||
+      linkActionInFlightRef.current
     ) {
       return;
     }
@@ -411,7 +428,8 @@ export function AppointmentEditorForm({
       if (
         isCancellingRef.current ||
         cancelledRef.current ||
-        showOverlapConfirmRef.current
+        showOverlapConfirmRef.current ||
+        linkActionInFlightRef.current
       ) {
         return;
       }
@@ -472,7 +490,8 @@ export function AppointmentEditorForm({
     if (
       isCancellingRef.current ||
       cancelledRef.current ||
-      showOverlapConfirmRef.current
+      showOverlapConfirmRef.current ||
+      linkActionInFlightRef.current
     ) {
       return;
     }
@@ -492,28 +511,154 @@ export function AppointmentEditorForm({
     void save(true);
   };
 
+  const persistClientLinkAction = useCallback(
+    async (action: {
+      clientId: string | null;
+      clientName?: string;
+      clientPhone?: string | null;
+    }) => {
+      if (
+        !canEdit ||
+        isCancellingRef.current ||
+        cancelledRef.current ||
+        linkActionInFlightRef.current
+      ) {
+        return;
+      }
+
+      // Явный link PATCH: не ждём blur/debounce и abort'им stale autosave.
+      clearPendingSave();
+      linkActionGenerationRef.current += 1;
+      const generation = linkActionGenerationRef.current;
+      linkActionInFlightRef.current = true;
+      setIsLinkActionPending(true);
+
+      const nextName = action.clientName;
+      const nextPhone = action.clientPhone;
+      setSelectedClientId(action.clientId);
+      selectedClientIdRef.current = action.clientId;
+      setClientLinkDirty(false);
+      clientLinkDirtyRef.current = false;
+      setDuplicateCandidates([]);
+      if (nextName !== undefined || nextPhone !== undefined) {
+        setForm((current) => ({
+          ...current,
+          ...(nextName !== undefined ? { clientName: nextName } : {}),
+          ...(nextPhone !== undefined && nextPhone != null
+            ? { clientPhone: nextPhone }
+            : {}),
+        }));
+      }
+      setLinkBanner(
+        action.clientId ? "Выбран клиент из базы" : "Клиент не связан",
+      );
+
+      const abortController = new AbortController();
+      saveAbortRef.current = abortController;
+      onSaveStatus("saving");
+      setError(null);
+
+      try {
+        const payloadBody: Record<string, unknown> = {
+          clientId: action.clientId,
+        };
+        if (nextName !== undefined) {
+          payloadBody.clientName = nextName;
+        }
+        if (nextPhone !== undefined && nextPhone != null) {
+          payloadBody.clientPhone = nextPhone;
+        }
+
+        const response = await fetch(`/api/appointments/${appointment.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          signal: abortController.signal,
+          body: JSON.stringify(payloadBody),
+        });
+
+        if (
+          abortController.signal.aborted ||
+          generation !== linkActionGenerationRef.current ||
+          isCancellingRef.current ||
+          cancelledRef.current
+        ) {
+          return;
+        }
+
+        const payload = (await response.json()) as {
+          ok?: boolean;
+          error?: string;
+          clientLink?: AppointmentClientLinkResult;
+        };
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Ошибка сохранения связи");
+        }
+
+        const linkMessage =
+          action.clientId === null
+            ? "Клиент не связан"
+            : (clientLinkStatusMessage(payload.clientLink) ??
+              "Клиент связан с записью");
+        setLinkBanner(linkMessage);
+        if (payload.clientLink?.status === "duplicate") {
+          setDuplicateCandidates(payload.clientLink.candidates);
+        } else {
+          setDuplicateCandidates([]);
+        }
+        onSaveStatus("saved", linkMessage);
+        clientDebugLog("schedule.appointment.saved", {
+          action: "persistClientLinkAction",
+        });
+        await onSaved();
+      } catch (linkError) {
+        if (
+          abortController.signal.aborted ||
+          generation !== linkActionGenerationRef.current ||
+          (linkError instanceof DOMException && linkError.name === "AbortError") ||
+          (linkError instanceof Error && linkError.name === "AbortError")
+        ) {
+          return;
+        }
+        const message =
+          linkError instanceof Error
+            ? linkError.message
+            : "Ошибка сохранения связи";
+        setError(message);
+        onSaveStatus("error", message);
+      } finally {
+        if (generation === linkActionGenerationRef.current) {
+          linkActionInFlightRef.current = false;
+          setIsLinkActionPending(false);
+        }
+        if (saveAbortRef.current === abortController) {
+          saveAbortRef.current = null;
+        }
+      }
+    },
+    [appointment.id, canEdit, clearPendingSave, onSaved, onSaveStatus],
+  );
+
   const applyPickedClient = (client: ClientSuggestItem) => {
-    setForm((current) => ({
-      ...current,
+    void persistClientLinkAction({
+      clientId: client.id,
       clientName: client.fullName,
-      clientPhone: client.phone ?? current.clientPhone,
-    }));
-    setSelectedClientId(client.id);
-    setClientLinkDirty(true);
-    setDuplicateCandidates([]);
-    setLinkBanner("Выбран клиент из базы");
+      clientPhone: client.phone,
+    });
   };
 
   const clearClientLink = () => {
-    setSelectedClientId(null);
-    setClientLinkDirty(true);
-    setLinkBanner("Клиент не связан");
+    void persistClientLinkAction({ clientId: null });
   };
 
   const handleRetryClientLink = async () => {
-    if (!canEdit) {
+    if (!canEdit || linkActionInFlightRef.current) {
       return;
     }
+    clearPendingSave();
+    linkActionGenerationRef.current += 1;
+    linkActionInFlightRef.current = true;
+    setIsLinkActionPending(true);
     onSaveStatus("saving");
     setError(null);
     try {
@@ -537,6 +682,13 @@ export function AppointmentEditorForm({
       } else {
         setDuplicateCandidates([]);
       }
+      if (
+        payload.clientLink?.status === "created" ||
+        payload.clientLink?.status === "linked" ||
+        payload.clientLink?.status === "already_linked"
+      ) {
+        setSelectedClientId(payload.clientLink.clientId);
+      }
       onSaveStatus("saved", linkMessage ?? undefined);
       await onSaved();
     } catch (retryError) {
@@ -544,15 +696,16 @@ export function AppointmentEditorForm({
         retryError instanceof Error ? retryError.message : "Ошибка привязки";
       setError(message);
       onSaveStatus("error", message);
+    } finally {
+      linkActionInFlightRef.current = false;
+      setIsLinkActionPending(false);
     }
   };
 
-  const operationalClientId = isOperationalScheduleAppointment(appointment)
-    ? appointment.clientId
-    : null;
+  // selectedClientId — source of truth после init; не подставлять props.clientId после null.
   const clientLinkLabel = describeClientLinkUi({
     statusCode: form.status,
-    clientId: selectedClientId ?? operationalClientId,
+    clientId: selectedClientId,
     clientPhone: form.clientPhone,
     isUsablePhone: isUsableClientPhone(form.clientPhone),
   });
@@ -718,7 +871,7 @@ export function AppointmentEditorForm({
           mode="name"
           inputId={fieldId("clientName")}
           value={form.clientName}
-          disabled={!canEdit}
+          disabled={!canEdit || isLinkActionPending}
           onValueChange={(value) => {
             setForm((current) => ({ ...current, clientName: value }));
             if (selectedClientId) {
@@ -742,7 +895,7 @@ export function AppointmentEditorForm({
           mode="phone"
           inputId={fieldId("clientPhone")}
           value={form.clientPhone}
-          disabled={!canEdit}
+          disabled={!canEdit || isLinkActionPending}
           onValueChange={(value) => {
             setForm((current) => ({ ...current, clientPhone: value }));
             if (selectedClientId) {
@@ -761,20 +914,21 @@ export function AppointmentEditorForm({
         <div className="mt-2 rounded border border-[#e8eaed] bg-[#f8f9fa] px-2 py-1.5 text-[10px] text-zinc-700">
           <p className="font-medium">{linkBanner ?? clientLinkLabel}</p>
           <div className="mt-1 flex flex-wrap gap-2">
-            {selectedClientId || operationalClientId ? (
+            {selectedClientId ? (
               <button
                 type="button"
-                className="underline"
+                className="underline disabled:opacity-50"
+                disabled={isLinkActionPending}
                 onClick={clearClientLink}
               >
                 Снять связь
               </button>
             ) : null}
-            {form.status === "COMPLETED" &&
-            !(selectedClientId || operationalClientId) ? (
+            {form.status === "COMPLETED" && !selectedClientId ? (
               <button
                 type="button"
-                className="underline"
+                className="underline disabled:opacity-50"
+                disabled={isLinkActionPending}
                 onClick={() => void handleRetryClientLink()}
               >
                 Повторить привязку
@@ -787,7 +941,8 @@ export function AppointmentEditorForm({
                 <li key={candidate.id}>
                   <button
                     type="button"
-                    className="text-left underline"
+                    className="text-left underline disabled:opacity-50"
+                    disabled={isLinkActionPending}
                     onClick={() =>
                       applyPickedClient({
                         id: candidate.id,
