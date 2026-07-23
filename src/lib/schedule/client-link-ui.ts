@@ -51,3 +51,68 @@ export function clientLinkRetryButtonLabel(input: {
   }
   return "Повторить привязку";
 }
+
+export type ClientLinkUiState = {
+  lastResult: AppointmentClientLinkResult | null;
+  candidates: Array<{
+    id: string;
+    fullName: string;
+    phone: string | null;
+  }>;
+};
+
+const MEANINGFUL_CLIENT_LINK_STATUSES = new Set<
+  AppointmentClientLinkResult["status"]
+>([
+  "created",
+  "linked",
+  "already_linked",
+  "duplicate",
+  "skipped_invalid_phone",
+  "skipped_technical_phone",
+  "error",
+]);
+
+export function isMeaningfulClientLinkResult(
+  result: AppointmentClientLinkResult | null | undefined,
+): boolean {
+  return (
+    result != null && MEANINGFUL_CLIENT_LINK_STATUSES.has(result.status)
+  );
+}
+
+/**
+ * Слияние CRM UI-state.
+ * Ordinary not_applicable / отсутствующий incoming не стирают error/duplicate/skipped.
+ */
+export function resolveNextClientLinkUiState(input: {
+  previous: ClientLinkUiState;
+  incoming: AppointmentClientLinkResult | null | undefined;
+  clearedByDisconnect?: boolean;
+  identityChanged?: boolean;
+}): ClientLinkUiState {
+  if (input.clearedByDisconnect || input.identityChanged) {
+    return { lastResult: null, candidates: [] };
+  }
+
+  const { previous, incoming } = input;
+  if (incoming == null) {
+    return previous;
+  }
+  if (incoming.status === "not_applicable") {
+    return previous;
+  }
+  if (!isMeaningfulClientLinkResult(incoming)) {
+    return previous;
+  }
+  if (incoming.status === "duplicate") {
+    return {
+      lastResult: incoming,
+      candidates: incoming.candidates,
+    };
+  }
+  return {
+    lastResult: incoming,
+    candidates: [],
+  };
+}

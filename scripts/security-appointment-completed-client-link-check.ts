@@ -33,6 +33,7 @@ import {
 import {
   clientLinkRetryButtonLabel,
   describeClientLinkActionMessage,
+  resolveNextClientLinkUiState,
   shouldOfferClientLinkRetry,
 } from "../src/lib/schedule/client-link-ui";
 
@@ -319,7 +320,7 @@ function testUiExplicitPersistenceContract(): void {
   );
   const retryOkIdx = retryFn.indexOf("if (!response.ok)");
   const setLastAfterOk = retryFn.indexOf(
-    "setLastClientLinkResult(linkResult)",
+    "setLastClientLinkResult(nextLinkUi.lastResult)",
     retryOkIdx,
   );
   const onSavedIdx = retryFn.indexOf("await onSaved()", retryOkIdx);
@@ -336,12 +337,33 @@ function testUiExplicitPersistenceContract(): void {
   assert.match(retryFn, /setError\(null\)/);
 
   // MASTER / view-only early return must not render CRM retry UI.
+  assert.match(form, /\{canEdit \? \([\s\S]*showClientLinkRetry/);
   const readOnlyIdx = form.indexOf("if (!canEdit) {");
   assert.ok(readOnlyIdx >= 0);
-  const editableCrmIdx = form.indexOf("{canEdit ? (");
-  assert.ok(editableCrmIdx > readOnlyIdx);
-  const readOnlySlice = form.slice(readOnlyIdx, editableCrmIdx);
-  assert.doesNotMatch(readOnlySlice, /lastClientLinkResult|showClientLinkRetry|Повторить синхронизацию/);
+  const readOnlyEnd = form.indexOf("}", form.indexOf("AppointmentMasterNoteBlock", readOnlyIdx));
+  assert.ok(readOnlyEnd > readOnlyIdx);
+  // Rough early-return window: before the editable article form fields.
+  const editableNameField = form.indexOf('field="clientName"', readOnlyIdx);
+  assert.ok(editableNameField > readOnlyIdx);
+  const readOnlySlice = form.slice(readOnlyIdx, editableNameField);
+  assert.doesNotMatch(
+    readOnlySlice,
+    /showClientLinkRetry|Повторить синхронизацию|resolveNextClientLinkUiState/,
+  );
+
+  assert.match(form, /resolveNextClientLinkUiState/);
+  assert.match(form, /incoming: payload\.clientLink/);
+  assert.match(form, /payload\.clientLink\.status !== "not_applicable"/);
+  assert.match(form, /identityChanged:\s*true/);
+  assert.match(form, /clearedByDisconnect:\s*action\.clientId === null/);
+  assert.doesNotMatch(
+    form,
+    /if \(payload\.clientLink\) \{\s*setLastClientLinkResult\(payload\.clientLink\)/,
+  );
+  assert.doesNotMatch(
+    form,
+    /else if \(payload\.clientLink\) \{\s*setDuplicateCandidates\(\[\]\)/,
+  );
 }
 
 function testClientLinkUiHelpers(): void {
@@ -397,6 +419,99 @@ function testClientLinkUiHelpers(): void {
     }),
     "Повторить привязку",
   );
+
+  const errorPrev = {
+    lastResult: { status: "error" as const, message: "sync failed" },
+    candidates: [] as [],
+  };
+  const keptError = resolveNextClientLinkUiState({
+    previous: errorPrev,
+    incoming: { status: "not_applicable" },
+  });
+  assert.equal(keptError.lastResult?.status, "error");
+  assert.equal(
+    shouldOfferClientLinkRetry({
+      statusCode: "COMPLETED",
+      clientId: "c1",
+      lastClientLink: keptError.lastResult,
+    }),
+    true,
+  );
+
+  const dupCandidates = [
+    {
+      id: "a",
+      fullName: "A",
+      phone: "+79001112233",
+      status: "ACTIVE" as const,
+    },
+    {
+      id: "b",
+      fullName: "B",
+      phone: "+79001112233",
+      status: "ACTIVE" as const,
+    },
+  ];
+  const dupPrev = {
+    lastResult: {
+      status: "duplicate" as const,
+      candidates: dupCandidates,
+    },
+    candidates: dupCandidates,
+  };
+  const keptDup = resolveNextClientLinkUiState({
+    previous: dupPrev,
+    incoming: { status: "not_applicable" },
+  });
+  assert.equal(keptDup.lastResult?.status, "duplicate");
+  assert.equal(keptDup.candidates.length, 2);
+
+  const skippedPrev = {
+    lastResult: { status: "skipped_invalid_phone" as const },
+    candidates: [] as [],
+  };
+  const keptSkipped = resolveNextClientLinkUiState({
+    previous: skippedPrev,
+    incoming: { status: "not_applicable" },
+  });
+  assert.equal(keptSkipped.lastResult?.status, "skipped_invalid_phone");
+
+  const afterSuccess = resolveNextClientLinkUiState({
+    previous: errorPrev,
+    incoming: { status: "already_linked", clientId: "c1" },
+  });
+  assert.equal(afterSuccess.lastResult?.status, "already_linked");
+  assert.equal(afterSuccess.candidates.length, 0);
+  assert.equal(
+    shouldOfferClientLinkRetry({
+      statusCode: "COMPLETED",
+      clientId: "c1",
+      lastClientLink: afterSuccess.lastResult,
+    }),
+    false,
+  );
+
+  const afterDisconnect = resolveNextClientLinkUiState({
+    previous: dupPrev,
+    incoming: null,
+    clearedByDisconnect: true,
+  });
+  assert.equal(afterDisconnect.lastResult, null);
+  assert.equal(afterDisconnect.candidates.length, 0);
+
+  const afterPhoneEdit = resolveNextClientLinkUiState({
+    previous: dupPrev,
+    incoming: null,
+    identityChanged: true,
+  });
+  assert.equal(afterPhoneEdit.lastResult, null);
+  assert.equal(afterPhoneEdit.candidates.length, 0);
+
+  const afterMissingIncoming = resolveNextClientLinkUiState({
+    previous: errorPrev,
+    incoming: undefined,
+  });
+  assert.equal(afterMissingIncoming.lastResult?.status, "error");
 }
 
 function testNoCrmNotesInAppointmentText(): void {

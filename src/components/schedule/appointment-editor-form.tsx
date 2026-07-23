@@ -34,6 +34,7 @@ import type { AppointmentClientLinkResult } from "@/types/appointment-client-lin
 import {
   clientLinkRetryButtonLabel,
   describeClientLinkActionMessage,
+  resolveNextClientLinkUiState,
   shouldOfferClientLinkRetry,
 } from "@/lib/schedule/client-link-ui";
 
@@ -184,6 +185,8 @@ export function AppointmentEditorForm({
   const appointmentIdRef = useRef(appointment.id);
   const selectedClientIdRef = useRef(selectedClientId);
   const clientLinkDirtyRef = useRef(clientLinkDirty);
+  const lastClientLinkResultRef = useRef(lastClientLinkResult);
+  const duplicateCandidatesRef = useRef(duplicateCandidates);
   const linkActionGenerationRef = useRef(0);
   const linkActionInFlightRef = useRef(false);
   // Debounced save читает актуальный clientId до commit effect.
@@ -191,6 +194,10 @@ export function AppointmentEditorForm({
   selectedClientIdRef.current = selectedClientId;
   // eslint-disable-next-line react-hooks/refs -- intentional sync for async save
   clientLinkDirtyRef.current = clientLinkDirty;
+  // eslint-disable-next-line react-hooks/refs -- intentional sync for async save
+  lastClientLinkResultRef.current = lastClientLinkResult;
+  // eslint-disable-next-line react-hooks/refs -- intentional sync for async save
+  duplicateCandidatesRef.current = duplicateCandidates;
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isCancellingRef = useRef(false);
   const cancelledRef = useRef(false);
@@ -359,20 +366,32 @@ export function AppointmentEditorForm({
 
         setShowOverlapConfirm(false);
         setClientLinkDirty(false);
-        if (payload.clientLink) {
-          setLastClientLinkResult(payload.clientLink);
-        }
-        const linkMessage = describeClientLinkActionMessage({
-          clientLink: payload.clientLink,
-          clientId: selectedClientIdRef.current,
+        const nextLinkUi = resolveNextClientLinkUiState({
+          previous: {
+            lastResult: lastClientLinkResultRef.current,
+            candidates: duplicateCandidatesRef.current,
+          },
+          incoming: payload.clientLink,
         });
-        setLinkBanner(linkMessage);
-        if (payload.clientLink?.status === "duplicate") {
-          setDuplicateCandidates(payload.clientLink.candidates);
-        } else if (payload.clientLink) {
-          setDuplicateCandidates([]);
+        lastClientLinkResultRef.current = nextLinkUi.lastResult;
+        duplicateCandidatesRef.current = nextLinkUi.candidates;
+        setLastClientLinkResult(nextLinkUi.lastResult);
+        setDuplicateCandidates(nextLinkUi.candidates);
+        const incomingMeaningful =
+          payload.clientLink != null &&
+          payload.clientLink.status !== "not_applicable";
+        if (incomingMeaningful) {
+          const linkMessage = describeClientLinkActionMessage({
+            clientLink: nextLinkUi.lastResult,
+            clientId: selectedClientIdRef.current,
+          });
+          if (linkMessage) {
+            setLinkBanner(linkMessage);
+          }
+          onSaveStatus("saved", linkMessage ?? undefined);
+        } else {
+          onSaveStatus("saved");
         }
-        onSaveStatus("saved", linkMessage ?? undefined);
         clientDebugLog("schedule.appointment.saved", { action: "patch" });
         await onSaved();
       } catch (saveError) {
@@ -591,20 +610,26 @@ export function AppointmentEditorForm({
         }
 
         const linkResult = payload.clientLink ?? null;
-        setLastClientLinkResult(linkResult);
+        const nextLinkUi = resolveNextClientLinkUiState({
+          previous: {
+            lastResult: lastClientLinkResultRef.current,
+            candidates: duplicateCandidatesRef.current,
+          },
+          incoming: linkResult,
+          clearedByDisconnect: action.clientId === null,
+        });
+        lastClientLinkResultRef.current = nextLinkUi.lastResult;
+        duplicateCandidatesRef.current = nextLinkUi.candidates;
+        setLastClientLinkResult(nextLinkUi.lastResult);
+        setDuplicateCandidates(nextLinkUi.candidates);
         const linkMessage =
           action.clientId === null
             ? "Клиент не связан"
             : (describeClientLinkActionMessage({
-                clientLink: linkResult,
+                clientLink: nextLinkUi.lastResult,
                 clientId: action.clientId,
               }) ?? "Клиент связан с записью");
         setLinkBanner(linkMessage);
-        if (linkResult?.status === "duplicate") {
-          setDuplicateCandidates(linkResult.candidates);
-        } else {
-          setDuplicateCandidates([]);
-        }
         onSaveStatus("saved", linkMessage);
         clientDebugLog("schedule.appointment.saved", {
           action: "persistClientLinkAction",
@@ -693,7 +718,17 @@ export function AppointmentEditorForm({
       }
 
       const linkResult = payload.clientLink ?? null;
-      setLastClientLinkResult(linkResult);
+      const nextLinkUi = resolveNextClientLinkUiState({
+        previous: {
+          lastResult: lastClientLinkResultRef.current,
+          candidates: duplicateCandidatesRef.current,
+        },
+        incoming: linkResult,
+      });
+      lastClientLinkResultRef.current = nextLinkUi.lastResult;
+      duplicateCandidatesRef.current = nextLinkUi.candidates;
+      setLastClientLinkResult(nextLinkUi.lastResult);
+      setDuplicateCandidates(nextLinkUi.candidates);
       if (
         linkResult?.status === "created" ||
         linkResult?.status === "linked" ||
@@ -704,14 +739,11 @@ export function AppointmentEditorForm({
       }
       const effectiveClientId = selectedClientIdRef.current;
       const linkMessage = describeClientLinkActionMessage({
-        clientLink: linkResult,
+        clientLink: nextLinkUi.lastResult,
         clientId: effectiveClientId,
       });
-      setLinkBanner(linkMessage);
-      if (linkResult?.status === "duplicate") {
-        setDuplicateCandidates(linkResult.candidates);
-      } else {
-        setDuplicateCandidates([]);
+      if (linkMessage) {
+        setLinkBanner(linkMessage);
       }
       setError(null);
       onSaveStatus("saved", linkMessage ?? undefined);
@@ -931,10 +963,24 @@ export function AppointmentEditorForm({
           disabled={!canEdit || isLinkActionPending}
           onValueChange={(value) => {
             setForm((current) => ({ ...current, clientName: value }));
+            const cleared = resolveNextClientLinkUiState({
+              previous: {
+                lastResult: lastClientLinkResultRef.current,
+                candidates: duplicateCandidatesRef.current,
+              },
+              incoming: null,
+              identityChanged: true,
+            });
+            lastClientLinkResultRef.current = cleared.lastResult;
+            duplicateCandidatesRef.current = cleared.candidates;
+            setLastClientLinkResult(cleared.lastResult);
+            setDuplicateCandidates(cleared.candidates);
             if (selectedClientId) {
               setSelectedClientId(null);
               setClientLinkDirty(true);
               setLinkBanner("Клиент не связан");
+            } else {
+              setLinkBanner(null);
             }
             scheduleSave();
           }}
@@ -955,10 +1001,24 @@ export function AppointmentEditorForm({
           disabled={!canEdit || isLinkActionPending}
           onValueChange={(value) => {
             setForm((current) => ({ ...current, clientPhone: value }));
+            const cleared = resolveNextClientLinkUiState({
+              previous: {
+                lastResult: lastClientLinkResultRef.current,
+                candidates: duplicateCandidatesRef.current,
+              },
+              incoming: null,
+              identityChanged: true,
+            });
+            lastClientLinkResultRef.current = cleared.lastResult;
+            duplicateCandidatesRef.current = cleared.candidates;
+            setLastClientLinkResult(cleared.lastResult);
+            setDuplicateCandidates(cleared.candidates);
             if (selectedClientId) {
               setSelectedClientId(null);
               setClientLinkDirty(true);
               setLinkBanner("Клиент не связан");
+            } else {
+              setLinkBanner(null);
             }
             scheduleSave();
           }}
