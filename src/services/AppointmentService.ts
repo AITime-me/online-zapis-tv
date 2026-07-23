@@ -191,12 +191,15 @@ export type AppointmentDto = {
   statusCode: AppointmentStatus;
   sourceCode: AppointmentSource;
   appliedPromotions: AppliedPromotionRecord[];
-  /** Только для OWNER/MANAGER operational путей; MASTER DTO не использует. */
+};
+
+/** OWNER/MANAGER write/read DTO — включает CRM clientId. */
+export type OperationalAppointmentDto = AppointmentDto & {
   clientId: string | null;
 };
 
 export type AppointmentMutationResult = {
-  appointment: AppointmentDto;
+  appointment: OperationalAppointmentDto;
   clientLink: AppointmentClientLinkResult;
 };
 
@@ -230,11 +233,21 @@ function mapAppointment(
     statusCode: appointment.status,
     sourceCode: appointment.source,
     appliedPromotions: parseAppliedPromotions(appointment.appliedPromotions),
+  };
+}
+
+function mapOperationalAppointment(
+  appointment: Appointment & { service: { publicName: string } | null },
+): OperationalAppointmentDto {
+  return {
+    ...mapAppointment(appointment),
     clientId: appointment.clientId ?? null,
   };
 }
 
-async function reloadAppointmentDto(id: string): Promise<AppointmentDto> {
+async function reloadOperationalAppointmentDto(
+  id: string,
+): Promise<OperationalAppointmentDto> {
   const appointment = await prisma.appointment.findUnique({
     where: { id },
     include: { service: true },
@@ -242,7 +255,7 @@ async function reloadAppointmentDto(id: string): Promise<AppointmentDto> {
   if (!appointment) {
     throw new AppointmentValidationError("Запись не найдена");
   }
-  return mapAppointment(appointment);
+  return mapOperationalAppointment(appointment);
 }
 
 async function loadConflictContext(
@@ -393,16 +406,6 @@ export async function createAppointment(
   createdByUserId: string,
   options?: CreateAppointmentOptions,
 ): Promise<AppointmentMutationResult> {
-  if (input.clientId) {
-    try {
-      await assertLinkableClientForAppointment(input.clientId);
-    } catch {
-      throw new AppointmentValidationError(
-        "Выбранный клиент недоступен для привязки",
-      );
-    }
-  }
-
   const result = await createAppointmentRecord(input, createdByUserId, {
     allowAppointmentOverlap: options?.allowAppointmentOverlap === true,
   });
@@ -412,12 +415,9 @@ export async function createAppointment(
     ? await syncCompletedAppointmentClientLink(result.appointment.id)
     : ({ status: "not_applicable" } satisfies AppointmentClientLinkResult);
 
-  const appointment =
-    clientLink.status === "created" ||
-    clientLink.status === "linked" ||
-    clientLink.status === "already_linked"
-      ? await reloadAppointmentDto(result.appointment.id)
-      : result.appointment;
+  const appointment = await reloadOperationalAppointmentDto(
+    result.appointment.id,
+  );
 
   return { appointment, clientLink };
 }
@@ -579,6 +579,16 @@ async function createAppointmentRecord(
     }
 
     const appointment = await runSerializableAppointmentWrite(async (tx) => {
+      if (input.clientId) {
+        try {
+          await assertLinkableClientForAppointment(input.clientId, tx);
+        } catch {
+          throw new AppointmentValidationError(
+            "Выбранный клиент недоступен для привязки",
+          );
+        }
+      }
+
       // input.endTime is desired free-at; candidate breakAfterMinutes = 0.
       await assertNoBlockingConflict(tx, input, undefined, {
         allowAppointmentOverlap: options?.allowAppointmentOverlap === true,
@@ -658,7 +668,7 @@ export async function updateAppointment(
       );
     }
     const clientLink = await syncCompletedAppointmentClientLink(id);
-    const appointment = await reloadAppointmentDto(id);
+    const appointment = await reloadOperationalAppointmentDto(id);
     return { appointment, clientLink };
   }
 
@@ -722,20 +732,10 @@ export async function updateAppointment(
     source: merged.source,
   };
 
-  if (Object.prototype.hasOwnProperty.call(input, "clientId")) {
-    if (input.clientId === null) {
-      nonTimingData.client = { disconnect: true };
-    } else if (typeof input.clientId === "string" && input.clientId.trim()) {
-      try {
-        await assertLinkableClientForAppointment(input.clientId.trim());
-      } catch {
-        throw new AppointmentValidationError(
-          "Выбранный клиент недоступен для привязки",
-        );
-      }
-      nonTimingData.client = { connect: { id: input.clientId.trim() } };
-    }
-  }
+  const hasClientIdChange = Object.prototype.hasOwnProperty.call(
+    input,
+    "clientId",
+  );
 
   let data: Prisma.AppointmentUpdateInput = nonTimingData;
 
@@ -784,6 +784,33 @@ export async function updateAppointment(
     options?.allowAppointmentOverlap === true ||
     (!timingDirty && wasBlocking && willBeBlocking);
 
+  async function applyClientLinkAndUpdate(
+    tx: Prisma.TransactionClient,
+  ): Promise<Appointment & { service: { publicName: string } | null }> {
+    const writeData: Prisma.AppointmentUpdateInput = { ...data };
+
+    if (hasClientIdChange) {
+      if (input.clientId === null) {
+        writeData.client = { disconnect: true };
+      } else if (typeof input.clientId === "string" && input.clientId.trim()) {
+        try {
+          await assertLinkableClientForAppointment(input.clientId.trim(), tx);
+        } catch {
+          throw new AppointmentValidationError(
+            "Выбранный клиент недоступен для привязки",
+          );
+        }
+        writeData.client = { connect: { id: input.clientId.trim() } };
+      }
+    }
+
+    return tx.appointment.update({
+      where: { id },
+      data: writeData,
+      include: { service: true },
+    });
+  }
+
   const appointment = needsConflictCheck
     ? await runSerializableAppointmentWrite(async (tx) => {
         // merged.endTime is desired free-at; candidate breakAfterMinutes = 0.
@@ -792,17 +819,15 @@ export async function updateAppointment(
           allowAppointmentOverlap,
         });
 
-        return tx.appointment.update({
+        return applyClientLinkAndUpdate(tx);
+      })
+    : hasClientIdChange
+      ? await prisma.$transaction(async (tx) => applyClientLinkAndUpdate(tx))
+      : await prisma.appointment.update({
           where: { id },
           data,
           include: { service: true },
         });
-      })
-    : await prisma.appointment.update({
-        where: { id },
-        data,
-        include: { service: true },
-      });
 
   const becameCompleted =
     existing.status !== "COMPLETED" && appointment.status === "COMPLETED";
@@ -818,14 +843,16 @@ export async function updateAppointment(
     clientLink.status === "created" ||
     clientLink.status === "linked" ||
     clientLink.status === "already_linked" ||
-    Object.prototype.hasOwnProperty.call(input, "clientId")
-      ? await reloadAppointmentDto(appointment.id)
-      : mapAppointment(appointment);
+    hasClientIdChange
+      ? await reloadOperationalAppointmentDto(appointment.id)
+      : mapOperationalAppointment(appointment);
 
   return { appointment: appointmentDto, clientLink };
 }
 
-export async function cancelAppointment(id: string): Promise<AppointmentDto> {
+export async function cancelAppointment(
+  id: string,
+): Promise<OperationalAppointmentDto> {
   const existing = await prisma.appointment.findUnique({
     where: { id },
     include: { service: true },
@@ -836,7 +863,7 @@ export async function cancelAppointment(id: string): Promise<AppointmentDto> {
   }
 
   if (existing.status === "CANCELLED") {
-    return mapAppointment(existing);
+    return mapOperationalAppointment(existing);
   }
 
   const appointment = await prisma.appointment.update({
@@ -848,7 +875,10 @@ export async function cancelAppointment(id: string): Promise<AppointmentDto> {
     include: { service: true },
   });
 
-  return mapAppointment(appointment);
+  return mapOperationalAppointment(appointment);
 }
 
-export { mapAppointment as mapAppointmentDto };
+export {
+  mapAppointment as mapAppointmentDto,
+  mapOperationalAppointment as mapOperationalAppointmentDto,
+};

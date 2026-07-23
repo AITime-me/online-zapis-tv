@@ -11,6 +11,7 @@ import { mergeClientTags } from "@/lib/clients/tags";
 import {
   getPhoneMatchSuffix,
   normalizePhone,
+  resolveClientPhoneMatchKey,
 } from "@/lib/phone/normalize-phone";
 import { classifyClientPhone } from "@/lib/phone/usable-client-phone";
 import { safeLogError } from "@/lib/logging/redact";
@@ -48,13 +49,13 @@ function buildServiceTags(
   return mergeClientTags([], base);
 }
 
-async function advisoryLockByNormalizedPhone(
+async function advisoryLockByPhoneMatchKey(
   tx: Tx,
-  normalizedPhone: string,
+  matchKey: string,
 ): Promise<void> {
-  // Transaction-scoped lock; key derived only from normalized digits (no PII logs).
+  // Transaction-scoped lock; key = resolveClientPhoneMatchKey (no PII logs).
   await tx.$executeRaw`
-    SELECT pg_advisory_xact_lock(hashtext(${normalizedPhone}))
+    SELECT pg_advisory_xact_lock(hashtext(${matchKey}))
   `;
 }
 
@@ -264,7 +265,12 @@ export async function syncCompletedAppointmentClientLink(
         return { status: "skipped_invalid_phone" };
       }
 
-      await advisoryLockByNormalizedPhone(tx, phoneClass.normalized);
+      const matchKey = resolveClientPhoneMatchKey(appointment.clientPhone);
+      if (!matchKey) {
+        return { status: "skipped_invalid_phone" };
+      }
+
+      await advisoryLockByPhoneMatchKey(tx, matchKey);
 
       const matches = await findActiveClientsByPhone(
         tx,
@@ -303,10 +309,20 @@ export async function syncCompletedAppointmentClientLink(
   }
 }
 
+type ClientLookupDb = {
+  client: {
+    findUnique: Tx["client"]["findUnique"];
+  };
+};
+
+/**
+ * Проверка клиента для connect. Передавать TransactionClient той же write-tx.
+ */
 export async function assertLinkableClientForAppointment(
   clientId: string,
+  db: ClientLookupDb = prisma,
 ): Promise<Client> {
-  const client = await prisma.client.findUnique({ where: { id: clientId } });
+  const client = await db.client.findUnique({ where: { id: clientId } });
   if (!client) {
     throw new Error("CLIENT_NOT_FOUND");
   }

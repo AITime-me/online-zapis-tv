@@ -39,6 +39,21 @@ export function getPhoneMatchSuffix(
   return normalized.slice(-10);
 }
 
+/**
+ * Канонический ключ для phone-match и advisory lock.
+ * Предпочитает suffix (последние 10 цифр), иначе полный normalizedPhone.
+ * Не логирует телефон.
+ */
+export function resolveClientPhoneMatchKey(
+  phone: string | null | undefined,
+): string | null {
+  const normalized = normalizePhone(phone);
+  if (!normalized) {
+    return null;
+  }
+  return getPhoneMatchSuffix(phone) ?? normalized;
+}
+
 export function phonesAreEquivalent(
   left: string | null | undefined,
   right: string | null | undefined,
