@@ -352,9 +352,10 @@ export type CreateAppointmentOptions = {
 
 export type UpdateAppointmentOptions = {
   /**
-   * Только ручной PATCH при изменении времени: строго true разрешает overlap.
-   * Нетайминговые правки существующей записи не требуют флага —
-   * overlap с уже подтверждённым соседом пропускается на сервисе.
+   * Только ручной PATCH при смене тайминга или активации блокирующего статуса:
+   * строго true разрешает appointment-overlap.
+   * Авто-allow без confirm — только если тайминг не менялся и запись
+   * уже была и остаётся блокирующей (не RESCHEDULED/CANCELLED → active).
    */
   allowAppointmentOverlap?: boolean;
 };
@@ -693,11 +694,14 @@ export async function updateAppointment(
   }
 
   const needsConflictCheck = isBlockingAppointmentStatus(merged.status);
-  // Нетайминговый PATCH существующей пересекающейся записи не должен снова
-  // требовать confirm: exclude self + auto-allow appointment overlap.
-  // Смена времени по-прежнему требует явного allowAppointmentOverlap.
+  const wasBlocking = isBlockingAppointmentStatus(existing.status);
+  const willBeBlocking = needsConflictCheck;
+  // Авто-allow только для уже занятого слота: тайминг не менялся и статус
+  // остаётся блокирующим. Активация RESCHEDULED/CANCELLED → blocking
+  // требует явного allowAppointmentOverlap (как смена времени).
   const allowAppointmentOverlap =
-    options?.allowAppointmentOverlap === true || !timingDirty;
+    options?.allowAppointmentOverlap === true ||
+    (!timingDirty && wasBlocking && willBeBlocking);
 
   const appointment = needsConflictCheck
     ? await runSerializableAppointmentWrite(async (tx) => {

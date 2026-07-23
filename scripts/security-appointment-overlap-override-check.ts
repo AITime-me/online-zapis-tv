@@ -281,8 +281,17 @@ function testManualApiExposesMachineCodesAndStrictFlag(): void {
   const updateFn = service.slice(updateStart);
   assert.match(
     updateFn,
-    /const allowAppointmentOverlap =\s*options\?\.allowAppointmentOverlap === true \|\| !timingDirty/,
-    "нетайминговый PATCH auto-allows overlap; смена времени — только с явным флагом",
+    /const wasBlocking = isBlockingAppointmentStatus\(existing\.status\)/,
+  );
+  assert.match(
+    updateFn,
+    /options\?\.allowAppointmentOverlap === true\s*\|\|\s*\(!timingDirty && wasBlocking && willBeBlocking\)/,
+    "auto-allow только для уже blocking + !timingDirty; активация требует флаг",
+  );
+  assert.doesNotMatch(
+    updateFn,
+    /options\?\.allowAppointmentOverlap === true \|\| !timingDirty;/,
+    "небезопасная формула только по !timingDirty не должна остаться",
   );
   assert.match(
     updateFn,

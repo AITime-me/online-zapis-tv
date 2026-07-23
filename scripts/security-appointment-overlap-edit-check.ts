@@ -1,7 +1,8 @@
 /**
  * Регрессия: редактирование уже пересекающихся записей.
  *
- * A–G: in-memory harness (та же логика конфликтов, что AppointmentService).
+ * In-memory harness повторяет семантику updateAppointment
+ * (timingDirty + wasBlocking/willBeBlocking + resolveAppointmentWriteConflict).
  * H–I: статический аудит публичного booking и MASTER access.
  */
 process.env.SECURITY_BATCH_TEST = "1";
@@ -10,12 +11,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import type { AppointmentStatus } from "@prisma/client";
+import { WRITE_SCHEDULE_ROLES } from "../src/lib/auth/api-access";
 import { parseStudioDateKey } from "../src/lib/datetime/date-layer";
 import { isAppointmentTimingDirty } from "../src/lib/schedule/appointment-timing-write";
 import { resolveAppointmentWriteConflict } from "../src/lib/schedule/appointment-write-conflicts";
-import {
-  WRITE_SCHEDULE_ROLES,
-} from "../src/lib/auth/api-access";
+import { isBlockingAppointmentStatus } from "../src/lib/schedule/non-blocking-appointment-statuses";
 import {
   checkMasterIntervalAvailability,
   type BusyInterval,
@@ -36,8 +36,15 @@ type StoredAppointment = BusyInterval & {
   dateKey: string;
 };
 
+type ScheduleBlock = {
+  startsAt: Date;
+  endsAt: Date;
+  isFullDay?: boolean;
+};
+
 type TestStore = {
   appointments: StoredAppointment[];
+  scheduleBlocks: ScheduleBlock[];
 };
 
 function read(rel: string): string {
@@ -56,6 +63,26 @@ function at(time: string): Date {
   return value;
 }
 
+function emptyStore(): TestStore {
+  return { appointments: [], scheduleBlocks: [] };
+}
+
+/**
+ * Сервисная семантика allow на update:
+ * explicit flag OR (!timingDirty && wasBlocking && willBeBlocking)
+ */
+function resolveUpdateAllowAppointmentOverlap(input: {
+  allowAppointmentOverlapFlag: boolean;
+  timingDirty: boolean;
+  wasBlocking: boolean;
+  willBeBlocking: boolean;
+}): boolean {
+  return (
+    input.allowAppointmentOverlapFlag === true ||
+    (!input.timingDirty && input.wasBlocking && input.willBeBlocking)
+  );
+}
+
 function tryWrite(
   store: TestStore,
   candidate: {
@@ -67,44 +94,50 @@ function tryWrite(
     clientPhone?: string;
     comment?: string | null;
     importantNote?: string | null;
+    status?: AppointmentStatus;
   },
   options: {
     excludeAppointmentId?: string;
     allowAppointmentOverlap: boolean;
+    skipConflictCheck?: boolean;
   },
 ):
   | { ok: true; id: string; record: StoredAppointment }
   | { ok: false; code: string } {
-  const others = store.appointments.filter(
-    (item) => item.id !== options.excludeAppointmentId,
-  );
+  if (!options.skipConflictCheck) {
+    const others = store.appointments.filter(
+      (item) => item.id !== options.excludeAppointmentId,
+    );
 
-  const availability = checkMasterIntervalAvailability({
-    masterId: "m1",
-    dateKey: DATE_KEY,
-    standardWorkStart: "09:00",
-    standardWorkEnd: "20:00",
-    constrainAppointmentEnd: true,
-    extraWorkWindows: [],
-    appointments: others,
-    scheduleBlocks: [],
-    candidateInterval: {
-      startsAt: candidate.startsAt,
-      endsAt: candidate.endsAt,
-      breakAfterMinutes: candidate.breakAfterMinutes ?? 0,
-    },
-  });
+    const availability = checkMasterIntervalAvailability({
+      masterId: "m1",
+      dateKey: DATE_KEY,
+      standardWorkStart: "09:00",
+      standardWorkEnd: "20:00",
+      constrainAppointmentEnd: true,
+      extraWorkWindows: [],
+      appointments: others,
+      scheduleBlocks: store.scheduleBlocks,
+      candidateInterval: {
+        startsAt: candidate.startsAt,
+        endsAt: candidate.endsAt,
+        breakAfterMinutes: candidate.breakAfterMinutes ?? 0,
+      },
+    });
 
-  const blocking = resolveAppointmentWriteConflict(
-    availability.conflicts,
-    options.allowAppointmentOverlap,
-  );
-  if (blocking) {
-    return { ok: false, code: blocking.code };
+    const blocking = resolveAppointmentWriteConflict(
+      availability.conflicts,
+      options.allowAppointmentOverlap,
+    );
+    if (blocking) {
+      return { ok: false, code: blocking.code };
+    }
   }
 
   if (candidate.id) {
-    const index = store.appointments.findIndex((item) => item.id === candidate.id);
+    const index = store.appointments.findIndex(
+      (item) => item.id === candidate.id,
+    );
     assert.ok(index >= 0, "обновляемая запись должна существовать");
     const prev = store.appointments[index]!;
     const next: StoredAppointment = {
@@ -119,6 +152,7 @@ function tryWrite(
         candidate.importantNote !== undefined
           ? candidate.importantNote
           : prev.importantNote,
+      status: candidate.status ?? prev.status,
     };
     store.appointments[index] = next;
     return { ok: true, id: next.id, record: next };
@@ -130,7 +164,7 @@ function tryWrite(
     startsAt: candidate.startsAt,
     endsAt: candidate.endsAt,
     breakAfterMinutes: candidate.breakAfterMinutes ?? 0,
-    status: "SCHEDULED",
+    status: candidate.status ?? "SCHEDULED",
     clientName: candidate.clientName ?? "Client",
     clientPhone: candidate.clientPhone ?? "+70000000000",
     comment: candidate.comment ?? null,
@@ -143,10 +177,6 @@ function tryWrite(
   return { ok: true, id, record: created };
 }
 
-/**
- * Сервисная семантика updateAppointment:
- * allow = explicit flag OR !timingDirty.
- */
 function patchAppointment(
   store: TestStore,
   id: string,
@@ -157,6 +187,7 @@ function patchAppointment(
     clientPhone?: string;
     comment?: string | null;
     importantNote?: string | null;
+    status?: AppointmentStatus;
   },
   allowAppointmentOverlapFlag = false,
 ):
@@ -167,6 +198,7 @@ function patchAppointment(
 
   const desiredStartsAt = patch.startsAt ?? existing.startsAt;
   const desiredFreeAt = patch.endsAt ?? existing.endsAt;
+  const desiredStatus = patch.status ?? existing.status;
 
   const timingDirty = isAppointmentTimingDirty({
     current: {
@@ -188,8 +220,40 @@ function patchAppointment(
     desiredDateKey: existing.dateKey,
   });
 
-  const allowAppointmentOverlap =
-    allowAppointmentOverlapFlag === true || !timingDirty;
+  const wasBlocking = isBlockingAppointmentStatus(existing.status);
+  const willBeBlocking = isBlockingAppointmentStatus(desiredStatus);
+  const allowAppointmentOverlap = resolveUpdateAllowAppointmentOverlap({
+    allowAppointmentOverlapFlag,
+    timingDirty,
+    wasBlocking,
+    willBeBlocking,
+  });
+
+  // Как в updateAppointment: conflict check только если итоговый статус blocking.
+  if (!willBeBlocking) {
+    const result = tryWrite(
+      store,
+      {
+        id,
+        startsAt: desiredStartsAt,
+        endsAt: desiredFreeAt,
+        breakAfterMinutes: existing.breakAfterMinutes,
+        clientName: patch.clientName,
+        clientPhone: patch.clientPhone,
+        comment: patch.comment,
+        importantNote: patch.importantNote,
+        status: desiredStatus,
+      },
+      {
+        excludeAppointmentId: id,
+        allowAppointmentOverlap: false,
+        skipConflictCheck: true,
+      },
+    );
+    assert.equal(result.ok, true);
+    assert.ok(result.ok);
+    return { ok: true, record: result.record };
+  }
 
   const result = tryWrite(
     store,
@@ -202,6 +266,7 @@ function patchAppointment(
       clientPhone: patch.clientPhone,
       comment: patch.comment,
       importantNote: patch.importantNote,
+      status: desiredStatus,
     },
     {
       excludeAppointmentId: id,
@@ -220,16 +285,18 @@ function seedOverlappingPair(): {
   firstId: string;
   secondId: string;
 } {
-  const store: TestStore = { appointments: [] };
+  const store = emptyStore();
   const slot = {
     startsAt: at("14:00"),
     endsAt: at("15:00"),
     breakAfterMinutes: 0,
   };
 
-  const first = tryWrite(store, { ...slot, clientName: "A", clientPhone: "+7111" }, {
-    allowAppointmentOverlap: false,
-  });
+  const first = tryWrite(
+    store,
+    { ...slot, clientName: "A", clientPhone: "+7111" },
+    { allowAppointmentOverlap: false },
+  );
   assert.equal(first.ok, true);
   assert.ok(first.ok);
 
@@ -306,7 +373,6 @@ function testD_RereadAfterCloseKeepsSavedFields(): void {
     true,
   );
 
-  // «закрытие / повторное открытие» = новый GET из store
   const again = structuredClone(store);
   assert.equal(
     again.appointments.find((item) => item.id === firstId)?.comment,
@@ -321,7 +387,6 @@ function testD_RereadAfterCloseKeepsSavedFields(): void {
 function testE_TimingChangeToOverlappingRequiresConfirm(): void {
   const { store, firstId } = seedOverlappingPair();
 
-  // Перенос первой на другой слот, где уже есть третья запись → overlap.
   const third = tryWrite(
     store,
     {
@@ -369,7 +434,7 @@ function testF_MoveToFreeSlotWithoutConfirm(): void {
 }
 
 function testG_PatchDoesNotConflictWithSelf(): void {
-  const store: TestStore = { appointments: [] };
+  const store = emptyStore();
   const alone = tryWrite(
     store,
     {
@@ -383,7 +448,6 @@ function testG_PatchDoesNotConflictWithSelf(): void {
   assert.equal(alone.ok, true);
   assert.ok(alone.ok);
 
-  // Тот же интервал без exclude → self-conflict.
   const selfHit = tryWrite(
     store,
     { id: alone.id, startsAt: at("10:00"), endsAt: at("11:00") },
@@ -391,7 +455,6 @@ function testG_PatchDoesNotConflictWithSelf(): void {
   );
   assert.equal(selfHit.ok, false);
 
-  // С excludeAppointmentId (как в updateAppointment) — ок.
   const selfExcluded = tryWrite(
     store,
     {
@@ -430,7 +493,7 @@ function testH_PublicCreateStillForbidsOverlap(): void {
     /createOnlineAppointment[\s\S]{0,400}allowAppointmentOverlap:\s*true/,
   );
 
-  const store: TestStore = { appointments: [] };
+  const store = emptyStore();
   assert.equal(
     tryWrite(
       store,
@@ -466,11 +529,252 @@ function testI_MasterAccessDoesNotRegress(): void {
   assert.match(roleCheck, /clientPhone/);
 }
 
+/** Review A: phone/comment без confirm на blocking overlap. */
+function testReviewA_BlockingOverlapPhoneCommentWithoutConfirm(): void {
+  const { store, firstId } = seedOverlappingPair();
+  const patched = patchAppointment(store, firstId, {
+    clientPhone: "+7111-review-a",
+    comment: "review-a",
+  });
+  assert.equal(patched.ok, true);
+  assert.ok(patched.ok);
+  assert.equal(patched.record.clientPhone, "+7111-review-a");
+  assert.equal(patched.record.comment, "review-a");
+}
+
+/** Review B: SCHEDULED → CONFIRMED без повторного confirm. */
+function testReviewB_BlockingToBlockingStatusWithoutConfirm(): void {
+  const { store, firstId } = seedOverlappingPair();
+  const patched = patchAppointment(store, firstId, { status: "CONFIRMED" });
+  assert.equal(patched.ok, true);
+  assert.ok(patched.ok);
+  assert.equal(patched.record.status, "CONFIRMED");
+}
+
+/**
+ * Review C: RESCHEDULED пересекается с SCHEDULED —
+ * comment ok; activate without override → overlap; with override → ok.
+ */
+function testReviewC_RescheduledActivationRequiresConfirm(): void {
+  const store = emptyStore();
+  const slot = {
+    startsAt: at("14:00"),
+    endsAt: at("15:00"),
+    breakAfterMinutes: 0,
+  };
+
+  const active = tryWrite(
+    store,
+    { ...slot, clientName: "Active", clientPhone: "+7001" },
+    { allowAppointmentOverlap: false },
+  );
+  assert.equal(active.ok, true);
+  assert.ok(active.ok);
+
+  // Исторический RESCHEDULED в том же слоте (не занимает слот при conflict check
+  // через status, но в harness appointments всегда передаются — фильтруем
+  // как MasterAvailability: non-blocking не дают appointment conflict).
+  // Для реалистичности кладём RESCHEDULED напрямую и помечаем status.
+  store.appointments.push({
+    id: "rescheduled-1",
+    startsAt: slot.startsAt,
+    endsAt: slot.endsAt,
+    breakAfterMinutes: 0,
+    status: "RESCHEDULED",
+    clientName: "Moved",
+    clientPhone: "+7002",
+    comment: "was moved",
+    importantNote: null,
+    masterId: "m1",
+    serviceId: "svc1",
+    dateKey: DATE_KEY,
+  });
+
+  // Conflict check должен игнорировать non-blocking status в appointments.
+  // MasterAvailabilityService filters via isBlockingAppointmentStatus.
+  const commentOnly = patchAppointment(store, "rescheduled-1", {
+    comment: "still rescheduled note",
+  });
+  assert.equal(commentOnly.ok, true);
+  assert.ok(commentOnly.ok);
+  assert.equal(commentOnly.record.status, "RESCHEDULED");
+  assert.equal(commentOnly.record.comment, "still rescheduled note");
+
+  const activateBlocked = patchAppointment(
+    store,
+    "rescheduled-1",
+    { status: "SCHEDULED" },
+    false,
+  );
+  assert.equal(activateBlocked.ok, false);
+  assert.ok(!activateBlocked.ok);
+  assert.equal(activateBlocked.code, "APPOINTMENT_OVERLAP");
+
+  const activateConfirmed = patchAppointment(
+    store,
+    "rescheduled-1",
+    { status: "SCHEDULED" },
+    true,
+  );
+  assert.equal(activateConfirmed.ok, true);
+  assert.ok(activateConfirmed.ok);
+  assert.equal(activateConfirmed.record.status, "SCHEDULED");
+}
+
+/** Review D: blocking → RESCHEDULED без confirm, слот освобождается. */
+function testReviewD_BlockingToRescheduledWithoutConfirm(): void {
+  const { store, firstId, secondId } = seedOverlappingPair();
+  const demoted = patchAppointment(store, firstId, { status: "RESCHEDULED" });
+  assert.equal(demoted.ok, true);
+  assert.ok(demoted.ok);
+  assert.equal(demoted.record.status, "RESCHEDULED");
+
+  // Исключая вторую (всё ещё blocking), остаётся только RESCHEDULED first —
+  // non-blocking не занимает слот → новый кандидат проходит без override.
+  const createOnFreedSlot = tryWrite(
+    store,
+    {
+      startsAt: at("14:00"),
+      endsAt: at("15:00"),
+      clientName: "New",
+      clientPhone: "+7999",
+    },
+    {
+      allowAppointmentOverlap: false,
+      excludeAppointmentId: secondId,
+    },
+  );
+  assert.equal(createOnFreedSlot.ok, true);
+}
+
+/** Review E: block / full-day не обходятся override. */
+function testReviewE_BlocksNotBypassedByOverride(): void {
+  const store = emptyStore();
+  store.scheduleBlocks.push({
+    startsAt: at("14:00"),
+    endsAt: at("15:00"),
+    isFullDay: false,
+  });
+
+  const created = tryWrite(
+    store,
+    {
+      startsAt: at("10:00"),
+      endsAt: at("11:00"),
+      clientName: "X",
+      clientPhone: "+7010",
+      status: "RESCHEDULED",
+    },
+    { allowAppointmentOverlap: true, skipConflictCheck: true },
+  );
+  assert.equal(created.ok, true);
+  assert.ok(created.ok);
+
+  const intoBlock = patchAppointment(
+    store,
+    created.id,
+    {
+      status: "SCHEDULED",
+      startsAt: at("14:00"),
+      endsAt: at("15:00"),
+    },
+    true,
+  );
+  assert.equal(intoBlock.ok, false);
+  assert.ok(!intoBlock.ok);
+  assert.equal(intoBlock.code, "SCHEDULE_BLOCK");
+
+  const fullDayStore = emptyStore();
+  fullDayStore.scheduleBlocks.push({
+    startsAt: at("00:00"),
+    endsAt: at("23:59"),
+    isFullDay: true,
+  });
+  fullDayStore.appointments.push({
+    id: "fd-1",
+    startsAt: at("10:00"),
+    endsAt: at("11:00"),
+    breakAfterMinutes: 0,
+    status: "RESCHEDULED",
+    clientName: "Y",
+    clientPhone: "+7020",
+    comment: null,
+    importantNote: null,
+    masterId: "m1",
+    serviceId: "svc1",
+    dateKey: DATE_KEY,
+  });
+
+  const intoFullDay = patchAppointment(
+    fullDayStore,
+    "fd-1",
+    { status: "SCHEDULED" },
+    true,
+  );
+  assert.equal(intoFullDay.ok, false);
+  assert.ok(!intoFullDay.ok);
+  assert.equal(intoFullDay.code, "FULL_DAY_BLOCK");
+}
+
+function testAllowFormulaRejectsActivationWithoutFlag(): void {
+  assert.equal(
+    resolveUpdateAllowAppointmentOverlap({
+      allowAppointmentOverlapFlag: false,
+      timingDirty: false,
+      wasBlocking: false,
+      willBeBlocking: true,
+    }),
+    false,
+    "активация blocking без флага не auto-allow",
+  );
+  assert.equal(
+    resolveUpdateAllowAppointmentOverlap({
+      allowAppointmentOverlapFlag: false,
+      timingDirty: false,
+      wasBlocking: true,
+      willBeBlocking: true,
+    }),
+    true,
+    "уже blocking + !timingDirty → auto-allow",
+  );
+  assert.equal(
+    resolveUpdateAllowAppointmentOverlap({
+      allowAppointmentOverlapFlag: false,
+      timingDirty: true,
+      wasBlocking: true,
+      willBeBlocking: true,
+    }),
+    false,
+    "timing change без флага не auto-allow",
+  );
+  assert.equal(
+    resolveUpdateAllowAppointmentOverlap({
+      allowAppointmentOverlapFlag: true,
+      timingDirty: true,
+      wasBlocking: false,
+      willBeBlocking: true,
+    }),
+    true,
+    "явный флаг разрешает",
+  );
+}
+
 function testServiceAndUiWiring(): void {
   const service = stripComments(read("src/services/AppointmentService.ts"));
+  const updateStart = service.indexOf("export async function updateAppointment");
+  assert.ok(updateStart >= 0);
+  const updateFn = service.slice(updateStart);
+
+  assert.match(updateFn, /const wasBlocking = isBlockingAppointmentStatus\(existing\.status\)/);
+  assert.match(updateFn, /const willBeBlocking = needsConflictCheck/);
   assert.match(
-    service,
-    /const allowAppointmentOverlap =\s*options\?\.allowAppointmentOverlap === true \|\| !timingDirty/,
+    updateFn,
+    /options\?\.allowAppointmentOverlap === true\s*\|\|\s*\(!timingDirty && wasBlocking && willBeBlocking\)/,
+  );
+  assert.doesNotMatch(
+    updateFn,
+    /options\?\.allowAppointmentOverlap === true \|\| !timingDirty;/,
+    "старая небезопасная формула только по !timingDirty не должна вернуться",
   );
 
   const form = stripComments(
@@ -494,6 +798,12 @@ function main(): void {
   testG_PatchDoesNotConflictWithSelf();
   testH_PublicCreateStillForbidsOverlap();
   testI_MasterAccessDoesNotRegress();
+  testReviewA_BlockingOverlapPhoneCommentWithoutConfirm();
+  testReviewB_BlockingToBlockingStatusWithoutConfirm();
+  testReviewC_RescheduledActivationRequiresConfirm();
+  testReviewD_BlockingToRescheduledWithoutConfirm();
+  testReviewE_BlocksNotBypassedByOverride();
+  testAllowFormulaRejectsActivationWithoutFlag();
   testServiceAndUiWiring();
   console.log("security-appointment-overlap-edit-check: OK");
 }
