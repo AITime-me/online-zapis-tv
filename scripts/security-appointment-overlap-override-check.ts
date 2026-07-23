@@ -279,10 +279,15 @@ function testManualApiExposesMachineCodesAndStrictFlag(): void {
   const updateStart = service.indexOf("export async function updateAppointment");
   assert.ok(updateStart >= 0);
   const updateFn = service.slice(updateStart);
-  assert.doesNotMatch(
+  assert.match(
     updateFn,
-    /allowAppointmentOverlap/,
-    "PATCH/update не получает override",
+    /const allowAppointmentOverlap =\s*options\?\.allowAppointmentOverlap === true \|\| !timingDirty/,
+    "нетайминговый PATCH auto-allows overlap; смена времени — только с явным флагом",
+  );
+  assert.match(
+    updateFn,
+    /assertNoBlockingConflict\(\s*tx,\s*merged,\s*id,/,
+    "PATCH исключает редактируемую запись из self-conflict",
   );
   assert.match(
     service,
@@ -324,11 +329,20 @@ function testPublicBookingIgnoresOverlapFlag(): void {
   );
 }
 
-function testPatchRouteUnchangedForOverride(): void {
+function testPatchRouteSupportsOverlapOverride(): void {
   const patchRoute = stripComments(
     read("src/app/api/appointments/[id]/route.ts"),
   );
-  assert.doesNotMatch(patchRoute, /allowAppointmentOverlap/);
+  assert.match(patchRoute, /allowAppointmentOverlap === true/);
+  assert.match(
+    patchRoute,
+    /updateAppointment\(\s*id,\s*appointmentInput,\s*\{\s*allowAppointmentOverlap,?\s*\}\s*\)/,
+  );
+  assert.match(
+    patchRoute,
+    /error\.code \? \{ code: error\.code \}/,
+    "PATCH возвращает машинный code для overlap-confirm UI",
+  );
 }
 
 function testUiOverlapConfirmFlow(): void {
@@ -339,9 +353,12 @@ function testUiOverlapConfirmFlow(): void {
   assert.match(form, /payload\.code === "APPOINTMENT_OVERLAP"/);
   assert.match(form, /На это время у мастера уже есть запись/);
   assert.match(form, /Создать всё равно/);
+  assert.match(form, /Сохранить всё равно/);
   assert.match(form, /showOverlapConfirm/);
   assert.match(form, /submitCreate\(false\)/);
   assert.match(form, /submitCreate\(true\)/);
+  assert.match(form, /save\(false\)/);
+  assert.match(form, /save\(true\)/);
   assert.match(
     form,
     /if \(allowAppointmentOverlap\) \{[\s\S]*payloadBody\.allowAppointmentOverlap = true/,
@@ -417,7 +434,7 @@ function main(): void {
   testBreakTailCountsAsAppointmentConflict();
   testManualApiExposesMachineCodesAndStrictFlag();
   testPublicBookingIgnoresOverlapFlag();
-  testPatchRouteUnchangedForOverride();
+  testPatchRouteSupportsOverlapOverride();
   testUiOverlapConfirmFlow();
   console.log("security-appointment-overlap-override-check: OK");
 }

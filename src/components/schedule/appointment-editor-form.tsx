@@ -154,13 +154,19 @@ export function AppointmentEditorForm({
     toFormState(appointment),
   );
   const [error, setError] = useState<string | null>(null);
+  const [showOverlapConfirm, setShowOverlapConfirm] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isCancellingRef = useRef(false);
   const cancelledRef = useRef(false);
   const saveAbortRef = useRef<AbortController | null>(null);
+  const showOverlapConfirmRef = useRef(false);
   const formRef = useRef(form);
+  // Debounced/blur save читает актуальные значения до commit effect.
+  // eslint-disable-next-line react-hooks/refs -- intentional sync for async save
   formRef.current = form;
+  // eslint-disable-next-line react-hooks/refs -- intentional sync for async save
+  showOverlapConfirmRef.current = showOverlapConfirm;
 
   const clearPendingSave = useCallback(() => {
     if (debounceRef.current) {
@@ -180,7 +186,10 @@ export function AppointmentEditorForm({
     `appointment-${appointment.id}-${name}`;
 
   useEffect(() => {
+    // Синхронизация локальной формы после refresh с сервера (onSaved).
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- controlled editor reset from refreshed appointment prop
     setForm(toFormState(appointment));
+    setShowOverlapConfirm(false);
   }, [appointment]);
 
   useEffect(() => {
@@ -205,24 +214,26 @@ export function AppointmentEditorForm({
       (selectedService.totalBusyMinutes ??
         selectedService.durationMinutes + (selectedService.breakAfterMinutes ?? 0));
 
-  const save = useCallback(async () => {
-    if (!canEdit || isCancellingRef.current || cancelledRef.current) {
-      return;
-    }
+  const save = useCallback(
+    async (allowAppointmentOverlap = false) => {
+      if (!canEdit || isCancellingRef.current || cancelledRef.current) {
+        return;
+      }
 
-    clearPendingSave();
-    const abortController = new AbortController();
-    saveAbortRef.current = abortController;
+      // Пока открыт confirm по overlap — только повторный submit с флагом.
+      if (showOverlapConfirmRef.current && !allowAppointmentOverlap) {
+        return;
+      }
 
-    onSaveStatus("saving");
-    setError(null);
+      clearPendingSave();
+      const abortController = new AbortController();
+      saveAbortRef.current = abortController;
 
-    try {
-      const response = await fetch(`/api/appointments/${appointment.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        signal: abortController.signal,
-        body: JSON.stringify({
+      onSaveStatus("saving");
+      setError(null);
+
+      try {
+        const payloadBody: Record<string, unknown> = {
           masterId,
           dateKey,
           startTime: formRef.current.startTime,
@@ -235,60 +246,94 @@ export function AppointmentEditorForm({
           comment: formRef.current.comment || null,
           importantNote: formRef.current.importantNote || null,
           isBold: formRef.current.isBold,
-        }),
-      });
+        };
+        if (allowAppointmentOverlap) {
+          payloadBody.allowAppointmentOverlap = true;
+        }
 
-      if (
-        abortController.signal.aborted ||
-        isCancellingRef.current ||
-        cancelledRef.current
-      ) {
-        return;
-      }
+        const response = await fetch(`/api/appointments/${appointment.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          signal: abortController.signal,
+          body: JSON.stringify(payloadBody),
+        });
 
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload.error ?? "Ошибка сохранения");
-      }
+        if (
+          abortController.signal.aborted ||
+          isCancellingRef.current ||
+          cancelledRef.current
+        ) {
+          return;
+        }
 
-      if (isCancellingRef.current || cancelledRef.current) {
-        return;
-      }
+        const payload = (await response.json()) as {
+          ok?: boolean;
+          error?: string;
+          code?: string;
+          conflictType?: string;
+        };
 
-      onSaveStatus("saved");
-      clientDebugLog("schedule.appointment.saved", { action: "patch" });
-      await onSaved();
-    } catch (saveError) {
-      if (
-        abortController.signal.aborted ||
-        isCancellingRef.current ||
-        cancelledRef.current ||
-        (saveError instanceof DOMException && saveError.name === "AbortError") ||
-        (saveError instanceof Error && saveError.name === "AbortError")
-      ) {
-        return;
+        if (!response.ok) {
+          if (
+            response.status === 409 &&
+            payload.code === "APPOINTMENT_OVERLAP" &&
+            !allowAppointmentOverlap
+          ) {
+            setShowOverlapConfirm(true);
+            onSaveStatus("idle");
+            return;
+          }
+
+          setShowOverlapConfirm(false);
+          throw new Error(payload.error ?? "Ошибка сохранения");
+        }
+
+        if (isCancellingRef.current || cancelledRef.current) {
+          return;
+        }
+
+        setShowOverlapConfirm(false);
+        onSaveStatus("saved");
+        clientDebugLog("schedule.appointment.saved", { action: "patch" });
+        await onSaved();
+      } catch (saveError) {
+        if (
+          abortController.signal.aborted ||
+          isCancellingRef.current ||
+          cancelledRef.current ||
+          (saveError instanceof DOMException && saveError.name === "AbortError") ||
+          (saveError instanceof Error && saveError.name === "AbortError")
+        ) {
+          return;
+        }
+        const message =
+          saveError instanceof Error ? saveError.message : "Ошибка сохранения";
+        setError(message);
+        onSaveStatus("error", message);
+      } finally {
+        if (saveAbortRef.current === abortController) {
+          saveAbortRef.current = null;
+        }
       }
-      const message =
-        saveError instanceof Error ? saveError.message : "Ошибка сохранения";
-      setError(message);
-      onSaveStatus("error", message);
-    } finally {
-      if (saveAbortRef.current === abortController) {
-        saveAbortRef.current = null;
-      }
-    }
-  }, [
-    appointment.id,
-    canEdit,
-    clearPendingSave,
-    dateKey,
-    masterId,
-    onSaved,
-    onSaveStatus,
-  ]);
+    },
+    [
+      appointment.id,
+      canEdit,
+      clearPendingSave,
+      dateKey,
+      masterId,
+      onSaved,
+      onSaveStatus,
+    ],
+  );
 
   const scheduleSave = useCallback(() => {
-    if (!canEdit || isCancellingRef.current || cancelledRef.current) {
+    if (
+      !canEdit ||
+      isCancellingRef.current ||
+      cancelledRef.current ||
+      showOverlapConfirmRef.current
+    ) {
       return;
     }
     if (debounceRef.current) {
@@ -296,10 +341,14 @@ export function AppointmentEditorForm({
     }
     debounceRef.current = setTimeout(() => {
       debounceRef.current = null;
-      if (isCancellingRef.current || cancelledRef.current) {
+      if (
+        isCancellingRef.current ||
+        cancelledRef.current ||
+        showOverlapConfirmRef.current
+      ) {
         return;
       }
-      void save();
+      void save(false);
     }, 500);
   }, [canEdit, save]);
 
@@ -353,14 +402,27 @@ export function AppointmentEditorForm({
   };
 
   const handleBlur = () => {
-    if (isCancellingRef.current || cancelledRef.current) {
+    if (
+      isCancellingRef.current ||
+      cancelledRef.current ||
+      showOverlapConfirmRef.current
+    ) {
       return;
     }
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
       debounceRef.current = null;
     }
-    void save();
+    void save(false);
+  };
+
+  const dismissOverlapConfirm = () => {
+    setShowOverlapConfirm(false);
+    onSaveStatus("idle");
+  };
+
+  const handleConfirmOverlapSave = () => {
+    void save(true);
   };
 
   const handleCancel = async () => {
@@ -636,10 +698,49 @@ export function AppointmentEditorForm({
 
       {error ? <p className="mt-2 text-[10px] text-red-600">{error}</p> : null}
 
+      {showOverlapConfirm ? (
+        <div
+          className="mt-2 border border-amber-300 bg-amber-50 p-2"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby={`appointment-${appointment.id}-overlap-confirm-title`}
+          aria-describedby={`appointment-${appointment.id}-overlap-confirm-desc`}
+        >
+          <p
+            id={`appointment-${appointment.id}-overlap-confirm-title`}
+            className="font-medium text-amber-950"
+          >
+            Предупреждение
+          </p>
+          <p
+            id={`appointment-${appointment.id}-overlap-confirm-desc`}
+            className="mt-1 text-[10px] text-amber-900"
+          >
+            На это время у мастера уже есть запись
+          </p>
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              onClick={dismissOverlapConfirm}
+              className="border border-[#dadce0] bg-white px-2 py-1 text-[10px]"
+            >
+              Отмена
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmOverlapSave}
+              className="bg-[#1a73e8] px-2 py-1 text-[10px] text-white"
+            >
+              Сохранить всё равно
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <button
         type="button"
         onClick={() => void handleCancel()}
-        disabled={isCancelling}
+        disabled={isCancelling || showOverlapConfirm}
         className="mt-2 text-[10px] text-red-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
       >
         {isCancelling ? "Отмена…" : "Отменить запись"}
@@ -686,6 +787,7 @@ export function NewAppointmentForm({
   const overlapConfirmButtonRef = useRef<HTMLButtonElement | null>(null);
   const overlapDialogRef = useRef<HTMLDivElement | null>(null);
 
+  // eslint-disable-next-line react-hooks/refs -- submitCreate guards against double submit
   isSubmittingRef.current = isSubmitting;
 
   useEffect(() => {
