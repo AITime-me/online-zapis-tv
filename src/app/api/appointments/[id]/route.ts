@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { requireApiRoles, WRITE_SCHEDULE_ROLES, requireProtectedMutatingApi, requireProtectedInternalMutatingApi } from "@/lib/auth/api-access";
+import {
+  WRITE_SCHEDULE_ROLES,
+  requireProtectedMutatingApi,
+} from "@/lib/auth/api-access";
 import {
   AppointmentConflictError,
   AppointmentValidationError,
@@ -12,8 +15,15 @@ type RouteContext = {
   params: Promise<{ id: string }>;
 };
 
+type ManualUpdateAppointmentBody = Partial<AppointmentWriteInput> & {
+  allowAppointmentOverlap?: unknown;
+};
+
 export async function PATCH(request: Request, context: RouteContext) {
-  const authResult = await requireProtectedMutatingApi(WRITE_SCHEDULE_ROLES, request);
+  const authResult = await requireProtectedMutatingApi(
+    WRITE_SCHEDULE_ROLES,
+    request,
+  );
   if ("response" in authResult) {
     return authResult.response;
   }
@@ -21,13 +31,24 @@ export async function PATCH(request: Request, context: RouteContext) {
   const { id } = await context.params;
 
   try {
-    const body = (await request.json()) as Partial<AppointmentWriteInput>;
-    const appointment = await updateAppointment(id, body);
+    const body = (await request.json()) as ManualUpdateAppointmentBody;
+    const allowAppointmentOverlap = body.allowAppointmentOverlap === true;
+    const appointmentInput: Partial<AppointmentWriteInput> = { ...body };
+    Reflect.deleteProperty(appointmentInput, "allowAppointmentOverlap");
+
+    const appointment = await updateAppointment(id, appointmentInput, {
+      allowAppointmentOverlap,
+    });
     return NextResponse.json({ ok: true, appointment });
   } catch (error) {
     if (error instanceof AppointmentConflictError) {
       return NextResponse.json(
-        { ok: false, error: error.message },
+        {
+          ok: false,
+          error: error.message,
+          ...(error.code ? { code: error.code } : {}),
+          ...(error.conflictType ? { conflictType: error.conflictType } : {}),
+        },
         { status: 409 },
       );
     }
@@ -42,7 +63,10 @@ export async function PATCH(request: Request, context: RouteContext) {
 }
 
 export async function DELETE(request: Request, context: RouteContext) {
-  const authResult = await requireProtectedMutatingApi(WRITE_SCHEDULE_ROLES, request);
+  const authResult = await requireProtectedMutatingApi(
+    WRITE_SCHEDULE_ROLES,
+    request,
+  );
   if ("response" in authResult) {
     return authResult.response;
   }

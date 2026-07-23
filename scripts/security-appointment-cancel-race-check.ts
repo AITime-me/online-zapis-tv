@@ -67,9 +67,9 @@ function assertEditorCancelsDebounceBeforeDelete(): void {
   );
   assert.match(
     src,
-    /const save = useCallback\(async \(\) => \{[\s\S]*isCancellingRef\.current/,
+    /const save = useCallback\(\s*async \(allowAppointmentOverlap = false\) => \{[\s\S]*isCancellingRef\.current/,
   );
-  assert.match(src, /disabled=\{isCancelling\}/);
+  assert.match(src, /disabled=\{isCancelling \|\| showOverlapConfirm\}/);
   assert.match(src, /method:\s*"DELETE"/);
 }
 

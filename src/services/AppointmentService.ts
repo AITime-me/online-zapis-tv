@@ -350,6 +350,16 @@ export type CreateAppointmentOptions = {
   allowAppointmentOverlap?: boolean;
 };
 
+export type UpdateAppointmentOptions = {
+  /**
+   * Только ручной PATCH при смене тайминга или активации блокирующего статуса:
+   * строго true разрешает appointment-overlap.
+   * Авто-allow без confirm — только если тайминг не менялся и запись
+   * уже была и остаётся блокирующей (не RESCHEDULED/CANCELLED → active).
+   */
+  allowAppointmentOverlap?: boolean;
+};
+
 export async function createAppointment(
   input: AppointmentWriteInput,
   createdByUserId: string,
@@ -567,6 +577,7 @@ async function createAppointmentRecord(
 export async function updateAppointment(
   id: string,
   input: Partial<AppointmentWriteInput>,
+  options?: UpdateAppointmentOptions,
 ): Promise<AppointmentDto> {
   const existing = await prisma.appointment.findUnique({
     where: { id },
@@ -683,11 +694,22 @@ export async function updateAppointment(
   }
 
   const needsConflictCheck = isBlockingAppointmentStatus(merged.status);
+  const wasBlocking = isBlockingAppointmentStatus(existing.status);
+  const willBeBlocking = needsConflictCheck;
+  // Авто-allow только для уже занятого слота: тайминг не менялся и статус
+  // остаётся блокирующим. Активация RESCHEDULED/CANCELLED → blocking
+  // требует явного allowAppointmentOverlap (как смена времени).
+  const allowAppointmentOverlap =
+    options?.allowAppointmentOverlap === true ||
+    (!timingDirty && wasBlocking && willBeBlocking);
 
   const appointment = needsConflictCheck
     ? await runSerializableAppointmentWrite(async (tx) => {
         // merged.endTime is desired free-at; candidate breakAfterMinutes = 0.
-        await assertNoBlockingConflict(tx, merged, id);
+        // excludeAppointmentId = id — запись не конфликтует сама с собой.
+        await assertNoBlockingConflict(tx, merged, id, {
+          allowAppointmentOverlap,
+        });
 
         return tx.appointment.update({
           where: { id },
