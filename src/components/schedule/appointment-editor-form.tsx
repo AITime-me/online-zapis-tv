@@ -24,8 +24,39 @@ import {
 } from "@/components/schedule/appointment-master-display";
 import { isMasterScheduleAppointment } from "@/lib/schedule/appointment-contract";
 import { CLIENT_RESCHEDULE_APPOINTMENT_NOTICE } from "@/lib/schedule/client-reschedule-notice";
+import {
+  ClientSuggestField,
+  describeClientLinkUi,
+  type ClientSuggestItem,
+} from "@/components/schedule/client-suggest-field";
+import { isUsableClientPhone } from "@/lib/phone/usable-client-phone";
+import type { AppointmentClientLinkResult } from "@/types/appointment-client-link";
 
 export type { EditorOptions };
+
+function clientLinkStatusMessage(
+  clientLink: AppointmentClientLinkResult | undefined,
+): string | null {
+  if (!clientLink) {
+    return null;
+  }
+  switch (clientLink.status) {
+    case "created":
+      return "Клиент создан и связан с записью";
+    case "linked":
+    case "already_linked":
+      return "Клиент связан с записью";
+    case "duplicate":
+      return "Найдено несколько клиентов с этим телефоном — выберите вручную";
+    case "skipped_technical_phone":
+    case "skipped_invalid_phone":
+      return "Создание клиента пропущено: телефон непригоден";
+    case "error":
+      return "Не удалось привязать клиента — можно повторить";
+    default:
+      return null;
+  }
+}
 
 type AppointmentFormState = {
   startTime: string;
@@ -156,6 +187,23 @@ export function AppointmentEditorForm({
   const [error, setError] = useState<string | null>(null);
   const [showOverlapConfirm, setShowOverlapConfirm] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(() =>
+    isOperationalScheduleAppointment(appointment)
+      ? appointment.clientId
+      : null,
+  );
+  const [clientLinkDirty, setClientLinkDirty] = useState(false);
+  const [linkBanner, setLinkBanner] = useState<string | null>(null);
+  const [duplicateCandidates, setDuplicateCandidates] = useState<
+    Array<{ id: string; fullName: string; phone: string | null }>
+  >([]);
+  const selectedClientIdRef = useRef(selectedClientId);
+  const clientLinkDirtyRef = useRef(clientLinkDirty);
+  // Debounced save читает актуальный clientId до commit effect.
+  // eslint-disable-next-line react-hooks/refs -- intentional sync for async save
+  selectedClientIdRef.current = selectedClientId;
+  // eslint-disable-next-line react-hooks/refs -- intentional sync for async save
+  clientLinkDirtyRef.current = clientLinkDirty;
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isCancellingRef = useRef(false);
   const cancelledRef = useRef(false);
@@ -190,6 +238,13 @@ export function AppointmentEditorForm({
     // eslint-disable-next-line react-hooks/set-state-in-effect -- controlled editor reset from refreshed appointment prop
     setForm(toFormState(appointment));
     setShowOverlapConfirm(false);
+    setSelectedClientId(
+      isOperationalScheduleAppointment(appointment)
+        ? appointment.clientId
+        : null,
+    );
+    setClientLinkDirty(false);
+    setDuplicateCandidates([]);
   }, [appointment]);
 
   useEffect(() => {
@@ -250,6 +305,9 @@ export function AppointmentEditorForm({
         if (allowAppointmentOverlap) {
           payloadBody.allowAppointmentOverlap = true;
         }
+        if (clientLinkDirtyRef.current) {
+          payloadBody.clientId = selectedClientIdRef.current;
+        }
 
         const response = await fetch(`/api/appointments/${appointment.id}`, {
           method: "PATCH",
@@ -271,6 +329,7 @@ export function AppointmentEditorForm({
           error?: string;
           code?: string;
           conflictType?: string;
+          clientLink?: AppointmentClientLinkResult;
         };
 
         if (!response.ok) {
@@ -293,7 +352,15 @@ export function AppointmentEditorForm({
         }
 
         setShowOverlapConfirm(false);
-        onSaveStatus("saved");
+        setClientLinkDirty(false);
+        const linkMessage = clientLinkStatusMessage(payload.clientLink);
+        setLinkBanner(linkMessage);
+        if (payload.clientLink?.status === "duplicate") {
+          setDuplicateCandidates(payload.clientLink.candidates);
+        } else {
+          setDuplicateCandidates([]);
+        }
+        onSaveStatus("saved", linkMessage ?? undefined);
         clientDebugLog("schedule.appointment.saved", { action: "patch" });
         await onSaved();
       } catch (saveError) {
@@ -424,6 +491,71 @@ export function AppointmentEditorForm({
   const handleConfirmOverlapSave = () => {
     void save(true);
   };
+
+  const applyPickedClient = (client: ClientSuggestItem) => {
+    setForm((current) => ({
+      ...current,
+      clientName: client.fullName,
+      clientPhone: client.phone ?? current.clientPhone,
+    }));
+    setSelectedClientId(client.id);
+    setClientLinkDirty(true);
+    setDuplicateCandidates([]);
+    setLinkBanner("Выбран клиент из базы");
+  };
+
+  const clearClientLink = () => {
+    setSelectedClientId(null);
+    setClientLinkDirty(true);
+    setLinkBanner("Клиент не связан");
+  };
+
+  const handleRetryClientLink = async () => {
+    if (!canEdit) {
+      return;
+    }
+    onSaveStatus("saving");
+    setError(null);
+    try {
+      const response = await fetch(`/api/appointments/${appointment.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ retryClientLink: true }),
+      });
+      const payload = (await response.json()) as {
+        ok?: boolean;
+        error?: string;
+        clientLink?: AppointmentClientLinkResult;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Ошибка привязки");
+      }
+      const linkMessage = clientLinkStatusMessage(payload.clientLink);
+      setLinkBanner(linkMessage);
+      if (payload.clientLink?.status === "duplicate") {
+        setDuplicateCandidates(payload.clientLink.candidates);
+      } else {
+        setDuplicateCandidates([]);
+      }
+      onSaveStatus("saved", linkMessage ?? undefined);
+      await onSaved();
+    } catch (retryError) {
+      const message =
+        retryError instanceof Error ? retryError.message : "Ошибка привязки";
+      setError(message);
+      onSaveStatus("error", message);
+    }
+  };
+
+  const operationalClientId = isOperationalScheduleAppointment(appointment)
+    ? appointment.clientId
+    : null;
+  const clientLinkLabel = describeClientLinkUi({
+    statusCode: form.status,
+    clientId: selectedClientId ?? operationalClientId,
+    clientPhone: form.clientPhone,
+    isUsablePhone: isUsableClientPhone(form.clientPhone),
+  });
 
   const handleCancel = async () => {
     if (
@@ -582,12 +714,22 @@ export function AppointmentEditorForm({
         htmlFor={fieldId("clientName")}
         className="mt-2 flex flex-col gap-0.5"
       >
-        <input
-          id={fieldId("clientName")}
+        <ClientSuggestField
+          mode="name"
+          inputId={fieldId("clientName")}
           value={form.clientName}
-          onChange={(event) => updateField("clientName", event.target.value)}
+          disabled={!canEdit}
+          onValueChange={(value) => {
+            setForm((current) => ({ ...current, clientName: value }));
+            if (selectedClientId) {
+              setSelectedClientId(null);
+              setClientLinkDirty(true);
+              setLinkBanner("Клиент не связан");
+            }
+            scheduleSave();
+          }}
           onBlur={handleBlur}
-          className="border border-[#dadce0] px-1 py-0.5"
+          onPick={applyPickedClient}
         />
       </EditorField>
 
@@ -596,14 +738,74 @@ export function AppointmentEditorForm({
         htmlFor={fieldId("clientPhone")}
         className="mt-2 flex flex-col gap-0.5"
       >
-        <input
-          id={fieldId("clientPhone")}
+        <ClientSuggestField
+          mode="phone"
+          inputId={fieldId("clientPhone")}
           value={form.clientPhone}
-          onChange={(event) => updateField("clientPhone", event.target.value)}
+          disabled={!canEdit}
+          onValueChange={(value) => {
+            setForm((current) => ({ ...current, clientPhone: value }));
+            if (selectedClientId) {
+              setSelectedClientId(null);
+              setClientLinkDirty(true);
+              setLinkBanner("Клиент не связан");
+            }
+            scheduleSave();
+          }}
           onBlur={handleBlur}
-          className="border border-[#dadce0] px-1 py-0.5"
+          onPick={applyPickedClient}
         />
       </EditorField>
+
+      {canEdit ? (
+        <div className="mt-2 rounded border border-[#e8eaed] bg-[#f8f9fa] px-2 py-1.5 text-[10px] text-zinc-700">
+          <p className="font-medium">{linkBanner ?? clientLinkLabel}</p>
+          <div className="mt-1 flex flex-wrap gap-2">
+            {selectedClientId || operationalClientId ? (
+              <button
+                type="button"
+                className="underline"
+                onClick={clearClientLink}
+              >
+                Снять связь
+              </button>
+            ) : null}
+            {form.status === "COMPLETED" &&
+            !(selectedClientId || operationalClientId) ? (
+              <button
+                type="button"
+                className="underline"
+                onClick={() => void handleRetryClientLink()}
+              >
+                Повторить привязку
+              </button>
+            ) : null}
+          </div>
+          {duplicateCandidates.length > 0 ? (
+            <ul className="mt-1 space-y-1">
+              {duplicateCandidates.map((candidate) => (
+                <li key={candidate.id}>
+                  <button
+                    type="button"
+                    className="text-left underline"
+                    onClick={() =>
+                      applyPickedClient({
+                        id: candidate.id,
+                        fullName: candidate.fullName,
+                        phone: candidate.phone,
+                        status: "ACTIVE",
+                      })
+                    }
+                  >
+                    {candidate.fullName}
+                    {candidate.phone ? ` · ${candidate.phone}` : ""}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="mt-2 grid grid-cols-2 gap-2">
         <EditorField field="status" htmlFor={fieldId("status")}>
@@ -778,6 +980,7 @@ export function NewAppointmentForm({
     importantNote: "",
     isBold: false,
   });
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showOverlapConfirm, setShowOverlapConfirm] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -919,6 +1122,9 @@ export function NewAppointmentForm({
         comment: form.comment || null,
         importantNote: form.importantNote || null,
       };
+      if (selectedClientId) {
+        payloadBody.clientId = selectedClientId;
+      }
       if (allowAppointmentOverlap) {
         payloadBody.allowAppointmentOverlap = true;
       }
@@ -933,6 +1139,7 @@ export function NewAppointmentForm({
         error?: string;
         code?: string;
         conflictType?: string;
+        clientLink?: AppointmentClientLinkResult;
       };
 
       if (!response.ok) {
@@ -952,7 +1159,7 @@ export function NewAppointmentForm({
 
       setShowOverlapConfirm(false);
       clientDebugLog("schedule.appointment.saved", { action: "post" });
-      onSaveStatus("saved");
+      onSaveStatus("saved", clientLinkStatusMessage(payload.clientLink) ?? undefined);
       await onCreated();
     } catch (createError) {
       const message =
@@ -1065,13 +1272,22 @@ export function NewAppointmentForm({
         htmlFor={fieldId("clientName")}
         className="mt-2 flex flex-col gap-0.5"
       >
-        <input
-          id={fieldId("clientName")}
+        <ClientSuggestField
+          mode="name"
+          inputId={fieldId("clientName")}
           value={form.clientName}
-          onChange={(event) =>
-            setForm((current) => ({ ...current, clientName: event.target.value }))
-          }
-          className="border border-[#dadce0] px-1 py-0.5"
+          onValueChange={(value) => {
+            setForm((current) => ({ ...current, clientName: value }));
+            setSelectedClientId(null);
+          }}
+          onPick={(client) => {
+            setForm((current) => ({
+              ...current,
+              clientName: client.fullName,
+              clientPhone: client.phone ?? current.clientPhone,
+            }));
+            setSelectedClientId(client.id);
+          }}
         />
       </EditorField>
 
@@ -1080,13 +1296,22 @@ export function NewAppointmentForm({
         htmlFor={fieldId("clientPhone")}
         className="mt-2 flex flex-col gap-0.5"
       >
-        <input
-          id={fieldId("clientPhone")}
+        <ClientSuggestField
+          mode="phone"
+          inputId={fieldId("clientPhone")}
           value={form.clientPhone}
-          onChange={(event) =>
-            setForm((current) => ({ ...current, clientPhone: event.target.value }))
-          }
-          className="border border-[#dadce0] px-1 py-0.5"
+          onValueChange={(value) => {
+            setForm((current) => ({ ...current, clientPhone: value }));
+            setSelectedClientId(null);
+          }}
+          onPick={(client) => {
+            setForm((current) => ({
+              ...current,
+              clientName: client.fullName,
+              clientPhone: client.phone ?? current.clientPhone,
+            }));
+            setSelectedClientId(client.id);
+          }}
         />
       </EditorField>
 

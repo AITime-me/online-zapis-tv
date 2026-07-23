@@ -52,6 +52,7 @@
     "test:security:appointment-double-book": "tsx scripts/security-appointment-double-book-check.ts",
     "test:security:appointment-overlap-override": "tsx scripts/security-appointment-overlap-override-check.ts",
     "test:security:appointment-overlap-edit": "tsx scripts/security-appointment-overlap-edit-check.ts",
+    "test:security:appointment-completed-client-link": "tsx --env-file=.env scripts/security-appointment-completed-client-link-check.ts",
     "test:security:appointment-repeated-overlap": "tsx --env-file=.env scripts/security-appointment-repeated-overlap-check.ts",
     "test:security:appointment-time-range": "tsx scripts/security-appointment-time-range-check.ts",
     "test:security:quick-day-editor-drag": "tsx scripts/security-quick-day-editor-drag-check.ts",
