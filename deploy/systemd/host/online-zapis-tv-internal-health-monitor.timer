@@ -1,0 +1,12 @@
+[Unit]
+Description=Timer for internal health monitor (every 15 minutes)
+Documentation=file:/opt/online-zapis-tv/docs/operations/internal-health-monitor.md
+
+[Timer]
+OnCalendar=*-*-* *:0/15:00 Asia/Yekaterinburg
+Persistent=true
+RandomizedDelaySec=120
+Unit=online-zapis-tv-internal-health-monitor.service
+
+[Install]
+WantedBy=timers.target
