@@ -998,7 +998,7 @@ model BotSettings {
 
   isEnabled             Boolean  @default(false) @map("is_enabled")
   mode                  String   @default("OFF")
-  provider              String   @default("YANDEX")
+  provider              String   @default("NONE")
   responseMode          String   @default("HINTS_ONLY") @map("response_mode")
   channels              Json     @default("{\"siteWidget\":false,\"vk\":false,\"max\":false,\"telegram\":false}")
   mainInstruction       String?  @map("main_instruction") @db.Text

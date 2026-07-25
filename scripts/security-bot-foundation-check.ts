@@ -80,9 +80,13 @@ function assertModesAndLegacy(): void {
   assert.equal(normalizeBotMode("ENABLED_LATER"), "DRAFT");
   assert.equal(normalizeBotResponseMode("HINTS_ONLY"), "HINTS");
   assert.equal(normalizeBotResponseMode("AUTO_LATER"), "AUTO");
+  assert.equal(normalizeBotProvider(undefined), "NONE");
   assert.equal(normalizeBotProvider("unknown"), "NONE");
+  assert.equal(normalizeBotProvider("NONE"), "NONE");
+  assert.equal(normalizeBotProvider("YANDEX"), "YANDEX");
   assert.equal(responseModeForBotMode("AUTO"), "AUTO");
   assert.equal(DEFAULT_BOT_SETTINGS.mode, "OFF");
+  assert.notEqual(DEFAULT_BOT_SETTINGS.mode, "AUTO");
   assert.equal(DEFAULT_BOT_SETTINGS.isEnabled, false);
   assert.equal(DEFAULT_BOT_SETTINGS.provider, "NONE");
   assert.equal(DEFAULT_BOT_SETTINGS.channels.whatsapp, false);
@@ -102,6 +106,37 @@ function assertModesAndLegacy(): void {
     Object.values(BOT_RESPONSE_MODE_LABELS).join("\n"),
     /AUTO_LATER|HINTS_ONLY/,
   );
+}
+
+function assertSafeProviderDefaults(): void {
+  const schema = read("prisma/schema.prisma");
+  const botSettingsModel = schema.match(/model BotSettings \{[\s\S]*?\n\}/)?.[0];
+  assert.ok(botSettingsModel, "BotSettings model must exist");
+  assert.match(botSettingsModel, /provider\s+String\s+@default\("NONE"\)/);
+  assert.doesNotMatch(botSettingsModel, /provider\s+String\s+@default\("YANDEX"\)/);
+
+  const foundationMigration = read(
+    "prisma/migrations/20260709181927_bot_settings_foundation/migration.sql",
+  );
+  assert.match(foundationMigration, /"provider"\s+TEXT\s+NOT NULL\s+DEFAULT 'YANDEX'/);
+
+  const defaultMigration = read(
+    "prisma/migrations/20260725210000_bot_settings_provider_default_none/migration.sql",
+  );
+  const executableSql = defaultMigration
+    .split(/\r?\n/)
+    .filter((line) => !line.trim().startsWith("--"))
+    .join("\n")
+    .trim();
+  assert.equal(
+    executableSql,
+    `ALTER TABLE "bot_settings" ALTER COLUMN "provider" SET DEFAULT 'NONE';`,
+  );
+  assert.doesNotMatch(
+    executableSql,
+    /\b(?:UPDATE|DELETE|TRUNCATE|INSERT)\b/i,
+  );
+  assert.doesNotMatch(executableSql, /\bAUTO\b|is_enabled|mode/i);
 }
 
 function assertBotCoreBoundary(): void {
@@ -345,6 +380,7 @@ function assertPromotionsGameUntouched(): void {
 
 function main(): void {
   assertModesAndLegacy();
+  assertSafeProviderDefaults();
   assertBotCoreBoundary();
   assertPhasedPlan();
   assertChannelsVsCrm();
