@@ -123,6 +123,15 @@ function assertScriptSafety(): void {
   assert.match(executable, /IHM_INODE_WARN_PERCENT=80/);
   assert.match(executable, /IHM_INODE_CRIT_PERCENT=95/);
   assert.match(executable, /IHM_BACKUP_MAX_AGE_HOURS=30/);
+  assert.match(executable, /isolated-restore-test-policy\.sh/);
+  assert.match(executable, /IRT_SUCCESS_MAX_AGE_HOURS/);
+  assert.match(executable, /IRT_DUMP_LAG_MAX_HOURS/);
+  assert.match(executable, /check_restore_test_evidence/);
+  assert.match(executable, /not_enforced/);
+  assert.match(executable, /control not enabled/);
+  assert.match(executable, /ihm_validate_referenced_dump/);
+  assert.doesNotMatch(executable, /enforce=off lastSuccess/);
+  assert.doesNotMatch(executable, /IHM_RESTORE_TEST_MAX_AGE_HOURS\s*=\s*\d+/);
 
   for (const name of CONTAINERS) {
     assert.match(executable, new RegExp(name.replace(/\./g, "\\.")));

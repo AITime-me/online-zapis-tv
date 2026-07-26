@@ -92,6 +92,11 @@ docker exec tvoe-vremya-production-postgres pg_restore -l /tmp/verify.dump >/dev
 docker exec tvoe-vremya-production-postgres rm -f /tmp/verify.dump
 ```
 
+## Связанные проверки
+
+После успешного daily backup имеет смысл периодический
+[isolated restore-test](./isolated-restore-test.md) (отдельный timer, не этот).
+
 ## Установка systemd timer
 
 Шаблоны в репозитории (не устанавливаются автоматически из CI):

@@ -1,0 +1,13 @@
+[Unit]
+Description=Weekly timer for staging isolated PostgreSQL restore-test
+Documentation=file:/opt/online-zapis-tv/docs/operations/isolated-restore-test.md
+
+[Timer]
+# Sunday 06:30 studio time — after production restore-test window, away from backup timers.
+OnCalendar=Sun *-*-* 06:30:00 Asia/Yekaterinburg
+Persistent=true
+RandomizedDelaySec=1800
+Unit=online-zapis-tv-staging-restore-test.service
+
+[Install]
+WantedBy=timers.target

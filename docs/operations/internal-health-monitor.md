@@ -39,7 +39,12 @@ Installed paths (manual):
    - `/opt/online-zapis-tv-production/backups/production/postgres`
    - `/opt/online-zapis-tv/backups/postgres`
 8. Dump readability via one-shot `docker run … pg_restore -l` (no restore, no DB connection, no pull).
-9. Staging/production git short SHAs (informational only; never fail the run).
+9. Isolated restore-test evidence under `/var/lib/online-zapis-tv/restore-test/{production,staging}/`
+   (see [isolated-restore-test.md](./isolated-restore-test.md)). Freshness thresholds come from
+   `scripts/ops/lib/isolated-restore-test-policy.sh` (same file as restore-test). Until `.enforce`
+   exists, the check reports neutral `not_enforced` (INFO) — not healthy readiness and not a
+   Telegram alert.
+10. Staging/production git short SHAs (informational only; never fail the run).
 
 ## 2. What it never does
 

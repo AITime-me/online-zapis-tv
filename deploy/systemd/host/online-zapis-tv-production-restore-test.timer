@@ -1,0 +1,13 @@
+[Unit]
+Description=Weekly timer for production isolated PostgreSQL restore-test
+Documentation=file:/opt/online-zapis-tv-production/docs/operations/isolated-restore-test.md
+
+[Timer]
+# Sunday 05:00 studio time — after nightly production backup (02:30) and away from staging backup (22:15).
+OnCalendar=Sun *-*-* 05:00:00 Asia/Yekaterinburg
+Persistent=true
+RandomizedDelaySec=1800
+Unit=online-zapis-tv-production-restore-test.service
+
+[Install]
+WantedBy=timers.target

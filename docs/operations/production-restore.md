@@ -5,6 +5,7 @@
 Связанные документы:
 
 - [Production backup](./production-backup.md) — создание dump
+- [Isolated restore-test](./isolated-restore-test.md) — автоматическая проверка restore во временной изолированной среде (не operational restore)
 - [Production deploy](./production-deploy.md) — deploy не восстанавливает БД
 - [Production bootstrap](./production-bootstrap.md) — канонические рабочие данные после migrate/seed
 - [STAGING_PRODUCTION.md](../STAGING_PRODUCTION.md) — foundation seed и OWNER (отдельный этап)

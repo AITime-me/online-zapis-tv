@@ -1,0 +1,25 @@
+[Unit]
+Description=Isolated PostgreSQL restore-test for online-zapis-tv staging dumps
+Documentation=file:/opt/online-zapis-tv/docs/operations/isolated-restore-test.md
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+User=deploy
+Group=deploy
+SupplementaryGroups=docker
+UMask=0077
+WorkingDirectory=/opt/online-zapis-tv
+ExecStart=/usr/bin/bash /usr/local/lib/online-zapis-tv/isolated-restore-test.sh --environment staging
+ExecStopPost=/usr/bin/bash /usr/local/lib/online-zapis-tv/isolated-restore-test.sh --emergency-cleanup --environment staging
+TimeoutStartSec=1900
+TimeoutStopSec=120
+KillMode=mixed
+Restart=no
+Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

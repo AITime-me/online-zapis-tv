@@ -1,0 +1,29 @@
+[Unit]
+Description=Isolated PostgreSQL restore-test for online-zapis-tv production dumps
+Documentation=file:/opt/online-zapis-tv-production/docs/operations/isolated-restore-test.md
+After=docker.service
+Wants=docker.service
+# Evidence lives under /var/lib; do not Require automation mount.
+
+[Service]
+Type=oneshot
+User=deploy
+Group=deploy
+SupplementaryGroups=docker
+UMask=0077
+WorkingDirectory=/opt/online-zapis-tv-production
+# Prefer installed copy when present; fall back to checkout path during rollout.
+ExecStart=/usr/bin/bash /usr/local/lib/online-zapis-tv/isolated-restore-test.sh --environment production
+# OnesHot stop path: after TimeoutStartSec/SIGKILL, shell cannot run traps.
+# ExecStopPost runs even when ExecStart is killed; must be a safe no-op on success.
+ExecStopPost=/usr/bin/bash /usr/local/lib/online-zapis-tv/isolated-restore-test.sh --emergency-cleanup --environment production
+TimeoutStartSec=1900
+TimeoutStopSec=120
+KillMode=mixed
+Restart=no
+Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

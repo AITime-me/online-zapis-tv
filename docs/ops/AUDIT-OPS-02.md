@@ -75,16 +75,22 @@
 
 | Критерий | Статус | Evidence (команда/вывод/дата) |
 | --- | --- | --- |
-| Backup timers active | NOT VERIFIED | |
-| Fresh successful dump | NOT VERIFIED | |
-| Dump checksum/verify | NOT VERIFIED | |
-| Isolated restore-test | NOT VERIFIED | |
-| Restore-test age | NOT VERIFIED | |
-| IHM running | NOT VERIFIED | |
-| warning/critical/recovery | NOT VERIFIED | |
-| No alert spam | NOT VERIFIED | |
-| Disks/mounts | NOT VERIFIED | |
-| Post-reboot OK | NOT VERIFIED | |
-| No secrets/PII in logs | NOT VERIFIED | |
+| Backup timers active | PARTIAL (server audit 2026-07-26) | Server read-only audit `2026-07-26T11:31:35Z` — timers enabled/active |
+| Fresh successful dump | PARTIAL (server audit 2026-07-26) | Prod/staging dumps age ~13h at audit time |
+| Dump checksum/verify | PARTIAL (server audit 2026-07-26) | IHM `pg_restore -l` healthy; no separate `.sha256` sidecar |
+| Isolated restore-test | NOT VERIFIED | Repo implementation updated (EXIT finalizer, snapshot, ExecStopPost, IHM linkage); **server install/run not done** |
+| Restore-test age | NOT VERIFIED | Requires server evidence after controlled first run |
+| IHM running | PARTIAL (server audit 2026-07-26) | Timer active; `INTERNAL_HEALTH_MONITOR OK` |
+| warning/critical/recovery | PARTIAL | critical+recovery seen; warning class still NOT VERIFIED |
+| No alert spam | PARTIAL (server audit 2026-07-26) | No spam in journal window |
+| Disks/mounts | PARTIAL (server audit 2026-07-26) | `/` 47%, inodes 7%, `/srv/automation-data` mounted |
+| Post-reboot OK | PARTIAL (server audit 2026-07-26) | Boot 2026-07-24; timers active after boot |
+| No secrets/PII in logs | PASS | Log-secret hygiene report 2026-07-26: 16/16 `KEY_NAME_ONLY`, 0 exposure |
 
-**Итог:** пока таблица не заполнена server evidence → статус задачи `NOT VERIFIED` (или `PARTIAL` после частичного прогона с явным списком пробелов).
+**Критерий №18 (секреты в логах):** подтверждён как `PASS` отчётом от `2026-07-26`
+(unit `online-zapis-tv-production-backup.service`, 100 строк, 16 keyword-hit, все `KEY_NAME_ONLY`).
+
+**Общий verdict `AUDIT-OPS-02`:** остаётся `PARTIAL`.
+Isolated restore-test на сервере **не** верифицирован; наличие кода в Git не равно server evidence.
+
+**Итог:** задача не `DONE`, пока нет server evidence для isolated restore-test (и warning class).

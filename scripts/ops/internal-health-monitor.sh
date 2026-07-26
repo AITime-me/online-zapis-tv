@@ -17,6 +17,26 @@ readonly IHM_DISK_CRIT_PERCENT=90
 readonly IHM_INODE_WARN_PERCENT=80
 readonly IHM_INODE_CRIT_PERCENT=95
 readonly IHM_BACKUP_MAX_AGE_HOURS=30
+# Restore-test freshness thresholds: single policy file (fail closed if missing).
+IHM_IRT_POLICY=""
+for IHM_IRT_POLICY_CANDIDATE in \
+  "${IHM_SCRIPT_DIR}/lib/isolated-restore-test-policy.sh" \
+  "/usr/local/lib/online-zapis-tv/lib/isolated-restore-test-policy.sh"
+do
+  if [[ -f "$IHM_IRT_POLICY_CANDIDATE" && -r "$IHM_IRT_POLICY_CANDIDATE" ]]; then
+    IHM_IRT_POLICY="$IHM_IRT_POLICY_CANDIDATE"
+    break
+  fi
+done
+if [[ -z "$IHM_IRT_POLICY" ]]; then
+  echo "ERROR: isolated-restore-test policy file missing" >&2
+  exit 30
+fi
+# shellcheck source=lib/isolated-restore-test-policy.sh
+source "$IHM_IRT_POLICY"
+# Evidence/backup roots are overridable for local harness only (units never set these).
+IHM_RESTORE_TEST_EVIDENCE_ROOT="${IHM_RESTORE_TEST_EVIDENCE_ROOT:-/var/lib/online-zapis-tv/restore-test}"
+readonly IHM_RESTORE_TEST_ENFORCE_MARKER=".enforce"
 readonly IHM_HTTP_TIMEOUT_SEC=10
 readonly IHM_PG_RESTORE_TIMEOUT_SEC=20
 readonly IHM_PG_VERIFY_IMAGE="postgres:17-alpine"
@@ -32,8 +52,8 @@ readonly IHM_STAGING_HEALTH_URL="http://127.0.0.1:3000/api/health"
 
 readonly IHM_PROD_CHECKOUT="/opt/online-zapis-tv-production"
 readonly IHM_STAGING_CHECKOUT="/opt/online-zapis-tv"
-readonly IHM_PROD_BACKUP_DIR="/opt/online-zapis-tv-production/backups/production/postgres"
-readonly IHM_STAGING_BACKUP_DIR="/opt/online-zapis-tv/backups/postgres"
+IHM_PROD_BACKUP_DIR="${IHM_PROD_BACKUP_DIR:-/opt/online-zapis-tv-production/backups/production/postgres}"
+IHM_STAGING_BACKUP_DIR="${IHM_STAGING_BACKUP_DIR:-/opt/online-zapis-tv/backups/postgres}"
 
 readonly IHM_PROD_BACKUP_TIMER="online-zapis-tv-production-backup.timer"
 readonly IHM_PROD_BACKUP_SERVICE="online-zapis-tv-production-backup.service"
@@ -46,6 +66,7 @@ IHM_TELEGRAM_DRY_RUN_DIR="${IHM_TELEGRAM_DRY_RUN_DIR:-}"
 IHM_FIXTURE=""
 IHM_HELP=0
 IHM_SKIP_TELEGRAM=0
+IHM_ONLY_RESTORE_TEST=0
 
 IHM_OVERALL="healthy"
 IHM_FAIL_COUNT=0
@@ -65,8 +86,10 @@ Options:
   --help              Show help
   --state-dir PATH    State directory (default: /var/lib/online-zapis-tv/health-monitor)
   --fixture MODE      Local fixture without Docker/systemd:
-                      healthy | warning | critical | technical_error
+                      healthy | warning | critical | technical_error |
+                      restore_test_not_enforced
                       (skips Telegram notify)
+  --only-restore-test Run only isolated restore-test evidence checks (harness/tests)
 
 Exit codes:
   0   healthy
@@ -100,6 +123,9 @@ parse_args() {
         shift
         [[ $# -gt 0 ]] || die_usage "--fixture requires a mode"
         IHM_FIXTURE="$1"
+        ;;
+      --only-restore-test)
+        IHM_ONLY_RESTORE_TEST=1
         ;;
       *)
         die_usage "unknown argument: $1"
@@ -161,6 +187,12 @@ emit_check() {
     healthy)
       line="OK ${label}"
       [[ -n "$detail" ]] && line="${line} ${detail}"
+      echo "$line"
+      ;;
+    not_enforced)
+      # Neutral bootstrap: not a pass, not a fail, no Telegram escalation.
+      line="INFO ${label}"
+      [[ -n "$detail" ]] && line="${line}: ${detail}"
       echo "$line"
       ;;
     warning)
@@ -579,6 +611,251 @@ check_backup_dump() {
   fi
 }
 
+ihm_read_evidence_key() {
+  local file="$1"
+  local key="$2"
+  local line
+  [[ -f "$file" && -r "$file" ]] || return 1
+  line="$(grep -E "^${key}=" "$file" 2>/dev/null | tail -n 1 || true)"
+  [[ -n "$line" ]] || return 1
+  printf '%s' "${line#*=}"
+}
+
+ihm_restore_test_enforced() {
+  [[ -f "${IHM_RESTORE_TEST_EVIDENCE_ROOT}/${IHM_RESTORE_TEST_ENFORCE_MARKER}" ]]
+}
+
+ihm_restore_test_dump_dir() {
+  case "$1" in
+    production) printf '%s' "$IHM_PROD_BACKUP_DIR" ;;
+    staging) printf '%s' "$IHM_STAGING_BACKUP_DIR" ;;
+    *) return 1 ;;
+  esac
+}
+
+ihm_newest_dump_basename_mtime() {
+  # prints: basename mtime_epoch
+  local dir="$1"
+  local newest="" newest_epoch=0 f epoch base
+  [[ -d "$dir" ]] || return 1
+  shopt -s nullglob
+  for f in "${dir}"/*.dump; do
+    [[ -f "$f" && ! -L "$f" ]] || continue
+    base="$(basename -- "$f")"
+    [[ "$base" =~ $IHM_DUMP_NAME_RE ]] || continue
+    epoch="$(stat -c '%Y' "$f" 2>/dev/null || echo 0)"
+    if (( epoch > newest_epoch )); then
+      newest_epoch="$epoch"
+      newest="$base"
+    fi
+  done
+  shopt -u nullglob
+  [[ -n "$newest" ]] || return 1
+  printf '%s %s' "$newest" "$newest_epoch"
+}
+
+ihm_validate_referenced_dump() {
+  # Args: env basename expected_sha expected_size expected_mtime_utc
+  # Sets: IHM_RT_DUMP_AGE_HOURS IHM_RT_DUMP_LAG_HOURS
+  local env_name="$1"
+  local basename="$2"
+  local expect_sha="$3"
+  local expect_size="$4"
+  local expect_mtime_utc="$5"
+  local dump_dir path resolved root sha size mtime_epoch mtime_utc now latest_meta latest_mtime lag
+
+  dump_dir="$(ihm_restore_test_dump_dir "$env_name")" || return 1
+  [[ "$basename" =~ $IHM_DUMP_NAME_RE ]] || return 2
+  path="${dump_dir}/${basename}"
+  [[ -e "$path" ]] || return 3
+  [[ ! -L "$path" ]] || return 4
+  [[ -f "$path" ]] || return 5
+
+  if command -v realpath >/dev/null 2>&1; then
+    resolved="$(realpath -e -- "$path" 2>/dev/null || true)"
+    root="$(realpath -e -- "$dump_dir" 2>/dev/null || true)"
+  else
+    resolved="$(readlink -f -- "$path" 2>/dev/null || true)"
+    root="$(readlink -f -- "$dump_dir" 2>/dev/null || true)"
+  fi
+  [[ -n "$resolved" && -n "$root" && "$resolved" == "$root"/* ]] || return 6
+
+  size="$(stat -c '%s' "$resolved")"
+  mtime_epoch="$(stat -c '%Y' "$resolved")"
+  mtime_utc="$(date -u -d "@${mtime_epoch}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$mtime_epoch" +%Y-%m-%dT%H:%M:%SZ)"
+  sha="$(sha256sum -- "$resolved" 2>/dev/null | awk '{print $1}')"
+  [[ -n "$sha" ]] || return 7
+  [[ "$sha" == "$expect_sha" ]] || return 8
+  [[ "$size" == "$expect_size" ]] || return 9
+  [[ "$mtime_utc" == "$expect_mtime_utc" ]] || return 10
+
+  now="$(date -u +%s)"
+  IHM_RT_DUMP_AGE_HOURS=$(( (now - mtime_epoch) / 3600 ))
+  if (( IHM_RT_DUMP_AGE_HOURS > IRT_VERIFIED_DUMP_MAX_AGE_HOURS )); then
+    return 11
+  fi
+
+  IHM_RT_DUMP_LAG_HOURS=0
+  if latest_meta="$(ihm_newest_dump_basename_mtime "$dump_dir")"; then
+    latest_mtime="${latest_meta##* }"
+    if [[ "$latest_mtime" =~ ^[0-9]+$ ]] && (( latest_mtime > mtime_epoch )); then
+      lag=$(( (latest_mtime - mtime_epoch) / 3600 ))
+      IHM_RT_DUMP_LAG_HOURS="$lag"
+      if (( lag > IRT_DUMP_LAG_MAX_HOURS )); then
+        return 12
+      fi
+    fi
+  fi
+  return 0
+}
+
+check_restore_test_evidence() {
+  local label="$1"
+  local dir success attempt status finished age cleanup absent tables err last_attempt_status
+  local now finished_epoch env_field basename sha size mtime_utc
+  local dump_rc
+
+  dir="${IHM_RESTORE_TEST_EVIDENCE_ROOT}/${label}"
+  success="${dir}/last-success.env"
+  attempt="${dir}/last-attempt.env"
+
+  if ! ihm_restore_test_enforced; then
+    emit_check not_enforced \
+      "${label} restore-test" \
+      "control not enabled (.enforce absent); not proof of restore readiness"
+    return
+  fi
+
+  if [[ ! -f "$success" ]]; then
+    emit_check critical \
+      "${label} restore-test" \
+      "last-success missing" \
+      "RESTORE_TEST_SUCCESS_MISSING"
+    return
+  fi
+
+  status="$(ihm_read_evidence_key "$success" STATUS || true)"
+  finished="$(ihm_read_evidence_key "$success" FINISHED_AT_UTC || true)"
+  cleanup="$(ihm_read_evidence_key "$success" CLEANUP_OK || true)"
+  absent="$(ihm_read_evidence_key "$success" TEMP_RESOURCES_ABSENT || true)"
+  tables="$(ihm_read_evidence_key "$success" USER_TABLE_COUNT || true)"
+  err="$(ihm_read_evidence_key "$success" ERROR_CODE || true)"
+  env_field="$(ihm_read_evidence_key "$success" ENVIRONMENT || true)"
+  basename="$(ihm_read_evidence_key "$success" DUMP_BASENAME || true)"
+  sha="$(ihm_read_evidence_key "$success" DUMP_SHA256 || true)"
+  size="$(ihm_read_evidence_key "$success" DUMP_SIZE_BYTES || true)"
+  mtime_utc="$(ihm_read_evidence_key "$success" DUMP_MTIME_UTC || true)"
+
+  if [[ "$env_field" != "$label" ]]; then
+    emit_check critical \
+      "${label} restore-test" \
+      "environment mismatch evidence=${env_field:-empty}" \
+      "RESTORE_TEST_ENV_MISMATCH"
+    return
+  fi
+  if [[ "$status" != "success" ]]; then
+    emit_check critical \
+      "${label} restore-test" \
+      "last-success status=${status:-empty}" \
+      "RESTORE_TEST_SUCCESS_INVALID"
+    return
+  fi
+  if [[ "$cleanup" != "1" || "$absent" != "1" ]]; then
+    emit_check critical \
+      "${label} restore-test" \
+      "cleanup proof missing cleanup=${cleanup:-} absent=${absent:-}" \
+      "RESTORE_TEST_CLEANUP_PROOF"
+    return
+  fi
+  if [[ ! "$tables" =~ ^[0-9]+$ ]] || (( tables < 1 )); then
+    emit_check critical \
+      "${label} restore-test" \
+      "integrity tables=${tables:-empty}" \
+      "RESTORE_TEST_INTEGRITY"
+    return
+  fi
+  if [[ ! "$sha" =~ ^[a-f0-9]{64}$ || ! "$size" =~ ^[0-9]+$ || -z "$mtime_utc" ]]; then
+    emit_check critical \
+      "${label} restore-test" \
+      "dump metadata invalid" \
+      "RESTORE_TEST_DUMP_META"
+    return
+  fi
+
+  finished_epoch="$(date -u -d "$finished" +%s 2>/dev/null || echo "")"
+  now="$(date -u +%s)"
+  if [[ ! "$finished_epoch" =~ ^[0-9]+$ ]]; then
+    emit_check technical_error \
+      "${label} restore-test" \
+      "finished timestamp parse failed" \
+      "RESTORE_TEST_TS_PARSE"
+    return
+  fi
+  age=$(( (now - finished_epoch) / 3600 ))
+  if (( age > IRT_SUCCESS_MAX_AGE_HOURS )); then
+    emit_check critical \
+      "${label} restore-test" \
+      "stale ageHours=${age}" \
+      "RESTORE_TEST_STALE"
+    return
+  fi
+
+  set +e
+  ihm_validate_referenced_dump "$label" "$basename" "$sha" "$size" "$mtime_utc"
+  dump_rc=$?
+  set -e
+  case "$dump_rc" in
+    0) ;;
+    2)
+      emit_check critical "${label} restore-test" "dump basename invalid" "RESTORE_TEST_DUMP_BASENAME"
+      return
+      ;;
+    3)
+      emit_check critical "${label} restore-test" "referenced dump missing" "RESTORE_TEST_DUMP_MISSING"
+      return
+      ;;
+    4|5|6)
+      emit_check critical "${label} restore-test" "referenced dump path unsafe" "RESTORE_TEST_DUMP_UNSAFE"
+      return
+      ;;
+    8)
+      emit_check critical "${label} restore-test" "dump sha256 mismatch" "RESTORE_TEST_DUMP_HASH"
+      return
+      ;;
+    9|10)
+      emit_check critical "${label} restore-test" "dump size/mtime mismatch" "RESTORE_TEST_DUMP_STAT"
+      return
+      ;;
+    11)
+      emit_check critical "${label} restore-test" "referenced dump too old ageHours=${IHM_RT_DUMP_AGE_HOURS:-}" "RESTORE_TEST_DUMP_STALE"
+      return
+      ;;
+    12)
+      emit_check critical "${label} restore-test" "verified dump lag behind latest lagHours=${IHM_RT_DUMP_LAG_HOURS:-}" "RESTORE_TEST_DUMP_LAG"
+      return
+      ;;
+    *)
+      emit_check technical_error "${label} restore-test" "dump validation failed rc=${dump_rc}" "RESTORE_TEST_DUMP_VALIDATE"
+      return
+      ;;
+  esac
+
+  if [[ -f "$attempt" ]]; then
+    last_attempt_status="$(ihm_read_evidence_key "$attempt" STATUS || true)"
+    if [[ "$last_attempt_status" == "failed" ]]; then
+      emit_check warning \
+        "${label} restore-test" \
+        "last attempt failed; last success ageHours=${age}" \
+        "RESTORE_TEST_LAST_ATTEMPT_FAILED"
+      return
+    fi
+  fi
+
+  emit_check healthy \
+    "${label} restore-test" \
+    "ageHours=${age} tables=${tables} cleanup=1 dumpLagHours=${IHM_RT_DUMP_LAG_HOURS:-0}"
+}
+
 read_commit() {
   local checkout="$1"
   if git -C "$checkout" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -680,7 +957,7 @@ build_telegram_payload() {
 
   for record in "${IHM_CHECK_RECORDS[@]+"${IHM_CHECK_RECORDS[@]}"}"; do
     IFS=$'\t' read -r level label code detail <<<"$record"
-    if [[ "$level" == "healthy" || -z "$level" ]]; then
+    if [[ "$level" == "healthy" || "$level" == "not_enforced" || -z "$level" ]]; then
       continue
     fi
     if [[ -n "$code" && -n "$detail" ]]; then
@@ -777,6 +1054,8 @@ run_fixture() {
       emit_check healthy "staging backup age" "name=fixture.dump ageHours=1"
       emit_check healthy "production dump readable" "name=fixture.dump"
       emit_check healthy "staging dump readable" "name=fixture.dump"
+      emit_check not_enforced "production restore-test" "control not enabled (.enforce absent); not proof of restore readiness"
+      emit_check not_enforced "staging restore-test" "control not enabled (.enforce absent); not proof of restore readiness"
       ;;
     warning)
       emit_check healthy "docker production app"
@@ -788,6 +1067,14 @@ run_fixture() {
     technical_error)
       emit_check technical_error "production dump readable" "image postgres:17-alpine missing locally" "PG_VERIFY_IMAGE_MISSING"
       ;;
+    restore_test_not_enforced)
+      emit_check not_enforced \
+        "production restore-test" \
+        "control not enabled (.enforce absent); not proof of restore readiness"
+      emit_check not_enforced \
+        "staging restore-test" \
+        "control not enabled (.enforce absent); not proof of restore readiness"
+      ;;
     *)
       die_usage "unknown fixture mode: ${IHM_FIXTURE}"
       ;;
@@ -795,6 +1082,17 @@ run_fixture() {
   print_footer
   mkdir -p "$IHM_STATE_DIR"
   append_jsonl
+  exit_with_overall
+}
+
+run_restore_test_only() {
+  IHM_SKIP_TELEGRAM=1
+  echo "INTERNAL_HEALTH_MONITOR START (restore-test only)"
+  check_restore_test_evidence "production"
+  check_restore_test_evidence "staging"
+  print_footer
+  mkdir -p "$IHM_STATE_DIR"
+  append_jsonl || true
   exit_with_overall
 }
 
@@ -833,6 +1131,9 @@ run_live() {
   check_backup_dump "$IHM_PROD_BACKUP_DIR" "production"
   check_backup_dump "$IHM_STAGING_BACKUP_DIR" "staging"
 
+  check_restore_test_evidence "production"
+  check_restore_test_evidence "staging"
+
   IHM_COMMIT_PROD="$(read_commit "$IHM_PROD_CHECKOUT")"
   IHM_COMMIT_STAGING="$(read_commit "$IHM_STAGING_CHECKOUT")"
   echo "INFO commits production=${IHM_COMMIT_PROD} staging=${IHM_COMMIT_STAGING}"
@@ -856,6 +1157,9 @@ main() {
   fi
   if [[ -n "$IHM_FIXTURE" ]]; then
     run_fixture
+  fi
+  if [[ "$IHM_ONLY_RESTORE_TEST" -eq 1 ]]; then
+    run_restore_test_only
   fi
   run_live
 }
