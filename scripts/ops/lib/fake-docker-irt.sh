@@ -176,6 +176,8 @@ case "$cmd" in
     fi
     if [[ "$tool" == "pg_restore" ]]; then
       if [[ "$MODE" == "hang-on-restore" ]]; then
+        # Deterministic harness barrier: visible only after restore hang starts.
+        : >"${STATE}/pg_restore.hanging"
         while true; do sleep 60; done
       fi
       if [[ "$MODE" == "restore-child-137" ]]; then

@@ -43,6 +43,10 @@ Permissions: evidence dirs `0750`, runtime `0700`, evidence files `0600`, вла
 2. `ERR` / `INT` / `TERM` **не** пишут evidence сами: только фиксируют код/причину.
    - Родительский `SIGINT`/`SIGTERM` → sticky `IRT_SIGNAL_RECEIVED=1`, `ERROR_CODE=INTERRUPTED`, итоговый **rc=50** (всегда).
    - Поздний signal после `IRT_WORK_OK=1` **не** может быть перезаписан success/`rc=0` в finalizer.
+   - Signal должен приходить на **MainPID** самого `isolated-restore-test.sh` (как systemd
+     `KillMode` на unit). SIGTERM обёртке/`bash -c` без traps даёт raw **143**, orphan’ит
+     скрипт и пропускает finalizer/cleanup/evidence. Behavioral harness стартует фон через
+     `exec`, чтобы `$!` совпадал с процессом, у которого установлены traps.
 3. Interruptible-фазы (фон + `wait`, не foreground): иначе trapped SIGTERM откладывается до конца child:
    - `docker run` (создание временного контейнера);
    - ready-loop (`pg_isready` + `sleep`);
@@ -221,4 +225,6 @@ npm run test:security:internal-health-monitor
   canonical `runtime/<run-id>/dump.snapshot` (на Git Bash/Windows может быть `SKIP`).
 - `term_interrupt`, `term_during_restore`, `term_after_work_ok`, `dump_unreadable`,
   `evidence_write` — если SKIP на Windows, перепроверить на Linux host.
-  Ожидаемый interrupt rc остаётся **50** (не ослаблять).
+  Ожидаемый interrupt rc остаётся **50** (не 143; не ослаблять).
+- `child_signal_death_137_*` и `child_signal_death_143_*` — child death без parent
+  signal → фазовый `ERROR_CODE`, rc=50, не `INTERRUPTED`.

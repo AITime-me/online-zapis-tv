@@ -111,6 +111,17 @@ run_irt() {
   bash "$SCRIPT" --environment "$env_name" --evidence-root "$EVIDENCE" "$@"
 }
 
+# Background signal tests must target the restore-test process that owns INT/TERM
+# traps (same contract as systemd KillMode on the unit MainPID).
+# `run_irt &` backgrounds a *wrapper* function shell without traps; SIGTERM then
+# yields harness rc=143, leaves the real script orphaned, and skips finalizer.
+# `exec` replaces that wrapper in-place so $! is the trapped restore-test PID.
+run_irt_bg() {
+  local env_name="${1:-production}"
+  shift || true
+  exec bash "$SCRIPT" --environment "$env_name" --evidence-root "$EVIDENCE" "$@"
+}
+
 # --- scenarios --------------------------------------------------------------
 
 scenario_dump_missing() {
@@ -212,7 +223,7 @@ scenario_term() {
   setup_case hang-after-run
   make_dump >/dev/null
   set +e
-  run_irt production &
+  run_irt_bg production &
   local pid=$!
   local waited=0
   # Wait until fake docker has created a container (pg_isready hang phase).
@@ -243,10 +254,12 @@ scenario_term() {
   fi
   # Interrupted run must leave failed attempt evidence when storage is writable.
   local attempt="${EVIDENCE}/production/last-attempt.env"
-  if [[ -f "$attempt" ]] && [[ "$(read_key "$attempt" ERROR_CODE)" == "INTERRUPTED" || "$(read_key "$attempt" STATUS)" == "failed" ]]; then
+  if [[ -f "$attempt" ]] \
+    && [[ "$(read_key "$attempt" STATUS)" == "failed" ]] \
+    && [[ "$(read_key "$attempt" ERROR_CODE)" == "INTERRUPTED" ]]; then
     ok "term_evidence_failed"
   else
-    bad "term_evidence_failed" "missing failed last-attempt"
+    bad "term_evidence_failed" "expected STATUS=failed ERROR_CODE=INTERRUPTED"
   fi
   if [[ -f "${EVIDENCE}/production/last-success.env" ]]; then
     bad "term_no_success" "last-success written on interrupt"
@@ -286,19 +299,25 @@ scenario_term_during_restore() {
   setup_case hang-on-restore
   make_dump >/dev/null
   set +e
-  run_irt production &
+  run_irt_bg production &
   local pid=$!
   local waited=0
-  # Wait until fake docker has a container (ready), then restore hang begins.
-  while (( waited < 40 )); do
-    if compgen -G "${STATE}/containers/*" >/dev/null 2>&1; then
-      # Give pg_restore hang a moment to enter sleep.
-      sleep 0.5
+  local hang_marker="${STATE}/pg_restore.hanging"
+  # Deterministic barrier: fake docker touches this only after entering hung pg_restore.
+  while (( waited < 60 )); do
+    if [[ -f "$hang_marker" ]]; then
       break
     fi
     sleep 0.5
     waited=$((waited + 1))
   done
+  if [[ ! -f "$hang_marker" ]]; then
+    kill -TERM "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    set -e
+    bad "term_during_restore_rc" "pg_restore hang marker never appeared"
+    return
+  fi
   kill -TERM "$pid" 2>/dev/null || true
   wait "$pid"
   local rc=$?
@@ -332,7 +351,7 @@ scenario_term_after_work_ok() {
   make_dump >/dev/null
   export IRT_TEST_PAUSE_AFTER_WORK_OK=1
   set +e
-  run_irt production &
+  run_irt_bg production &
   local pid=$!
   local waited=0
   local pause_marker="${EVIDENCE}/production/runtime/.pause-after-work-ok"
@@ -367,38 +386,46 @@ scenario_term_after_work_ok() {
   assert_term_cleanup_residue "term_after_work_ok"
 }
 
-scenario_child_signal_death() {
-  setup_case restore-child-137
+scenario_child_signal_death_one() {
+  local mode="$1"
+  local tag="$2"
+  setup_case "$mode"
   make_dump >/dev/null
   set +e
   run_irt production
   local rc=$?
   set -e
-  if [[ "$rc" -eq 50 ]]; then ok "child_signal_death_rc"; else bad "child_signal_death_rc" "rc=$rc"; fi
+  if [[ "$rc" -eq 50 ]]; then ok "child_signal_death_${tag}_rc"; else bad "child_signal_death_${tag}_rc" "rc=$rc"; fi
   local attempt="${EVIDENCE}/production/last-attempt.env"
   local err status
   err="$(read_key "$attempt" ERROR_CODE 2>/dev/null || true)"
   status="$(read_key "$attempt" STATUS 2>/dev/null || true)"
   if [[ "$status" == "failed" && -n "$err" && "$err" != "INTERRUPTED" ]]; then
-    ok "child_signal_death_code"
+    ok "child_signal_death_${tag}_code"
   else
-    bad "child_signal_death_code" "STATUS=$status ERROR_CODE=$err (must be failed, not INTERRUPTED)"
+    bad "child_signal_death_${tag}_code" "STATUS=$status ERROR_CODE=$err (must be failed, not INTERRUPTED)"
   fi
   if [[ "$err" == "PG_RESTORE_FAILED" ]]; then
-    ok "child_signal_death_phase"
+    ok "child_signal_death_${tag}_phase"
   else
-    bad "child_signal_death_phase" "expected PG_RESTORE_FAILED got=$err"
+    bad "child_signal_death_${tag}_phase" "expected PG_RESTORE_FAILED got=$err"
   fi
   if [[ -d "${STATE}/containers" ]] && compgen -G "${STATE}/containers/*" >/dev/null; then
-    bad "child_signal_death_cleanup" "container still present"
+    bad "child_signal_death_${tag}_cleanup" "container still present"
   else
-    ok "child_signal_death_cleanup"
+    ok "child_signal_death_${tag}_cleanup"
   fi
   if [[ -f "${EVIDENCE}/production/last-success.env" ]]; then
-    bad "child_signal_death_no_success" "last-success written on child signal death"
+    bad "child_signal_death_${tag}_no_success" "last-success written on child signal death"
   else
-    ok "child_signal_death_no_success"
+    ok "child_signal_death_${tag}_no_success"
   fi
+}
+
+scenario_child_signal_death() {
+  # Child exit 137/143 without parent SIGTERM must stay phase-failed (M3), not INTERRUPTED.
+  scenario_child_signal_death_one restore-child-137 137
+  scenario_child_signal_death_one restore-child-143 143
 }
 
 scenario_rmfail() {
