@@ -18,7 +18,7 @@ readonly IHM_INODE_WARN_PERCENT=80
 readonly IHM_INODE_CRIT_PERCENT=95
 readonly IHM_BACKUP_MAX_AGE_HOURS=30
 readonly IHM_HTTP_TIMEOUT_SEC=10
-readonly IHM_PG_RESTORE_TIMEOUT_SEC=60
+readonly IHM_PG_RESTORE_TIMEOUT_SEC=20
 readonly IHM_PG_VERIFY_IMAGE="postgres:17-alpine"
 readonly IHM_DUMP_NAME_RE='^[0-9]{8}T[0-9]{6}Z_[A-Za-z0-9._-]+\.dump$'
 
@@ -407,29 +407,98 @@ dump_age_hours() {
   echo $(( (now - epoch) / 3600 ))
 }
 
+IHM_PG_RESTORE_ATTEMPTS_USED=0
+IHM_PG_RESTORE_LAST_RC=0
+IHM_PG_RESTORE_LAST_ERROR=""
+IHM_PG_RESTORE_TOTAL_DURATION_SEC=0
+
 verify_dump_readable() {
   local path="$1"
+  local max_attempts=3
+  local retry_delay_sec=2
+  local attempt rc err_file err_text started finished container_name
+
+  IHM_PG_RESTORE_ATTEMPTS_USED=0
+  IHM_PG_RESTORE_LAST_RC=0
+  IHM_PG_RESTORE_LAST_ERROR=""
+  IHM_PG_RESTORE_TOTAL_DURATION_SEC=0
 
   if ! docker image inspect "$IHM_PG_VERIFY_IMAGE" >/dev/null 2>&1; then
     return 2
   fi
 
-  if ! timeout "$IHM_PG_RESTORE_TIMEOUT_SEC" docker run --rm \
-    --network none \
-    --pull=never \
-    --read-only \
-    -v "${path}:/dump:ro" \
-    "$IHM_PG_VERIFY_IMAGE" \
-    pg_restore -l /dump >/dev/null 2>&1; then
-    return 1
+  err_file="$(mktemp)"
+  started="$(date +%s)"
+
+  for (( attempt=1; attempt<=max_attempts; attempt++ )); do
+    : >"$err_file"
+    container_name="ihm-pg-verify-$$-${attempt}"
+
+    docker rm -f "$container_name" >/dev/null 2>&1 || true
+
+    if timeout --signal=TERM --kill-after=10s \
+      "$IHM_PG_RESTORE_TIMEOUT_SEC" \
+      docker run --rm \
+        --name "$container_name" \
+        --network none \
+        --pull=never \
+        --read-only \
+        -v "${path}:/dump:ro" \
+        "$IHM_PG_VERIFY_IMAGE" \
+        pg_restore -l /dump \
+        >/dev/null 2>"$err_file"; then
+      rc=0
+    else
+      rc=$?
+    fi
+
+    docker rm -f "$container_name" >/dev/null 2>&1 || true
+
+    IHM_PG_RESTORE_ATTEMPTS_USED="$attempt"
+    IHM_PG_RESTORE_LAST_RC="$rc"
+
+    err_text="$(
+      tr '\r\n' '  ' <"$err_file" \
+        | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//' \
+        | cut -c1-500
+    )"
+    IHM_PG_RESTORE_LAST_ERROR="$err_text"
+
+    if [[ "$rc" -eq 0 ]]; then
+      finished="$(date +%s)"
+      IHM_PG_RESTORE_TOTAL_DURATION_SEC=$(( finished - started ))
+
+      if (( attempt > 1 )); then
+        echo "INFO pg_restore verification recovered name=$(basename "$path") attempts=${attempt}"
+      fi
+
+      rm -f "$err_file"
+      return 0
+    fi
+
+    echo "WARN pg_restore verification failed name=$(basename "$path") attempt=${attempt}/${max_attempts} rc=${rc} error=${err_text:-no-stderr}"
+
+    if (( attempt < max_attempts )); then
+      sleep "$retry_delay_sec"
+    fi
+  done
+
+  finished="$(date +%s)"
+  IHM_PG_RESTORE_TOTAL_DURATION_SEC=$(( finished - started ))
+  rm -f "$err_file"
+
+  if [[ "$IHM_PG_RESTORE_LAST_RC" -eq 124 ||
+        "$IHM_PG_RESTORE_LAST_RC" -eq 137 ]]; then
+    return 3
   fi
-  return 0
+
+  return 1
 }
 
 check_backup_dump() {
   local dir="$1"
   local label="$2"
-  local path name size age rc
+  local path name size age rc detail
 
   if [[ ! -d "$dir" ]]; then
     emit_check critical "${label} backup age" "directory missing" "BACKUP_DIR_MISSING"
@@ -472,16 +541,41 @@ check_backup_dump() {
     emit_check healthy "${label} backup age" "name=${name} ageHours=${age}"
   fi
 
-  set +e
-  verify_dump_readable "$path"
-  rc=$?
-  set -e
-  if [[ "$rc" -eq 2 ]]; then
-    emit_check technical_error "${label} dump readable" "image ${IHM_PG_VERIFY_IMAGE} missing locally" "PG_VERIFY_IMAGE_MISSING"
-  elif [[ "$rc" -ne 0 ]]; then
-    emit_check critical "${label} dump readable" "pg_restore -l failed name=${name}" "BACKUP_DUMP_UNREADABLE_LIST"
+  if verify_dump_readable "$path"; then
+    rc=0
   else
-    emit_check healthy "${label} dump readable" "name=${name}"
+    rc=$?
+  fi
+
+  detail="name=${name} attempts=${IHM_PG_RESTORE_ATTEMPTS_USED} durationSec=${IHM_PG_RESTORE_TOTAL_DURATION_SEC} lastRc=${IHM_PG_RESTORE_LAST_RC}"
+
+  if [[ -n "$IHM_PG_RESTORE_LAST_ERROR" ]]; then
+    detail+=" error=${IHM_PG_RESTORE_LAST_ERROR}"
+  fi
+
+  if [[ "$rc" -eq 2 ]]; then
+    emit_check technical_error \
+      "${label} dump readable" \
+      "image ${IHM_PG_VERIFY_IMAGE} missing locally" \
+      "PG_VERIFY_IMAGE_MISSING"
+  elif [[ "$rc" -eq 3 ]]; then
+    emit_check critical \
+      "${label} dump readable" \
+      "pg_restore timed out ${detail}" \
+      "BACKUP_DUMP_VERIFY_TIMEOUT"
+  elif [[ "$rc" -ne 0 ]]; then
+    emit_check critical \
+      "${label} dump readable" \
+      "pg_restore failed ${detail}" \
+      "BACKUP_DUMP_UNREADABLE_LIST"
+  elif (( IHM_PG_RESTORE_ATTEMPTS_USED > 1 )); then
+    emit_check healthy \
+      "${label} dump readable" \
+      "name=${name} attempts=${IHM_PG_RESTORE_ATTEMPTS_USED} recoveredAfterRetry=true durationSec=${IHM_PG_RESTORE_TOTAL_DURATION_SEC}"
+  else
+    emit_check healthy \
+      "${label} dump readable" \
+      "name=${name} durationSec=${IHM_PG_RESTORE_TOTAL_DURATION_SEC}"
   fi
 }
 
