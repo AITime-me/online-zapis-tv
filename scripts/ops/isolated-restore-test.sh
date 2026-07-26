@@ -55,6 +55,9 @@ IRT_FORBIDDEN_PRE=""
 IRT_DOCKER_RM_RC=""
 IRT_SKIP_EVIDENCE=0
 IRT_DUMP_MTIME_EPOCH=0
+IRT_WAIT_PID=""
+# Set only by parent INT/TERM trap — never inferred from child exit status alone.
+IRT_SIGNAL_RECEIVED=0
 
 usage() {
   cat <<'EOF'
@@ -186,8 +189,21 @@ on_err() {
 }
 
 on_signal() {
-  # Convert to predictable nonzero; cleanup+evidence happen on EXIT.
+  # Sticky parent-signal flag: finalizer must never promote this run to success.
+  IRT_SIGNAL_RECEIVED=1
+  # Convert to predictable operational failure; cleanup+evidence happen on EXIT.
   record_failure 50 "INTERRUPTED"
+  # Unblock interruptible waits and stop hanging helpers (e.g. docker exec → sleep).
+  if [[ -n "${IRT_WAIT_PID:-}" ]]; then
+    kill -TERM "${IRT_WAIT_PID}" 2>/dev/null || true
+    if command -v pkill >/dev/null 2>&1; then
+      pkill -TERM -P "${IRT_WAIT_PID}" 2>/dev/null || true
+    fi
+  fi
+  local jp
+  for jp in $(jobs -p 2>/dev/null); do
+    kill -TERM "$jp" 2>/dev/null || true
+  done
   exit 50
 }
 
@@ -195,15 +211,105 @@ disarm_traps() {
   trap - EXIT ERR INT TERM
 }
 
+# Run a command in the background and wait in an interruptible way.
+# Foreground external commands defer trapped SIGTERM until they exit; `wait`
+# returns immediately (>128) so on_signal/EXIT can run (bash manual).
+# Child exit >128 without parent INT/TERM is returned to the caller — do NOT
+# label it INTERRUPTED (e.g. OOM 137 inside a docker helper).
+irt_interruptible_run() {
+  local st pid
+  "$@" &
+  pid=$!
+  IRT_WAIT_PID="$pid"
+  wait "$pid"
+  st=$?
+  IRT_WAIT_PID=""
+  if [[ "${IRT_SIGNAL_RECEIVED:-0}" -eq 1 ]]; then
+    record_failure 50 "INTERRUPTED"
+    exit 50
+  fi
+  return "$st"
+}
+
+# Same as irt_interruptible_run but captures stdout to a file (integrity queries).
+irt_interruptible_capture() {
+  local dest="$1"
+  shift
+  local st pid
+  "$@" >"$dest" &
+  pid=$!
+  IRT_WAIT_PID="$pid"
+  wait "$pid"
+  st=$?
+  IRT_WAIT_PID=""
+  if [[ "${IRT_SIGNAL_RECEIVED:-0}" -eq 1 ]]; then
+    record_failure 50 "INTERRUPTED"
+    exit 50
+  fi
+  return "$st"
+}
+
+# Map interruptible command status: parent interrupt → exit 50 INTERRUPTED;
+# child signal death (>128) → fail-closed rc=50 with phase ERROR_CODE;
+# normal nonzero → phase_rc + phase_err.
+irt_require_cmd_ok() {
+  local st="$1"
+  local phase_rc="$2"
+  local phase_err="$3"
+  if [[ "${IRT_SIGNAL_RECEIVED:-0}" -eq 1 ]]; then
+    record_failure 50 "INTERRUPTED"
+    exit 50
+  fi
+  if (( st > 128 )); then
+    fail 50 "$phase_err"
+  fi
+  if [[ "$st" -ne 0 ]]; then
+    fail "$phase_rc" "$phase_err"
+  fi
+}
+
+irt_apply_parent_signal_lock() {
+  if [[ "${IRT_SIGNAL_RECEIVED:-0}" -eq 1 ]]; then
+    IRT_WORK_OK=0
+    IRT_STATUS="failed"
+    IRT_EXIT_CODE=50
+    IRT_ERROR_CODE="INTERRUPTED"
+  fi
+}
+
 finalize_once() {
   local incoming=$?
   if [[ "$IRT_FINALIZED" -eq 1 ]]; then
+    # Idempotent re-entry: never flip a recorded interrupt/failure to success.
+    irt_apply_parent_signal_lock
+    if (( IRT_EXIT_CODE > 128 )); then
+      IRT_EXIT_CODE=50
+    fi
+    if [[ "$IRT_EXIT_CODE" -eq 0 && "${IRT_SIGNAL_RECEIVED:-0}" -eq 1 ]]; then
+      IRT_EXIT_CODE=50
+      IRT_STATUS="failed"
+      IRT_ERROR_CODE="INTERRUPTED"
+    fi
     exit "${IRT_EXIT_CODE:-$incoming}"
   fi
   IRT_FINALIZED=1
   disarm_traps
 
-  if [[ "$IRT_EXIT_CODE" -eq 0 && "$incoming" -ne 0 ]]; then
+  # Parent INT/TERM always wins over IRT_WORK_OK / incoming 0.
+  irt_apply_parent_signal_lock
+
+  # Map raw >128 exits to operational rc=50. INTERRUPTED only if parent trap fired.
+  if (( incoming > 128 )); then
+    IRT_EXIT_CODE=50
+    IRT_STATUS="failed"
+    if [[ "${IRT_SIGNAL_RECEIVED:-0}" -eq 1 ]]; then
+      IRT_ERROR_CODE="${IRT_ERROR_CODE:-INTERRUPTED}"
+    else
+      IRT_ERROR_CODE="${IRT_ERROR_CODE:-UNEXPECTED_ERROR}"
+    fi
+  fi
+
+  if [[ "${IRT_SIGNAL_RECEIVED:-0}" -ne 1 && "$IRT_EXIT_CODE" -eq 0 && "$incoming" -ne 0 ]]; then
     IRT_EXIT_CODE="$incoming"
   fi
   if [[ "$IRT_EXIT_CODE" -ne 0 && -z "$IRT_ERROR_CODE" ]]; then
@@ -215,13 +321,20 @@ finalize_once() {
   cleanup_temp_resources || true
   verify_cleanup_proof || true
 
-  if [[ "$IRT_WORK_OK" -eq 1 && "$IRT_CLEANUP_OK" -eq 1 && "$IRT_TEMP_ABSENT" -eq 1 && "$IRT_SNAPSHOT_ABSENT" -eq 1 ]]; then
+  irt_apply_parent_signal_lock
+
+  if [[ "${IRT_SIGNAL_RECEIVED:-0}" -ne 1 \
+     && "$IRT_WORK_OK" -eq 1 && "$IRT_CLEANUP_OK" -eq 1 \
+     && "$IRT_TEMP_ABSENT" -eq 1 && "$IRT_SNAPSHOT_ABSENT" -eq 1 ]]; then
     IRT_STATUS="success"
     IRT_ERROR_CODE=""
     IRT_EXIT_CODE=0
   else
     IRT_STATUS="failed"
-    if [[ "$IRT_EXIT_CODE" -eq 0 ]]; then
+    if [[ "${IRT_SIGNAL_RECEIVED:-0}" -eq 1 ]]; then
+      IRT_EXIT_CODE=50
+      IRT_ERROR_CODE="INTERRUPTED"
+    elif [[ "$IRT_EXIT_CODE" -eq 0 ]]; then
       # Restore path looked OK but cleanup/evidence proof incomplete.
       IRT_EXIT_CODE=50
       IRT_ERROR_CODE="${IRT_ERROR_CODE:-CLEANUP_INCOMPLETE}"
@@ -242,18 +355,39 @@ finalize_once() {
       IRT_EXIT_CODE=50
       IRT_ERROR_CODE="EVIDENCE_WRITE_FAILED"
       IRT_WORK_OK=0
+      irt_info "ISOLATED_RESTORE_TEST FAIL env=${IRT_ENV:-unknown} code=EVIDENCE_WRITE_FAILED phase=evidence"
     fi
   fi
 
-  # Success requires work + cleanup proofs + evidence written as success.
-  if [[ "$IRT_WORK_OK" -eq 1 && "$IRT_CLEANUP_OK" -eq 1 && "$IRT_TEMP_ABSENT" -eq 1 \
+  irt_apply_parent_signal_lock
+
+  # Success requires work + cleanup proofs + evidence written as success + no parent signal.
+  if [[ "${IRT_SIGNAL_RECEIVED:-0}" -ne 1 \
+     && "$IRT_WORK_OK" -eq 1 && "$IRT_CLEANUP_OK" -eq 1 && "$IRT_TEMP_ABSENT" -eq 1 \
      && "$IRT_SNAPSHOT_ABSENT" -eq 1 && "$IRT_STATUS" == "success" && "$IRT_EXIT_CODE" -eq 0 ]]; then
     :
   elif [[ "$IRT_EXIT_CODE" -eq 0 ]]; then
     IRT_EXIT_CODE=50
     IRT_STATUS="failed"
-    IRT_ERROR_CODE="${IRT_ERROR_CODE:-CLEANUP_INCOMPLETE}"
+    if [[ "${IRT_SIGNAL_RECEIVED:-0}" -eq 1 ]]; then
+      IRT_ERROR_CODE="INTERRUPTED"
+    else
+      IRT_ERROR_CODE="${IRT_ERROR_CODE:-CLEANUP_INCOMPLETE}"
+    fi
   fi
+
+  # Never exit with a raw signal status; INTERRUPTED only for parent trap.
+  if (( IRT_EXIT_CODE > 128 )); then
+    IRT_EXIT_CODE=50
+    IRT_STATUS="failed"
+    if [[ "${IRT_SIGNAL_RECEIVED:-0}" -eq 1 ]]; then
+      IRT_ERROR_CODE="${IRT_ERROR_CODE:-INTERRUPTED}"
+    else
+      IRT_ERROR_CODE="${IRT_ERROR_CODE:-UNEXPECTED_ERROR}"
+    fi
+  fi
+
+  irt_apply_parent_signal_lock
 
   if [[ "$IRT_STATUS" == "success" ]]; then
     irt_info "ISOLATED_RESTORE_TEST SUCCESS env=${IRT_ENV} dump=${IRT_DUMP_BASENAME} tables=${IRT_USER_TABLE_COUNT} schemas=${IRT_USER_SCHEMA_COUNT} durationSec=$(irt_duration_sec)"
@@ -418,8 +552,11 @@ start_temp_postgres() {
   # Ensure cidfile does not exist (docker refuses if present).
   rm -f -- "$IRT_CIDFILE"
 
-  local cid
-  if ! cid="$(docker run -d \
+  # Interruptible: SIGTERM during docker run must reach on_signal/finalizer.
+  local run_rc=0
+  trap - ERR
+  set +e
+  irt_interruptible_run docker run -d \
     --cidfile "$IRT_CIDFILE" \
     --name "$IRT_TEMP_CONTAINER" \
     --label "${IRT_LABEL_COMPONENT}=${IRT_COMPONENT_VALUE}" \
@@ -434,26 +571,42 @@ start_temp_postgres() {
     -e POSTGRES_USER=postgres \
     -e POSTGRES_DB=postgres \
     -v "${IRT_SNAPSHOT_PATH}:/restore-source.dump:ro" \
-    "$IRT_PG_IMAGE")"; then
+    "$IRT_PG_IMAGE" >/dev/null
+  run_rc=$?
+  set -e
+  trap on_err ERR
+  if [[ "$run_rc" -ne 0 ]]; then
     IRT_TEMP_CONTAINER=""
-    fail 20 "TEMP_PG_START_FAILED"
   fi
+  irt_require_cmd_ok "$run_rc" 20 "TEMP_PG_START_FAILED"
 
   IRT_TEMP_CID="$(tr -d '[:space:]' <"$IRT_CIDFILE" | tr '[:upper:]' '[:lower:]')"
-  if ! irt_is_safe_cid "$IRT_TEMP_CID"; then
-    # Fall back to printed id if cidfile incomplete.
-    IRT_TEMP_CID="$(printf '%s' "$cid" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
-  fi
   irt_is_safe_cid "$IRT_TEMP_CID" || fail 20 "TEMP_CID_INVALID"
   chmod 600 "$IRT_CIDFILE" 2>/dev/null || true
 
   local waited=0
+  local ready_rc=0
   while (( waited < IRT_PG_READY_TIMEOUT_SEC )); do
-    if docker exec -e "PGPASSWORD=${IRT_TEMP_PASSWORD}" "$IRT_TEMP_CID" \
-      pg_isready -U postgres -d postgres >/dev/null 2>&1; then
+    set +e
+    irt_interruptible_run docker exec -e "PGPASSWORD=${IRT_TEMP_PASSWORD}" "$IRT_TEMP_CID" \
+      pg_isready -U postgres -d postgres >/dev/null 2>&1
+    ready_rc=$?
+    set -e
+    if [[ "${IRT_SIGNAL_RECEIVED:-0}" -eq 1 ]]; then
+      exit 50
+    fi
+    if (( ready_rc > 128 )); then
+      fail 50 "TEMP_PG_START_FAILED"
+    fi
+    if [[ "$ready_rc" -eq 0 ]]; then
       return 0
     fi
-    sleep 2
+    set +e
+    irt_interruptible_run sleep 2
+    set -e
+    if [[ "${IRT_SIGNAL_RECEIVED:-0}" -eq 1 ]]; then
+      exit 50
+    fi
     waited=$((waited + 2))
   done
   fail 20 "TEMP_PG_NOT_READY"
@@ -461,36 +614,58 @@ start_temp_postgres() {
 
 run_restore() {
   IRT_PHASE="pg_restore"
-  if ! docker exec -e "PGPASSWORD=${IRT_TEMP_PASSWORD}" "$IRT_TEMP_CID" \
-    psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE restore_test;" >/dev/null 2>&1; then
-    fail 30 "CREATE_DB_FAILED"
-  fi
+  local create_rc=0
+  trap - ERR
+  set +e
+  irt_interruptible_run docker exec -e "PGPASSWORD=${IRT_TEMP_PASSWORD}" "$IRT_TEMP_CID" \
+    psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE restore_test;" >/dev/null 2>&1
+  create_rc=$?
+  set -e
+  trap on_err ERR
+  irt_require_cmd_ok "$create_rc" 30 "CREATE_DB_FAILED"
 
   local rc=0
   # Explicit status capture: disarm ERR so an expected nonzero is not "unexpected".
   trap - ERR
   set +e
-  docker exec -e "PGPASSWORD=${IRT_TEMP_PASSWORD}" "$IRT_TEMP_CID" \
+  irt_interruptible_run docker exec -e "PGPASSWORD=${IRT_TEMP_PASSWORD}" "$IRT_TEMP_CID" \
     pg_restore -U postgres -d restore_test --exit-on-error /restore-source.dump >/dev/null 2>&1
   rc=$?
   set -e
   trap on_err ERR
-  if [[ "$rc" -ne 0 ]]; then
-    fail 30 "PG_RESTORE_FAILED"
-  fi
+  irt_require_cmd_ok "$rc" 30 "PG_RESTORE_FAILED"
 }
 
 run_integrity_checks() {
   IRT_PHASE="integrity"
   local schemas tables
-  schemas="$(docker exec -e "PGPASSWORD=${IRT_TEMP_PASSWORD}" "$IRT_TEMP_CID" \
+  local schemas_file tables_file
+  schemas_file="${IRT_RUN_DIR}/schemas.count"
+  tables_file="${IRT_RUN_DIR}/tables.count"
+  local sc_rc=0 tc_rc=0 cat_rc=0
+
+  trap - ERR
+  set +e
+  irt_interruptible_capture "$schemas_file" docker exec -e "PGPASSWORD=${IRT_TEMP_PASSWORD}" "$IRT_TEMP_CID" \
     psql -U postgres -d restore_test -At -c \
-    "SELECT count(*) FROM information_schema.schemata WHERE schema_name NOT IN ('pg_catalog','information_schema','pg_toast');" \
-    2>/dev/null | tr -d '\r' || true)"
-  tables="$(docker exec -e "PGPASSWORD=${IRT_TEMP_PASSWORD}" "$IRT_TEMP_CID" \
+    "SELECT count(*) FROM information_schema.schemata WHERE schema_name NOT IN ('pg_catalog','information_schema','pg_toast');"
+  sc_rc=$?
+  set -e
+  trap on_err ERR
+  irt_require_cmd_ok "$sc_rc" 40 "INTEGRITY_QUERY_FAILED"
+  schemas="$(tr -d '\r' <"$schemas_file" 2>/dev/null || true)"
+
+  trap - ERR
+  set +e
+  irt_interruptible_capture "$tables_file" docker exec -e "PGPASSWORD=${IRT_TEMP_PASSWORD}" "$IRT_TEMP_CID" \
     psql -U postgres -d restore_test -At -c \
-    "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema') AND table_type='BASE TABLE';" \
-    2>/dev/null | tr -d '\r' || true)"
+    "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema') AND table_type='BASE TABLE';"
+  tc_rc=$?
+  set -e
+  trap on_err ERR
+  irt_require_cmd_ok "$tc_rc" 40 "INTEGRITY_QUERY_FAILED"
+  tables="$(tr -d '\r' <"$tables_file" 2>/dev/null || true)"
+  rm -f -- "$schemas_file" "$tables_file" 2>/dev/null || true
 
   if [[ ! "$schemas" =~ ^[0-9]+$ || ! "$tables" =~ ^[0-9]+$ ]]; then
     fail 40 "INTEGRITY_QUERY_FAILED"
@@ -501,12 +676,16 @@ run_integrity_checks() {
     fail 40 "INTEGRITY_NO_USER_TABLES"
   fi
 
-  if ! docker exec -e "PGPASSWORD=${IRT_TEMP_PASSWORD}" "$IRT_TEMP_CID" \
+  trap - ERR
+  set +e
+  irt_interruptible_run docker exec -e "PGPASSWORD=${IRT_TEMP_PASSWORD}" "$IRT_TEMP_CID" \
     psql -U postgres -d restore_test -v ON_ERROR_STOP=1 -c \
     "SELECT 1 FROM pg_catalog.pg_class LIMIT 1; SELECT count(*) FROM pg_catalog.pg_namespace;" \
-    >/dev/null 2>&1; then
-    fail 40 "INTEGRITY_CATALOG_FAILED"
-  fi
+    >/dev/null 2>&1
+  cat_rc=$?
+  set -e
+  trap on_err ERR
+  irt_require_cmd_ok "$cat_rc" 40 "INTEGRITY_CATALOG_FAILED"
   IRT_INTEGRITY_OK=1
 }
 
@@ -573,8 +752,12 @@ cleanup_temp_resources() {
     rm -f -- "$IRT_SNAPSHOT_PATH" || snapshot_ok=0
   fi
   if [[ -n "${IRT_RUN_DIR:-}" && -d "${IRT_RUN_DIR}" ]]; then
-    rm -f -- "${IRT_RUN_DIR}/container.cid" "${IRT_RUN_DIR}/dump.snapshot.partial" 2>/dev/null || true
+    rm -f -- "${IRT_RUN_DIR}/container.cid" "${IRT_RUN_DIR}/dump.snapshot.partial" \
+      "${IRT_RUN_DIR}/schemas.count" "${IRT_RUN_DIR}/tables.count" 2>/dev/null || true
     rmdir "$IRT_RUN_DIR" 2>/dev/null || true
+  fi
+  if [[ -n "${IRT_RUNTIME_DIR:-}" ]]; then
+    rm -f -- "${IRT_RUNTIME_DIR}/.pause-after-work-ok" 2>/dev/null || true
   fi
   if [[ -n "${IRT_CURRENT_MARKER:-}" && -f "${IRT_CURRENT_MARKER}" ]]; then
     # Only remove marker if it points to this run.
@@ -709,7 +892,13 @@ EOF
 }
 
 write_attempt_evidence() {
-  irt_ensure_evidence_dirs
+  # Fail-closed: any inability to publish mandatory last-attempt (and history)
+  # is a hard error. Must return nonzero even when invoked under `if ! ...`
+  # (where set -e is suppressed for the function body).
+  if ! irt_ensure_evidence_dirs; then
+    echo "ISOLATED_RESTORE_TEST evidence dirs unavailable" >&2
+    return 1
+  fi
   capture_finished_epoch
   local ts hist attempt uniq
   # Collision-safe: UTC timestamp + PID + run-id; create with no-clobber.
@@ -718,19 +907,26 @@ write_attempt_evidence() {
   attempt="${IRT_ENV_EVIDENCE_DIR}/last-attempt.env"
   hist="${IRT_HISTORY_DIR}/${uniq}_${IRT_STATUS}.env"
   local lines
-  mapfile -t lines < <(evidence_lines)
-  irt_write_evidence_file "$attempt" "${lines[@]}"
+  mapfile -t lines < <(evidence_lines) || return 1
+  if ! irt_write_evidence_file "$attempt" "${lines[@]}"; then
+    echo "ISOLATED_RESTORE_TEST evidence write failed (last-attempt)" >&2
+    return 1
+  fi
   if [[ -e "$hist" ]]; then
     hist="${IRT_HISTORY_DIR}/${uniq}_${RANDOM}_${IRT_STATUS}.env"
   fi
-  (
-    set -C
-    irt_write_evidence_file "$hist" "${lines[@]}"
-  ) || irt_write_evidence_file "${hist}.$$" "${lines[@]}"
-  irt_prune_history
-  if [[ "$IRT_STATUS" == "success" ]]; then
-    irt_write_evidence_file "${IRT_ENV_EVIDENCE_DIR}/last-success.env" "${lines[@]}"
+  if ! irt_write_evidence_file "$hist" "${lines[@]}"; then
+    echo "ISOLATED_RESTORE_TEST evidence write failed (history)" >&2
+    return 1
   fi
+  irt_prune_history || true
+  if [[ "$IRT_STATUS" == "success" ]]; then
+    if ! irt_write_evidence_file "${IRT_ENV_EVIDENCE_DIR}/last-success.env" "${lines[@]}"; then
+      echo "ISOLATED_RESTORE_TEST evidence write failed (last-success)" >&2
+      return 1
+    fi
+  fi
+  return 0
 }
 
 irt_attempt_finalized_for_run() {
@@ -1073,6 +1269,18 @@ run_test() {
   assert_forbidden_unchanged
 
   IRT_WORK_OK=1
+  # Harness-only deterministic pause so SIGTERM after work_ok cannot race past exit 0.
+  if [[ "${IRT_TEST_PAUSE_AFTER_WORK_OK:-0}" == "1" ]]; then
+    : >"${IRT_RUNTIME_DIR}/.pause-after-work-ok"
+    while true; do
+      set +e
+      irt_interruptible_run sleep 3600
+      set -e
+      if [[ "${IRT_SIGNAL_RECEIVED:-0}" -eq 1 ]]; then
+        exit 50
+      fi
+    done
+  fi
   # EXIT finalizer performs cleanup + evidence + exit code.
   exit 0
 }

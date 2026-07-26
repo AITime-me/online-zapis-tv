@@ -95,11 +95,19 @@ irt_resolve_environment() {
 }
 
 irt_ensure_evidence_dirs() {
-  mkdir -p "$IRT_ENV_EVIDENCE_DIR" "$IRT_HISTORY_DIR" "$IRT_RUNTIME_DIR"
-  chmod 750 "$IRT_EVIDENCE_ROOT" 2>/dev/null || true
-  chmod 750 "$IRT_ENV_EVIDENCE_DIR" 2>/dev/null || true
-  chmod 750 "$IRT_HISTORY_DIR" 2>/dev/null || true
-  chmod 700 "$IRT_RUNTIME_DIR" 2>/dev/null || true
+  # Create missing directories only. Never chmod existing dirs: repairing modes would
+  # mask a read-only evidence store and defeat fail-closed write checks.
+  local created_root=0 created_env=0 created_hist=0 created_rt=0
+  [[ -d "$IRT_EVIDENCE_ROOT" ]] || created_root=1
+  [[ -d "$IRT_ENV_EVIDENCE_DIR" ]] || created_env=1
+  [[ -d "$IRT_HISTORY_DIR" ]] || created_hist=1
+  [[ -d "$IRT_RUNTIME_DIR" ]] || created_rt=1
+  mkdir -p "$IRT_ENV_EVIDENCE_DIR" "$IRT_HISTORY_DIR" "$IRT_RUNTIME_DIR" || return 1
+  if [[ "$created_root" -eq 1 ]]; then chmod 750 "$IRT_EVIDENCE_ROOT" 2>/dev/null || true; fi
+  if [[ "$created_env" -eq 1 ]]; then chmod 750 "$IRT_ENV_EVIDENCE_DIR" 2>/dev/null || true; fi
+  if [[ "$created_hist" -eq 1 ]]; then chmod 750 "$IRT_HISTORY_DIR" 2>/dev/null || true; fi
+  if [[ "$created_rt" -eq 1 ]]; then chmod 700 "$IRT_RUNTIME_DIR" 2>/dev/null || true; fi
+  return 0
 }
 
 irt_realpath() {
@@ -181,17 +189,33 @@ irt_dump_age_hours() {
 }
 
 irt_write_evidence_file() {
+  # Atomic publish via temp+rename. Explicit status checks: callers may invoke
+  # this under `if ! ...` where set -e is suppressed for the whole function body.
   local target="$1"
   shift
   local tmp line
   tmp="${target}.tmp.$$.$RANDOM"
-  : >"$tmp"
+  if ! : >"$tmp" 2>/dev/null; then
+    return 1
+  fi
   for line in "$@"; do
-    printf '%s\n' "$line" >>"$tmp"
+    if ! printf '%s\n' "$line" >>"$tmp" 2>/dev/null; then
+      rm -f -- "$tmp" 2>/dev/null || true
+      return 1
+    fi
   done
-  chmod 600 "$tmp"
-  mv -f -- "$tmp" "$target"
-  chmod 600 "$target"
+  if ! chmod 600 "$tmp" 2>/dev/null; then
+    rm -f -- "$tmp" 2>/dev/null || true
+    return 1
+  fi
+  if ! mv -f -- "$tmp" "$target" 2>/dev/null; then
+    rm -f -- "$tmp" 2>/dev/null || true
+    return 1
+  fi
+  if ! chmod 600 "$target" 2>/dev/null; then
+    return 1
+  fi
+  return 0
 }
 
 irt_read_evidence_key() {

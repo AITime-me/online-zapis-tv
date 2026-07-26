@@ -175,6 +175,15 @@ case "$cmd" in
       exit 0
     fi
     if [[ "$tool" == "pg_restore" ]]; then
+      if [[ "$MODE" == "hang-on-restore" ]]; then
+        while true; do sleep 60; done
+      fi
+      if [[ "$MODE" == "restore-child-137" ]]; then
+        exit 137
+      fi
+      if [[ "$MODE" == "restore-child-143" ]]; then
+        exit 143
+      fi
       if [[ "$MODE" == "restorefail" ]]; then
         exit 1
       fi

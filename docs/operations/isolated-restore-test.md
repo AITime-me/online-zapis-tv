@@ -40,16 +40,31 @@ Permissions: evidence dirs `0750`, runtime `0700`, evidence files `0600`, вла
 ## Lifecycle (единый EXIT-финализатор)
 
 1. До создания временных ресурсов: `trap finalize_once EXIT`, `trap on_err ERR`, `trap on_signal INT TERM`.
-2. `ERR` / `INT` / `TERM` **не** пишут evidence сами: только фиксируют код/причину (`INT`/`TERM` → exit 50).
-3. `finalize_once` (один раз):
+2. `ERR` / `INT` / `TERM` **не** пишут evidence сами: только фиксируют код/причину.
+   - Родительский `SIGINT`/`SIGTERM` → sticky `IRT_SIGNAL_RECEIVED=1`, `ERROR_CODE=INTERRUPTED`, итоговый **rc=50** (всегда).
+   - Поздний signal после `IRT_WORK_OK=1` **не** может быть перезаписан success/`rc=0` в finalizer.
+3. Interruptible-фазы (фон + `wait`, не foreground): иначе trapped SIGTERM откладывается до конца child:
+   - `docker run` (создание временного контейнера);
+   - ready-loop (`pg_isready` + `sleep`);
+   - `CREATE DATABASE` / `pg_restore` через `docker exec`;
+   - длительные integrity-запросы через `docker exec`;
+   - harness-only пауза после `IRT_WORK_OK` (детерминированные signal-тесты).
+4. `INTERRUPTED` ставится **только** при фактическом parent `SIGINT`/`SIGTERM`.
+   Child exit 137/143 (OOM/`SIGTERM` внутри helper) **без** parent trap → fail-closed **rc=50**,
+   `STATUS=failed`, `ERROR_CODE` фазы (например `PG_RESTORE_FAILED`), **не** `INTERRUPTED`.
+   Наружу никогда не возвращаются raw 137/143 и не допускается `rc=0`.
+5. `finalize_once` (один раз, идемпотентно при повторном входе):
    - снимает traps (без рекурсии);
-   - сохраняет исходную причину;
-   - идемпотентный cleanup (контейнер по проверенному CID + labels, snapshot, marker);
+   - если `IRT_SIGNAL_RECEIVED=1` — принудительно failed/`INTERRUPTED`/rc=50 (приоритет над `IRT_WORK_OK`);
+   - идемпотентный cleanup (контейнер по проверенному CID + labels, snapshot, marker/cidfile/`current.env`);
    - независимая проверка отсутствия (`CLEANUP_OK` / `TEMP_RESOURCES_ABSENT` / `SNAPSHOT_ABSENT`);
-   - затем пишет `last-attempt` (и `last-success` только при полном успехе restore+cleanup+evidence);
-   - завершается честным итоговым кодом.
-4. Ошибка cleanup не маскирует исходный код restore, но итог всегда ненулевой, если cleanup/proof неполны.
-5. Успешный restore + неуспешный cleanup → service exit ≠ 0 (нет ложного успеха).
+   - затем пишет `last-attempt` / history (fail-closed);
+   - `last-success` обновляется **только** после полностью успешного и **непрерванного** запуска
+     (work + cleanup proofs + evidence, без parent signal);
+   - ошибка записи evidence → `EVIDENCE_WRITE_FAILED`, rc=50 (tmp не оставляется);
+   - завершается честным итоговым кодом (никогда raw 128+signal).
+6. Ошибка cleanup не маскирует исходный код restore, но итог всегда ненулевой, если cleanup/proof неполны.
+7. Успешный restore + неуспешный cleanup → service exit ≠ 0 (нет ложного успеха).
 
 ## Systemd аварийный cleanup (SIGKILL)
 
@@ -191,7 +206,19 @@ bash scripts/ops/tests/ihm-restore-test-evidence-harness.sh
 
 **Обязательно на Linux (не маскировать Windows SKIP как PASS):**
 
+```bash
+bash -n scripts/ops/isolated-restore-test.sh \
+  scripts/ops/lib/isolated-restore-test-common.sh \
+  scripts/ops/lib/fake-docker-irt.sh \
+  scripts/ops/tests/isolated-restore-test-harness.sh
+bash scripts/ops/tests/isolated-restore-test-harness.sh
+bash scripts/ops/tests/ihm-restore-test-evidence-harness.sh
+npm run test:security:isolated-restore-test
+npm run test:security:internal-health-monitor
+```
+
 - `l01_symlink_cidfile` — emergency cleanup через symlink CIDFILE удаляет
   canonical `runtime/<run-id>/dump.snapshot` (на Git Bash/Windows может быть `SKIP`).
-- `term_interrupt`, `dump_unreadable`, `evidence_write` — если SKIP на Windows,
-  перепроверить на Linux host.
+- `term_interrupt`, `term_during_restore`, `term_after_work_ok`, `dump_unreadable`,
+  `evidence_write` — если SKIP на Windows, перепроверить на Linux host.
+  Ожидаемый interrupt rc остаётся **50** (не ослаблять).

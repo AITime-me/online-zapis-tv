@@ -214,7 +214,15 @@ scenario_term() {
   set +e
   run_irt production &
   local pid=$!
-  sleep 2
+  local waited=0
+  # Wait until fake docker has created a container (pg_isready hang phase).
+  while (( waited < 20 )); do
+    if compgen -G "${STATE}/containers/*" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.5
+    waited=$((waited + 1))
+  done
   kill -TERM "$pid" 2>/dev/null || true
   wait "$pid"
   local rc=$?
@@ -224,6 +232,172 @@ scenario_term() {
     bad "term_cleanup" "container still present"
   else
     ok "term_cleanup"
+  fi
+  # Runtime leftovers must be gone after finalizer cleanup.
+  if compgen -G "${EVIDENCE}/production/runtime/*/dump.snapshot" >/dev/null 2>&1 \
+    || compgen -G "${EVIDENCE}/production/runtime/*/container.cid" >/dev/null 2>&1 \
+    || [[ -f "${EVIDENCE}/production/runtime/current.env" ]]; then
+    bad "term_runtime_cleanup" "snapshot/cidfile/current.env remain"
+  else
+    ok "term_runtime_cleanup"
+  fi
+  # Interrupted run must leave failed attempt evidence when storage is writable.
+  local attempt="${EVIDENCE}/production/last-attempt.env"
+  if [[ -f "$attempt" ]] && [[ "$(read_key "$attempt" ERROR_CODE)" == "INTERRUPTED" || "$(read_key "$attempt" STATUS)" == "failed" ]]; then
+    ok "term_evidence_failed"
+  else
+    bad "term_evidence_failed" "missing failed last-attempt"
+  fi
+  if [[ -f "${EVIDENCE}/production/last-success.env" ]]; then
+    bad "term_no_success" "last-success written on interrupt"
+  else
+    ok "term_no_success"
+  fi
+}
+
+assert_term_cleanup_residue() {
+  local prefix="$1"
+  if [[ -d "${STATE}/containers" ]] && compgen -G "${STATE}/containers/*" >/dev/null; then
+    bad "${prefix}_cleanup" "container still present"
+  else
+    ok "${prefix}_cleanup"
+  fi
+  if compgen -G "${EVIDENCE}/production/runtime/*/dump.snapshot" >/dev/null 2>&1 \
+    || compgen -G "${EVIDENCE}/production/runtime/*/container.cid" >/dev/null 2>&1 \
+    || [[ -f "${EVIDENCE}/production/runtime/current.env" ]]; then
+    bad "${prefix}_runtime_cleanup" "snapshot/cidfile/current.env remain"
+  else
+    ok "${prefix}_runtime_cleanup"
+  fi
+  if [[ -f "${EVIDENCE}/production/last-success.env" ]]; then
+    bad "${prefix}_no_success" "last-success written on interrupt/fail"
+  else
+    ok "${prefix}_no_success"
+  fi
+}
+
+scenario_term_during_restore() {
+  case "$(uname -s 2>/dev/null || echo unknown)" in
+    MINGW*|MSYS*|CYGWIN*)
+      skip "term_during_restore" "SIGTERM to blocked child unreliable on Git Bash"
+      return
+      ;;
+  esac
+  setup_case hang-on-restore
+  make_dump >/dev/null
+  set +e
+  run_irt production &
+  local pid=$!
+  local waited=0
+  # Wait until fake docker has a container (ready), then restore hang begins.
+  while (( waited < 40 )); do
+    if compgen -G "${STATE}/containers/*" >/dev/null 2>&1; then
+      # Give pg_restore hang a moment to enter sleep.
+      sleep 0.5
+      break
+    fi
+    sleep 0.5
+    waited=$((waited + 1))
+  done
+  kill -TERM "$pid" 2>/dev/null || true
+  wait "$pid"
+  local rc=$?
+  set -e
+  if [[ "$rc" -eq 50 ]]; then ok "term_during_restore_rc"; else bad "term_during_restore_rc" "rc=$rc"; fi
+  local attempt="${EVIDENCE}/production/last-attempt.env"
+  if [[ -f "$attempt" ]] \
+    && [[ "$(read_key "$attempt" ERROR_CODE)" == "INTERRUPTED" ]] \
+    && [[ "$(read_key "$attempt" STATUS)" == "failed" ]]; then
+    ok "term_during_restore_evidence"
+  else
+    bad "term_during_restore_evidence" "expected failed/INTERRUPTED last-attempt"
+  fi
+  assert_term_cleanup_residue "term_during_restore"
+  # Parent script exited; no harness-owned background jobs should remain.
+  if [[ -n "$(jobs -p 2>/dev/null || true)" ]]; then
+    bad "term_during_restore_jobs" "background jobs remain: $(jobs -p)"
+  else
+    ok "term_during_restore_jobs"
+  fi
+}
+
+scenario_term_after_work_ok() {
+  case "$(uname -s 2>/dev/null || echo unknown)" in
+    MINGW*|MSYS*|CYGWIN*)
+      skip "term_after_work_ok" "SIGTERM to blocked child unreliable on Git Bash"
+      return
+      ;;
+  esac
+  setup_case ok
+  make_dump >/dev/null
+  export IRT_TEST_PAUSE_AFTER_WORK_OK=1
+  set +e
+  run_irt production &
+  local pid=$!
+  local waited=0
+  local pause_marker="${EVIDENCE}/production/runtime/.pause-after-work-ok"
+  while (( waited < 60 )); do
+    if [[ -f "$pause_marker" ]]; then
+      break
+    fi
+    sleep 0.5
+    waited=$((waited + 1))
+  done
+  unset IRT_TEST_PAUSE_AFTER_WORK_OK
+  if [[ ! -f "$pause_marker" ]]; then
+    kill -TERM "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    set -e
+    bad "term_after_work_ok_rc" "pause marker never appeared"
+    return
+  fi
+  kill -TERM "$pid" 2>/dev/null || true
+  wait "$pid"
+  local rc=$?
+  set -e
+  if [[ "$rc" -eq 50 ]]; then ok "term_after_work_ok_rc"; else bad "term_after_work_ok_rc" "rc=$rc (must not be 0)"; fi
+  local attempt="${EVIDENCE}/production/last-attempt.env"
+  if [[ -f "$attempt" ]] \
+    && [[ "$(read_key "$attempt" STATUS)" == "failed" ]] \
+    && [[ "$(read_key "$attempt" ERROR_CODE)" == "INTERRUPTED" ]]; then
+    ok "term_after_work_ok_evidence"
+  else
+    bad "term_after_work_ok_evidence" "expected STATUS=failed ERROR_CODE=INTERRUPTED"
+  fi
+  assert_term_cleanup_residue "term_after_work_ok"
+}
+
+scenario_child_signal_death() {
+  setup_case restore-child-137
+  make_dump >/dev/null
+  set +e
+  run_irt production
+  local rc=$?
+  set -e
+  if [[ "$rc" -eq 50 ]]; then ok "child_signal_death_rc"; else bad "child_signal_death_rc" "rc=$rc"; fi
+  local attempt="${EVIDENCE}/production/last-attempt.env"
+  local err status
+  err="$(read_key "$attempt" ERROR_CODE 2>/dev/null || true)"
+  status="$(read_key "$attempt" STATUS 2>/dev/null || true)"
+  if [[ "$status" == "failed" && -n "$err" && "$err" != "INTERRUPTED" ]]; then
+    ok "child_signal_death_code"
+  else
+    bad "child_signal_death_code" "STATUS=$status ERROR_CODE=$err (must be failed, not INTERRUPTED)"
+  fi
+  if [[ "$err" == "PG_RESTORE_FAILED" ]]; then
+    ok "child_signal_death_phase"
+  else
+    bad "child_signal_death_phase" "expected PG_RESTORE_FAILED got=$err"
+  fi
+  if [[ -d "${STATE}/containers" ]] && compgen -G "${STATE}/containers/*" >/dev/null; then
+    bad "child_signal_death_cleanup" "container still present"
+  else
+    ok "child_signal_death_cleanup"
+  fi
+  if [[ -f "${EVIDENCE}/production/last-success.env" ]]; then
+    bad "child_signal_death_no_success" "last-success written on child signal death"
+  else
+    ok "child_signal_death_no_success"
   fi
 }
 
@@ -268,6 +442,11 @@ scenario_evidence_write_fail() {
   setup_case ok
   make_dump >/dev/null
   mkdir -p "${EVIDENCE}/production/history" "${EVIDENCE}/production/runtime"
+  # Pre-seed a valid prior success that must remain intact.
+  seed_success production
+  local prior_sha prior_status
+  prior_sha="$(read_key "${EVIDENCE}/production/last-success.env" DUMP_SHA256)"
+  prior_status="$(read_key "${EVIDENCE}/production/last-success.env" STATUS)"
   # Make env evidence dir non-writable so last-attempt write fails (Unix).
   chmod 555 "${EVIDENCE}/production" 2>/dev/null || true
   if touch "${EVIDENCE}/production/.writetest" 2>/dev/null; then
@@ -277,11 +456,29 @@ scenario_evidence_write_fail() {
     return
   fi
   set +e
-  run_irt production
+  local out
+  out="$(run_irt production 2>&1)"
   local rc=$?
   set -e
   chmod 755 "${EVIDENCE}/production" 2>/dev/null || true
   if [[ "$rc" -eq 50 ]]; then ok "evidence_write"; else bad "evidence_write" "rc=$rc"; fi
+  echo "$out" | grep -q 'EVIDENCE_WRITE_FAILED\|evidence write failed' \
+    && ok "evidence_write_logged" \
+    || bad "evidence_write_logged" "no evidence failure log"
+  # Prior success must not be clobbered / partially replaced.
+  if [[ -f "${EVIDENCE}/production/last-success.env" ]] \
+    && [[ "$(read_key "${EVIDENCE}/production/last-success.env" STATUS)" == "$prior_status" ]] \
+    && [[ "$(read_key "${EVIDENCE}/production/last-success.env" DUMP_SHA256)" == "$prior_sha" ]]; then
+    ok "evidence_preserves_success"
+  else
+    bad "evidence_preserves_success" "last-success damaged"
+  fi
+  # No orphan temp publish files in the evidence dir.
+  if compgen -G "${EVIDENCE}/production/last-attempt.env.tmp."* >/dev/null 2>&1; then
+    bad "evidence_no_tmp" "tmp attempt file left behind"
+  else
+    ok "evidence_no_tmp"
+  fi
 }
 
 scenario_success_preserves_on_fail() {
@@ -785,6 +982,9 @@ main() {
   scenario_restorefail
   scenario_integrityfail
   scenario_term
+  scenario_term_during_restore
+  scenario_term_after_work_ok
+  scenario_child_signal_death
   scenario_rmfail
   scenario_lock
   scenario_success_preserves_on_fail
