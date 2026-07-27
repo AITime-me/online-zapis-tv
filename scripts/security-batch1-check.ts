@@ -13,6 +13,7 @@ import {
   collectForbiddenMasterAppointmentKeys,
   collectForbiddenViewOnlyAppointmentKeys,
   FORBIDDEN_MASTER_APPOINTMENT_KEYS,
+  FORBIDDEN_VIEW_ONLY_APPOINTMENT_KEYS,
   isMasterScheduleAppointment,
   isOperationalScheduleAppointment,
 } from "../src/lib/schedule/appointment-contract";
@@ -123,11 +124,44 @@ function runMapperTests(): void {
     source: master.source,
     statusCode: master.statusCode,
     sourceCode: master.sourceCode,
+    masterNote: "Пометка для токен-просмотра",
   };
 
   assert.equal(collectForbiddenViewOnlyAppointmentKeys(viewOnly).length, 0);
   assertRestrictedAppointmentShape(viewOnly);
   assert.equal(isMasterScheduleAppointment(viewOnly), false);
+  assert.ok(
+    !(FORBIDDEN_VIEW_ONLY_APPOINTMENT_KEYS as readonly string[]).includes(
+      "masterNote",
+    ),
+  );
+  assert.ok(
+    (FORBIDDEN_VIEW_ONLY_APPOINTMENT_KEYS as readonly string[]).includes(
+      "importantNote",
+    ),
+  );
+  assert.ok(
+    (FORBIDDEN_VIEW_ONLY_APPOINTMENT_KEYS as readonly string[]).includes(
+      "promotionLabels",
+    ),
+  );
+
+  const viewOnlyLine = formatMonthCellLine({
+    kind: "appointment",
+    ...viewOnly,
+  });
+  assert.equal(viewOnlyLine.hasMasterNote, true);
+  assert.equal(viewOnlyLine.masterNote, "Пометка для токен-просмотра");
+  assert.equal(viewOnlyLine.hasPromotionLabels, false);
+
+  const viewOnlyCell = renderToStaticMarkup(
+    React.createElement(ScheduleMonthCell, {
+      items: [{ kind: "appointment", ...viewOnly }],
+      cellTestId: "view-only-note-cell",
+    }),
+  );
+  assert.match(viewOnlyCell, /Пометка для мастера/);
+  assert.match(viewOnlyCell, /Пометка для токен-просмотра/);
 }
 
 function runMasterNoteTeamVisibilityRuntimeTests(): void {

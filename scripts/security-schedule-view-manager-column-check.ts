@@ -209,8 +209,24 @@ function assertViewOnlyAppointmentShape(): void {
     source: "Онлайн",
     statusCode: "CONFIRMED",
     sourceCode: "ONLINE",
+    masterNote: "VIP для токен-просмотра",
   };
   assert.deepEqual(collectForbiddenViewOnlyAppointmentKeys(sample), []);
+  assert.ok(
+    !(FORBIDDEN_VIEW_ONLY_APPOINTMENT_KEYS as readonly string[]).includes(
+      "masterNote",
+    ),
+  );
+  assert.ok(
+    (FORBIDDEN_VIEW_ONLY_APPOINTMENT_KEYS as readonly string[]).includes(
+      "importantNote",
+    ),
+  );
+  assert.ok(
+    (FORBIDDEN_VIEW_ONLY_APPOINTMENT_KEYS as readonly string[]).includes(
+      "promotionLabels",
+    ),
+  );
   const withPhone = { ...sample, clientPhone: "+70000000000" };
   assert.ok(
     collectForbiddenViewOnlyAppointmentKeys(withPhone).includes("clientPhone"),
@@ -218,6 +234,15 @@ function assertViewOnlyAppointmentShape(): void {
   assert.ok(
     (FORBIDDEN_VIEW_ONLY_APPOINTMENT_KEYS as readonly string[]).includes(
       "clientPhone",
+    ),
+  );
+  const withPromotionLabels = {
+    ...sample,
+    promotionLabels: ["Акция: тест"],
+  };
+  assert.ok(
+    collectForbiddenViewOnlyAppointmentKeys(withPromotionLabels).includes(
+      "promotionLabels",
     ),
   );
 }

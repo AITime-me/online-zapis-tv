@@ -16,8 +16,10 @@ export type ScheduleAppointmentSharedFields = {
   sourceCode: string;
 };
 
-/** View-only — только базовые поля без операционных пометок. */
-export type ScheduleAppointmentViewOnlyFields = ScheduleAppointmentSharedFields;
+/** View-only (token) — shared + безопасная пометка без акций и контактов. */
+export type ScheduleAppointmentViewOnlyFields = ScheduleAppointmentSharedFields & {
+  masterNote: string | null;
+};
 
 /** MASTER — shared + безопасные подписи акций и ручная пометка. */
 export type ScheduleAppointmentMasterFields = ScheduleAppointmentSharedFields & {
@@ -51,7 +53,6 @@ export const FORBIDDEN_MASTER_APPOINTMENT_KEYS = [
 export const FORBIDDEN_VIEW_ONLY_APPOINTMENT_KEYS = [
   ...FORBIDDEN_MASTER_APPOINTMENT_KEYS,
   "promotionLabels",
-  "masterNote",
 ] as const;
 
 /** @deprecated Используйте FORBIDDEN_VIEW_ONLY_APPOINTMENT_KEYS. */
@@ -91,9 +92,8 @@ export function isMasterScheduleAppointment(
     | ScheduleAppointmentMasterFields
     | ScheduleAppointmentViewOnlyFields,
 ): appointment is ScheduleAppointmentMasterFields {
-  // Discriminator is masterNote (always present on MASTER DTO, even when null).
-  // promotionLabels alone is insufficient if a client omits empty arrays.
-  return "masterNote" in appointment && !("clientPhone" in appointment);
+  // MASTER always includes promotionLabels; token view-only has masterNote only.
+  return "promotionLabels" in appointment && !("clientPhone" in appointment);
 }
 
 export function assertMasterAppointmentShape(value: Record<string, unknown>): void {

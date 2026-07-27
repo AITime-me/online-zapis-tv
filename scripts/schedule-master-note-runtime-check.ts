@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 import { prisma } from "../src/lib/db";
-import { scheduleLoadOptionsForRole } from "../src/lib/schedule/schedule-load-options";
+import { scheduleLoadOptionsForRole, SCHEDULE_LOAD_VIEW_ONLY } from "../src/lib/schedule/schedule-load-options";
 import {
   FORBIDDEN_MASTER_APPOINTMENT_KEYS,
+  FORBIDDEN_VIEW_ONLY_APPOINTMENT_KEYS,
 } from "../src/lib/schedule/appointment-contract";
 
 // In plain Node tests `server-only` always throws; stub it so we can execute services.
@@ -273,6 +274,39 @@ async function run(): Promise<void> {
         assert.ok(!("masterNote" in appt), "OWNER DTO must not include masterNote");
         assert.ok("clientPhone" in appt, "OWNER DTO must include phone");
         assert.ok("comment" in appt, "OWNER DTO must include comment");
+      }
+    }
+
+    // Token view-only (/view/schedule): masterNote present, no contacts/promotions/raw note.
+    assert.equal(SCHEDULE_LOAD_VIEW_ONLY.appointmentVisibility, "viewOnly");
+    const viewDay = await getScheduleDayData(dateKey, SCHEDULE_LOAD_VIEW_ONLY);
+    const viewMonth = await getScheduleMonthData(monthKey, SCHEDULE_LOAD_VIEW_ONLY);
+    const viewDayNotes = collectNotesFromDay(viewDay);
+    const viewMonthNotes = collectNotesFromMonth(viewMonth);
+    assert.deepEqual(apptIds(viewDayNotes), apptIds(dayNotes1));
+    assert.deepEqual(apptIds(viewMonthNotes), apptIds(monthNotes));
+    assert.equal(viewDayNotes.get(apptA), noteA);
+    assert.equal(viewDayNotes.get(apptB), noteB);
+    assert.equal(viewDayNotes.get(apptNull), null);
+    assert.equal(viewDayNotes.get(apptEmpty), null);
+    assert.equal(viewDayNotes.get(apptWhitespace), null);
+    assert.equal(viewMonthNotes.get(apptA), noteA);
+    assert.equal(viewMonthNotes.get(apptB), noteB);
+
+    for (const m of viewDay.masters) {
+      for (const appt of m.appointments as Array<Record<string, unknown>>) {
+        assert.ok("masterNote" in appt, "view-only DTO must include masterNote");
+        assert.ok(
+          !("promotionLabels" in appt),
+          "view-only must not include promotionLabels",
+        );
+        for (const forbiddenKey of FORBIDDEN_VIEW_ONLY_APPOINTMENT_KEYS) {
+          assert.ok(
+            !(forbiddenKey in appt),
+            `view-only DTO must not expose ${forbiddenKey}`,
+          );
+        }
+        assert.ok(!("importantNote" in appt));
       }
     }
 

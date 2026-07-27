@@ -55,7 +55,10 @@ function mapSharedFields(
 export function mapScheduleDayAppointmentViewOnly(
   appointment: AppointmentWithService,
 ): ScheduleAppointmentViewOnlyFields {
-  return mapSharedFields(appointment);
+  return {
+    ...mapSharedFields(appointment),
+    masterNote: normalizeMasterNote(appointment.importantNote),
+  };
 }
 
 export function mapScheduleDayAppointmentMaster(

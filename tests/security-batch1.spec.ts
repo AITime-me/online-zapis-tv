@@ -15,7 +15,6 @@ const FORBIDDEN_MASTER_APPOINTMENT_KEYS = [
 const FORBIDDEN_VIEW_ONLY_APPOINTMENT_KEYS = [
   ...FORBIDDEN_MASTER_APPOINTMENT_KEYS,
   "promotionLabels",
-  "masterNote",
 ] as const;
 
 const VIEW_TOKEN =
@@ -298,7 +297,9 @@ test.describe("Security Batch 1", () => {
     expect(Array.isArray(cellPayload.appointments)).toBe(true);
   });
 
-  test("view-only schedule month excludes phones and comments", async ({ request }) => {
+  test("view-only schedule month includes masterNote without phones or comments", async ({
+    request,
+  }) => {
     const response = await request.get(
       `/api/view/schedule/month?month=2026-07&token=${encodeURIComponent(VIEW_TOKEN)}`,
     );
@@ -309,6 +310,17 @@ test.describe("Security Batch 1", () => {
     const payload = await response.json();
     expect(payload.ok).toBe(true);
     assertNoForbiddenViewOnlyAppointmentKeys(payload);
+
+    const appointments = collectAppointmentObjects(payload);
+    for (const appointment of appointments) {
+      expect(appointment).toHaveProperty("masterNote");
+      expect(appointment).not.toHaveProperty("importantNote");
+      expect(appointment).not.toHaveProperty("promotionLabels");
+      if (appointment.masterNote != null) {
+        expect(typeof appointment.masterNote).toBe("string");
+        expect(String(appointment.masterNote).trim().length).toBeGreaterThan(0);
+      }
+    }
   });
 
   test("OWNER appointment update rejects phone/email in master note", async ({

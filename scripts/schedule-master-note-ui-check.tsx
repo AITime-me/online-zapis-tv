@@ -11,6 +11,7 @@ import type { UserRole } from "@prisma/client";
 
 import { ScheduleMonthView } from "../src/components/schedule/schedule-month-view";
 import { ScheduleDayView } from "../src/components/schedule/schedule-day-view";
+import { ScheduleReadonlyMonthView } from "../src/components/schedule/schedule-readonly-month-view";
 
 const dateKey1 = "2026-07-03";
 const dateKey2 = "2026-07-04";
@@ -55,6 +56,39 @@ function makeMasterAppointment({
     statusCode: "CONFIRMED",
     sourceCode: "INTERNAL",
     promotionLabels: [],
+    masterNote,
+  };
+}
+
+function makeViewOnlyAppointment({
+  id,
+  masterId,
+  startsAt,
+  endsAt,
+  masterNote,
+}: {
+  id: string;
+  masterId: string;
+  startsAt: string;
+  endsAt: string;
+  masterNote: string | null;
+}) {
+  // Token view-only DTO: masterNote only — no promotionLabels / contacts.
+  return {
+    kind: "appointment",
+    id,
+    masterId,
+    serviceId: null,
+    startsAt,
+    endsAt,
+    clientName: "Клиент",
+    serviceName: "Услуга",
+    isBold: false,
+    isManualTimeOverride: false,
+    status: "CONFIRMED",
+    source: "INTERNAL",
+    statusCode: "CONFIRMED",
+    sourceCode: "INTERNAL",
     masterNote,
   };
 }
@@ -118,6 +152,57 @@ function makeBookingRequestSummary({
     isFromGame: false,
     serviceNameSnapshot: "Услуга",
     appointmentServiceName: null,
+  };
+}
+
+function createViewOnlyMonthData(): ScheduleMonthData {
+  return {
+    month: monthKey,
+    studioToday,
+    masters: [
+      { id: masterA, internalName: "Мастер A", publicName: "MA" },
+      { id: masterB, internalName: "Мастер B", publicName: "MB" },
+    ],
+    days: [
+      {
+        dateKey: dateKey1,
+        managerNotes: [],
+        ownerNotes: [],
+        bookingRequests: [
+          makeBookingRequestSummary({
+            id: "req-view",
+            createdAt: "2026-07-03T08:00:00.000Z",
+          }),
+        ],
+        masterCells: {
+          [masterA]: [
+            makeViewOnlyAppointment({
+              id: "view-appt-a",
+              masterId: masterA,
+              startsAt: "2026-07-03T09:00:00.000Z",
+              endsAt: "2026-07-03T10:00:00.000Z",
+              masterNote: noteWithHtml,
+            }),
+            makeViewOnlyAppointment({
+              id: "view-appt-empty",
+              masterId: masterA,
+              startsAt: "2026-07-03T11:00:00.000Z",
+              endsAt: "2026-07-03T11:30:00.000Z",
+              masterNote: "   ",
+            }),
+          ],
+          [masterB]: [
+            makeViewOnlyAppointment({
+              id: "view-appt-b",
+              masterId: masterB,
+              startsAt: "2026-07-03T15:30:00.000Z",
+              endsAt: "2026-07-03T16:30:00.000Z",
+              masterNote: noteB,
+            }),
+          ],
+        },
+      },
+    ],
   };
 }
 
@@ -312,6 +397,19 @@ function setupDom() {
     const url = new URL(rawUrl, "http://localhost");
 
     if (url.pathname === "/api/schedule/month") {
+      const payload = monthPayloadForFetch as
+        | { month: string; studioToday: string; masters: unknown[]; days: unknown[] }
+        | null;
+      if (!payload) {
+        return new Response(JSON.stringify({ ok: false }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ ok: true, ...payload }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (url.pathname === "/api/view/schedule/month") {
       const payload = monthPayloadForFetch as
         | { month: string; studioToday: string; masters: unknown[]; days: unknown[] }
         | null;
@@ -581,6 +679,45 @@ async function run(): Promise<void> {
     document.querySelectorAll('[role="dialog"]').length,
     0,
     "MASTER must not open dialogs from day appointments/blocks",
+  );
+
+  // Token-protected /view/schedule readonly month must show masterNote inline.
+  const viewOnlyData = createViewOnlyMonthData();
+  monthPayloadForFetch = viewOnlyData;
+  const viewContainer = document.createElement("div");
+  document.body.appendChild(viewContainer);
+  const viewRoot = createRoot(viewContainer);
+  viewRoot.render(
+    <ScheduleReadonlyMonthView data={viewOnlyData} token="test-view-token" />,
+  );
+  await waitTick();
+  await waitTick();
+
+  assert.ok(
+    viewContainer.querySelector('[data-testid="schedule-readonly-month-view"]'),
+    "Readonly month view must mount",
+  );
+  assert.ok(
+    viewContainer.textContent?.includes("Пометка для мастера:"),
+    "Token view-only schedule must render masterNote label",
+  );
+  assert.ok(
+    viewContainer.textContent?.includes("<b>NOT_HTML</b>"),
+    "Token view-only masterNote must render as plain text",
+  );
+  assert.ok(
+    viewContainer.textContent?.includes(noteB),
+    "Token view-only schedule must show another master's masterNote",
+  );
+  assert.equal(
+    viewContainer.querySelectorAll(".border-amber-200").length,
+    2,
+    "Whitespace-only masterNote must not create a yellow block on /view/schedule",
+  );
+  assert.equal(
+    viewContainer.querySelectorAll('[role="dialog"]').length,
+    0,
+    "Token view-only schedule must not open editors",
   );
 
   console.log("schedule-master-note-ui-check: passed");
