@@ -175,6 +175,45 @@ case "$cmd" in
       exit 0
     fi
     if [[ "$tool" == "pg_restore" ]]; then
+      has_no_owner=0
+      has_no_acl=0
+      has_exit_on_error=0
+      for a in "$@"; do
+        case "$a" in
+          --no-owner) has_no_owner=1 ;;
+          --no-acl) has_no_acl=1 ;;
+          --exit-on-error) has_exit_on_error=1 ;;
+        esac
+      done
+
+      if [[ "$MODE" == "restorefail" ]]; then
+        # Emit diagnostic noise including secret-like tokens for redaction tests.
+        echo 'pg_restore: error: could not execute query: ERROR: relation "missing_table" does not exist' >&2
+        echo 'Command was: ALTER TABLE public.missing_table OWNER TO postgres;' >&2
+        echo 'PGPASSWORD=super-secret-token-do-not-leak' >&2
+        echo 'DATABASE_URL=postgres://user:secret@localhost/db' >&2
+        echo 'IRT_HARNESS_DIAG_SECRET=do-not-leak-9f3a' >&2
+        exit 1
+      fi
+      if [[ "$MODE" == "restorefail-huge" ]]; then
+        echo 'pg_restore: error: could not execute query: ERROR: relation "missing_table" does not exist' >&2
+        echo 'PGPASSWORD=super-secret-token-do-not-leak' >&2
+        echo 'IRT_HARNESS_DIAG_SECRET=do-not-leak-9f3a' >&2
+        # >16 KiB of padding so diagnostic truncation is exercised.
+        i=0
+        while (( i < 800 )); do
+          printf 'pad-line-%s-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n' "$i" >&2
+          i=$((i + 1))
+        done
+        exit 1
+      fi
+      # Staging-like dumps reference roles absent from the clean container.
+      # Without --no-owner/--no-acl/--exit-on-error, restore must fail.
+      if [[ "$has_no_owner" -ne 1 || "$has_no_acl" -ne 1 || "$has_exit_on_error" -ne 1 ]]; then
+        echo 'pg_restore: error: could not execute query: ERROR: role "tvoe_vremya" does not exist' >&2
+        echo 'Command was: ALTER TYPE public."AppointmentSource" OWNER TO tvoe_vremya;' >&2
+        exit 1
+      fi
       if [[ "$MODE" == "hang-on-restore" ]]; then
         # Deterministic harness barrier: visible only after restore hang starts.
         : >"${STATE}/pg_restore.hanging"
@@ -186,9 +225,7 @@ case "$cmd" in
       if [[ "$MODE" == "restore-child-143" ]]; then
         exit 143
       fi
-      if [[ "$MODE" == "restorefail" ]]; then
-        exit 1
-      fi
+      # ok / foreign-owner: succeed only with required pg_restore flags.
       exit 0
     fi
     exit 0

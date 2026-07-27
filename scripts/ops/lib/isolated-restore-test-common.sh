@@ -254,6 +254,14 @@ irt_prune_history() {
   for (( i = keep; i < ${#files[@]}; i++ )); do
     rm -f -- "${files[$i]}"
   done
+  # Diagnostic logs are keyed by RUN_ID; prune with the same retention window.
+  files=()
+  if compgen -G "${IRT_HISTORY_DIR}/pg_restore_*.error.log" >/dev/null 2>&1; then
+    mapfile -t files < <(ls -1t "${IRT_HISTORY_DIR}"/pg_restore_*.error.log)
+  fi
+  for (( i = keep; i < ${#files[@]}; i++ )); do
+    rm -f -- "${files[$i]}"
+  done
 }
 
 irt_random_hex() {

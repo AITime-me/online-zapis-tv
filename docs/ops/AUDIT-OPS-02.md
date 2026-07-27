@@ -78,8 +78,8 @@
 | Backup timers active | PARTIAL (server audit 2026-07-26) | Server read-only audit `2026-07-26T11:31:35Z` — timers enabled/active |
 | Fresh successful dump | PARTIAL (server audit 2026-07-26) | Prod/staging dumps age ~13h at audit time |
 | Dump checksum/verify | PARTIAL (server audit 2026-07-26) | IHM `pg_restore -l` healthy; no separate `.sha256` sidecar |
-| Isolated restore-test | NOT VERIFIED | Repo implementation updated (EXIT finalizer, snapshot, ExecStopPost, IHM linkage); **server install/run not done** |
-| Restore-test age | NOT VERIFIED | Requires server evidence after controlled first run |
+| Isolated restore-test | NOT VERIFIED | Repo fix 2026-07-27: `--no-owner --no-acl` + bounded pg_restore diagnostic evidence. Server 2026-07-27: production SUCCESS; staging FAIL `PG_RESTORE_FAILED` (role `tvoe_vremya` absent in clean container). **Staging VERIFIED только после повторного серверного прогона с исправленным скриптом.** |
+| Restore-test age | NOT VERIFIED | Requires server evidence after controlled re-install + staging re-run |
 | IHM running | PARTIAL (server audit 2026-07-26) | Timer active; `INTERNAL_HEALTH_MONITOR OK` |
 | warning/critical/recovery | PARTIAL | critical+recovery seen; warning class still NOT VERIFIED |
 | No alert spam | PARTIAL (server audit 2026-07-26) | No spam in journal window |
@@ -91,6 +91,20 @@
 (unit `online-zapis-tv-production-backup.service`, 100 строк, 16 keyword-hit, все `KEY_NAME_ONLY`).
 
 **Общий verdict `AUDIT-OPS-02`:** остаётся `PARTIAL`.
-Isolated restore-test на сервере **не** верифицирован; наличие кода в Git не равно server evidence.
+Isolated restore-test на сервере **не** верифицирован целиком: production oneshot
+`2026-07-27` дал SUCCESS, staging — FAIL из‑за `pg_restore` OWNER/ACL на роль
+`tvoe_vremya`, отсутствующую в чистом контейнере. Исправление в Git
+(`--no-owner --no-acl` + diagnostic evidence) **не** равно staging VERIFIED.
 
-**Итог:** задача не `DONE`, пока нет server evidence для isolated restore-test (и warning class).
+**Итог:** задача не `DONE`, пока нет повторного server evidence для staging
+restore-test (и warning class).
+
+### Корневая причина staging FAIL (2026-07-27)
+
+Isolated restore-test поднимает чистый PostgreSQL и раньше вызывал `pg_restore`
+с восстановлением исходных владельцев/ACL. Staging dump содержит ~353 объектов
+с `OWNER TO tvoe_vremya`; роли в контейнере нет → `ERROR_CODE=PG_RESTORE_FAILED`,
+`ExecMainStatus=30`. Production прошёл, потому что его объекты принадлежат
+уже существующей роли `postgres`. Постоянное создание роли `tvoe_vremya` в
+контейнере — не решение: тест должен проверять переносимость дампа независимо
+от исходных ролей.

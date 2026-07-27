@@ -185,7 +185,22 @@ function assertIsolationContracts(): void {
   assert.doesNotMatch(combined, /production_internal|staging_internal/);
   assert.doesNotMatch(combined, /postgres_production_data|postgres_staging_data/);
   assert.doesNotMatch(combined, /docker pull/);
-  assert.doesNotMatch(combined, /pg_restore[^&\n]*\|/);
+  assert.match(combined, /--no-owner/);
+  assert.match(combined, /--no-acl/);
+  assert.match(script, /irt_publish_pg_restore_diagnostic|PG_RESTORE_ERROR_LOG|last-pg-restore-error/);
+  assert.match(script, /irt_sanitize_pg_restore_diag/);
+  assert.match(script, /irt_interruptible_capture_merged/);
+  assert.match(script, /irt_purge_run_dir_files/);
+  assert.match(script, /trailer_bytes|content_budget/);
+  assert.match(script, /last-pg-restore-error\.log\.tmp/);
+  assert.doesNotMatch(
+    script,
+    /pg_restore[^\n]*>\/dev\/null\s*2>&1/,
+    "pg_restore must not discard diagnostics to /dev/null",
+  );
+  assert.doesNotMatch(combined, /CREATE ROLE|createuser/);
+  // Ban piping pg_restore into another command; allow `||` elsewhere on unrelated lines.
+  assert.doesNotMatch(combined, /\bpg_restore\b[^\n|]*\|(?!\|)/);
   // Must not set CLEANUP_OK=1 unconditionally after rm || true without proof
   assert.doesNotMatch(
     script,
@@ -294,6 +309,8 @@ function assertDocs(): void {
   assert.match(docs, /PARTIAL/);
   assert.match(docs, /isolated-restore-test-policy\.sh/);
   assert.match(docs, /RUN_ID/);
+  assert.match(docs, /--no-owner|--no-acl|no-owner|no-acl/);
+  assert.match(docs, /pg_restore.*error\.log|PG_RESTORE_ERROR_LOG|last-pg-restore-error/i);
 }
 
 function assertBashSyntax(): void {
@@ -330,7 +347,16 @@ function runBehavioralHarness(): void {
   );
   assert.match(result.stdout, /PASS success/);
   assert.match(result.stdout, /PASS dump_missing/);
+  assert.match(result.stdout, /PASS restorefail/);
+  assert.match(result.stdout, /PASS restorefail_diag_link|SKIP restorefail_diag_link/);
+  assert.match(result.stdout, /PASS foreign_owner_ok/);
+  assert.match(result.stdout, /PASS diag_clear_active_gone/);
+  assert.match(result.stdout, /PASS diag_clear_history_retained/);
+  assert.match(result.stdout, /PASS diag_size_history_cap/);
+  assert.match(result.stdout, /PASS flags_production_path/);
   assert.match(result.stdout, /PASS emergency_cleanup/);
+  assert.match(result.stdout, /PASS emergency_log_gone/);
+  assert.match(result.stdout, /PASS emergency_rundir_gone/);
   assert.match(result.stdout, /PASS reaper_old_removed/);
   assert.match(result.stdout, /PASS n01_attempt_run_b/);
   assert.match(result.stdout, /PASS n01_success_unchanged/);

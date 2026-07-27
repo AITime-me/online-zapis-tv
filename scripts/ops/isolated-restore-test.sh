@@ -48,6 +48,10 @@ IRT_SNAPSHOT_ABSENT=1
 IRT_INTEGRITY_OK=0
 IRT_PHASE=""
 IRT_EXIT_CODE=0
+# Relative path under env evidence (e.g. history/pg_restore_<RUN_ID>.error.log); never multiline.
+IRT_PG_RESTORE_ERROR_LOG=""
+# Cap diagnostic capture so evidence cannot grow without bound.
+IRT_PG_RESTORE_DIAG_MAX_BYTES=16384
 IRT_WORK_OK=0
 IRT_FINALIZED=0
 IRT_LOCK_HELD=0
@@ -247,6 +251,151 @@ irt_interruptible_capture() {
     exit 50
   fi
   return "$st"
+}
+
+# Capture merged stdout+stderr (pg_restore diagnostics). Same interrupt contract.
+irt_interruptible_capture_merged() {
+  local dest="$1"
+  shift
+  local st pid
+  "$@" >"$dest" 2>&1 &
+  pid=$!
+  IRT_WAIT_PID="$pid"
+  wait "$pid"
+  st=$?
+  IRT_WAIT_PID=""
+  if [[ "${IRT_SIGNAL_RECEIVED:-0}" -eq 1 ]]; then
+    record_failure 50 "INTERRUPTED"
+    exit 50
+  fi
+  return "$st"
+}
+
+# Redact secret-like tokens from pg_restore output. Never interpolates live passwords
+# into the sed pattern (avoid leaking via argv//proc).
+irt_sanitize_pg_restore_diag() {
+  # Redact KEY=value pairs that look like secrets. Longer password tokens first.
+  sed -E \
+    -e 's/([A-Za-z_][A-Za-z0-9_]*(PASSWORD|PASSWD|SECRET|TOKEN)|DATABASE_URL|PGPASSWORD)=[^[:space:]]+/\1=<redacted>/gi' \
+    -e 's/(password|passwd|pwd)=[^[:space:]]+/\1=<redacted>/gi' \
+    -e 's#postgres(ql)?://[^[:space:]]+#postgres://<redacted>#gi'
+}
+
+# Publish bounded, sanitized pg_restore diagnostic next to history; link via RUN_ID.
+# Best-effort: failure here must not mask the original PG_RESTORE_FAILED.
+# Final published bytes (history + active) are hard-capped at max_bytes including trailer.
+irt_publish_pg_restore_diagnostic() {
+  local src="$1"
+  local max_bytes="${IRT_PG_RESTORE_DIAG_MAX_BYTES:-16384}"
+  local rel dest latest tmp size trailer trailer_bytes content_budget truncated latest_tmp
+
+  IRT_PG_RESTORE_ERROR_LOG=""
+  [[ -n "${IRT_RUN_ID:-}" ]] || return 1
+  [[ "$IRT_RUN_ID" =~ $IRT_RUN_ID_RE ]] || return 1
+  [[ -f "$src" ]] || return 1
+  if ! irt_ensure_evidence_dirs; then
+    return 1
+  fi
+  if [[ ! "$max_bytes" =~ ^[1-9][0-9]*$ ]]; then
+    max_bytes=16384
+  fi
+
+  rel="history/pg_restore_${IRT_RUN_ID}.error.log"
+  dest="${IRT_ENV_EVIDENCE_DIR}/${rel}"
+  latest="${IRT_ENV_EVIDENCE_DIR}/last-pg-restore-error.log"
+  tmp="${dest}.tmp.$$.$RANDOM"
+
+  if ! irt_sanitize_pg_restore_diag <"$src" >"$tmp" 2>/dev/null; then
+    rm -f -- "$tmp" 2>/dev/null || true
+    return 1
+  fi
+
+  size="$(wc -c <"$tmp" 2>/dev/null | tr -d '[:space:]' || echo 0)"
+  if [[ ! "$size" =~ ^[0-9]+$ ]]; then
+    size=0
+  fi
+
+  trailer="$(printf '\n[truncated to %s bytes]\n' "$max_bytes")"
+  trailer_bytes="$(printf '%s' "$trailer" | wc -c | tr -d '[:space:]')"
+  if [[ ! "$trailer_bytes" =~ ^[0-9]+$ ]]; then
+    rm -f -- "$tmp" 2>/dev/null || true
+    return 1
+  fi
+
+  if (( size > max_bytes )); then
+    truncated="${tmp}.trunc"
+    if (( trailer_bytes >= max_bytes )); then
+      # Extreme/tiny cap: publish a hard-clipped trailer only.
+      if ! printf '%s' "$trailer" | head -c "$max_bytes" >"$truncated" 2>/dev/null; then
+        rm -f -- "$tmp" "$truncated" 2>/dev/null || true
+        return 1
+      fi
+    else
+      content_budget=$((max_bytes - trailer_bytes))
+      if ! head -c "$content_budget" "$tmp" >"$truncated" 2>/dev/null; then
+        rm -f -- "$tmp" "$truncated" 2>/dev/null || true
+        return 1
+      fi
+      if ! printf '%s' "$trailer" >>"$truncated" 2>/dev/null; then
+        rm -f -- "$tmp" "$truncated" 2>/dev/null || true
+        return 1
+      fi
+    fi
+    mv -f -- "$truncated" "$tmp" 2>/dev/null || {
+      rm -f -- "$tmp" "$truncated" 2>/dev/null || true
+      return 1
+    }
+  fi
+
+  # Belt-and-suspenders: never publish more than max_bytes.
+  size="$(wc -c <"$tmp" 2>/dev/null | tr -d '[:space:]' || echo 0)"
+  if [[ "$size" =~ ^[0-9]+$ ]] && (( size > max_bytes )); then
+    truncated="${tmp}.hardcap"
+    if ! head -c "$max_bytes" "$tmp" >"$truncated" 2>/dev/null; then
+      rm -f -- "$tmp" "$truncated" 2>/dev/null || true
+      return 1
+    fi
+    mv -f -- "$truncated" "$tmp" 2>/dev/null || {
+      rm -f -- "$tmp" "$truncated" 2>/dev/null || true
+      return 1
+    }
+  fi
+
+  if ! chmod 600 "$tmp" 2>/dev/null; then
+    rm -f -- "$tmp" 2>/dev/null || true
+    return 1
+  fi
+  if ! mv -f -- "$tmp" "$dest" 2>/dev/null; then
+    rm -f -- "$tmp" 2>/dev/null || true
+    return 1
+  fi
+  chmod 600 "$dest" 2>/dev/null || true
+
+  # Atomic active pointer in the same directory (mv replaces a symlink entry; does not follow it).
+  latest_tmp="${IRT_ENV_EVIDENCE_DIR}/last-pg-restore-error.log.tmp.$$.$RANDOM"
+  if [[ -L "$latest" ]]; then
+    rm -f -- "$latest" 2>/dev/null || true
+  fi
+  if cp -f -- "$dest" "$latest_tmp" 2>/dev/null \
+    && chmod 600 "$latest_tmp" 2>/dev/null \
+    && mv -f -- "$latest_tmp" "$latest" 2>/dev/null; then
+    chmod 600 "$latest" 2>/dev/null || true
+  else
+    rm -f -- "$latest_tmp" 2>/dev/null || true
+    # Do not leave a partial/wrong active file; history path still links the failure.
+  fi
+
+  IRT_PG_RESTORE_ERROR_LOG="$rel"
+  return 0
+}
+
+irt_clear_active_pg_restore_diagnostic() {
+  # Success must not leave an active false error log. History copies for prior
+  # RUN_IDs are retained until prune.
+  IRT_PG_RESTORE_ERROR_LOG=""
+  if [[ -n "${IRT_ENV_EVIDENCE_DIR:-}" ]]; then
+    rm -f -- "${IRT_ENV_EVIDENCE_DIR}/last-pg-restore-error.log" 2>/dev/null || true
+  fi
 }
 
 # Map interruptible command status: parent interrupt → exit 50 INTERRUPTED;
@@ -625,14 +774,23 @@ run_restore() {
   irt_require_cmd_ok "$create_rc" 30 "CREATE_DB_FAILED"
 
   local rc=0
+  local restore_log="${IRT_RUN_DIR}/pg_restore.log"
+  : >"$restore_log"
+  chmod 600 "$restore_log" 2>/dev/null || true
   # Explicit status capture: disarm ERR so an expected nonzero is not "unexpected".
+  # --no-owner --no-acl: isolated container has no source roles (e.g. tvoe_vremya);
+  # restore-test verifies dump portability/integrity, not original ownership/ACLs.
   trap - ERR
   set +e
-  irt_interruptible_run docker exec -e "PGPASSWORD=${IRT_TEMP_PASSWORD}" "$IRT_TEMP_CID" \
-    pg_restore -U postgres -d restore_test --exit-on-error /restore-source.dump >/dev/null 2>&1
+  irt_interruptible_capture_merged "$restore_log" docker exec -e "PGPASSWORD=${IRT_TEMP_PASSWORD}" "$IRT_TEMP_CID" \
+    pg_restore -U postgres -d restore_test --exit-on-error --no-owner --no-acl /restore-source.dump
   rc=$?
   set -e
   trap on_err ERR
+  if [[ "${IRT_SIGNAL_RECEIVED:-0}" -ne 1 && "$rc" -ne 0 ]]; then
+    # Diagnostic is best-effort; never masks PG_RESTORE_FAILED below.
+    irt_publish_pg_restore_diagnostic "$restore_log" || true
+  fi
   irt_require_cmd_ok "$rc" 30 "PG_RESTORE_FAILED"
 }
 
@@ -691,6 +849,25 @@ run_integrity_checks() {
 
 # --- cleanup ----------------------------------------------------------------
 
+# Remove known per-run temp files inside a validated runtime/<run-id> directory.
+# Never uses rm -rf; callers must ensure run_dir is the canonical owned path.
+# keep_cid=1 retains container.cid (emergency keeps it until evidence is fixed).
+irt_purge_run_dir_files() {
+  local run_dir="$1"
+  local keep_cid="${2:-0}"
+  [[ -n "$run_dir" && -d "$run_dir" ]] || return 0
+  rm -f -- \
+    "${run_dir}/dump.snapshot" \
+    "${run_dir}/dump.snapshot.partial" \
+    "${run_dir}/schemas.count" \
+    "${run_dir}/tables.count" \
+    "${run_dir}/pg_restore.log" \
+    2>/dev/null || true
+  if [[ "$keep_cid" != "1" ]]; then
+    rm -f -- "${run_dir}/container.cid" 2>/dev/null || true
+  fi
+}
+
 remove_owned_container_by_ref() {
   local ref="$1"
   local expect_env="$2"
@@ -728,7 +905,7 @@ remove_owned_container_by_ref() {
 
 cleanup_temp_resources() {
   IRT_PHASE="cleanup"
-  local container_ok=1 snapshot_ok=1 marker_ok=1
+  local container_ok=1 snapshot_ok=1 marker_ok=1 rundir_ok=1
 
   # Idempotent: safe when container never started.
   if [[ -n "${IRT_TEMP_CID:-}" ]]; then
@@ -752,9 +929,11 @@ cleanup_temp_resources() {
     rm -f -- "$IRT_SNAPSHOT_PATH" || snapshot_ok=0
   fi
   if [[ -n "${IRT_RUN_DIR:-}" && -d "${IRT_RUN_DIR}" ]]; then
-    rm -f -- "${IRT_RUN_DIR}/container.cid" "${IRT_RUN_DIR}/dump.snapshot.partial" \
-      "${IRT_RUN_DIR}/schemas.count" "${IRT_RUN_DIR}/tables.count" 2>/dev/null || true
-    rmdir "$IRT_RUN_DIR" 2>/dev/null || true
+    irt_purge_run_dir_files "$IRT_RUN_DIR"
+    if ! rmdir "$IRT_RUN_DIR" 2>/dev/null; then
+      irt_purge_run_dir_files "$IRT_RUN_DIR"
+      rmdir "$IRT_RUN_DIR" 2>/dev/null || rundir_ok=0
+    fi
   fi
   if [[ -n "${IRT_RUNTIME_DIR:-}" ]]; then
     rm -f -- "${IRT_RUNTIME_DIR}/.pause-after-work-ok" 2>/dev/null || true
@@ -768,7 +947,7 @@ cleanup_temp_resources() {
 
   IRT_TEMP_PASSWORD=""
 
-  if [[ "$container_ok" -eq 1 && "$snapshot_ok" -eq 1 && "$marker_ok" -eq 1 ]]; then
+  if [[ "$container_ok" -eq 1 && "$snapshot_ok" -eq 1 && "$marker_ok" -eq 1 && "$rundir_ok" -eq 1 ]]; then
     IRT_CLEANUP_OK=1
   else
     IRT_CLEANUP_OK=0
@@ -779,7 +958,7 @@ verify_cleanup_proof() {
   IRT_TEMP_ABSENT=0
   IRT_SNAPSHOT_ABSENT=0
 
-  local docker_ok=1
+  local docker_ok=1 leftover=0 f
   if ! command -v docker >/dev/null 2>&1; then
     docker_ok=0
   elif ! docker info >/dev/null 2>&1; then
@@ -815,6 +994,25 @@ verify_cleanup_proof() {
   else
     IRT_SNAPSHOT_ABSENT=0
     IRT_CLEANUP_OK=0
+  fi
+
+  # Known per-run leftovers must not remain (raw pg_restore.log included).
+  if [[ -n "${IRT_RUN_DIR:-}" ]]; then
+    leftover=0
+    for f in pg_restore.log schemas.count tables.count dump.snapshot.partial; do
+      if [[ -e "${IRT_RUN_DIR}/${f}" ]]; then
+        leftover=1
+        break
+      fi
+    done
+    # After cidfile removal, an empty leftover run-dir is still incomplete cleanup.
+    if [[ -d "${IRT_RUN_DIR}" && ! -e "${IRT_RUN_DIR}/container.cid" ]]; then
+      leftover=1
+    fi
+    if [[ "$leftover" -eq 1 ]]; then
+      IRT_TEMP_ABSENT=0
+      IRT_CLEANUP_OK=0
+    fi
   fi
 
   # CLEANUP_OK only if proofs hold.
@@ -888,6 +1086,7 @@ INTEGRITY_OK=${IRT_INTEGRITY_OK}
 CLEANUP_OK=${IRT_CLEANUP_OK}
 TEMP_RESOURCES_ABSENT=${IRT_TEMP_ABSENT}
 SNAPSHOT_ABSENT=${IRT_SNAPSHOT_ABSENT}
+PG_RESTORE_ERROR_LOG=$(irt_escape_manifest_value "${IRT_PG_RESTORE_ERROR_LOG:-}")
 EOF
 }
 
@@ -906,6 +1105,10 @@ write_attempt_evidence() {
   uniq="${ts}_$$_${IRT_RUN_ID:-norun}"
   attempt="${IRT_ENV_EVIDENCE_DIR}/last-attempt.env"
   hist="${IRT_HISTORY_DIR}/${uniq}_${IRT_STATUS}.env"
+  if [[ "$IRT_STATUS" == "success" ]]; then
+    # Drop active error pointer before publishing success manifests.
+    irt_clear_active_pg_restore_diagnostic
+  fi
   local lines
   mapfile -t lines < <(evidence_lines) || return 1
   if ! irt_write_evidence_file "$attempt" "${lines[@]}"; then
@@ -974,6 +1177,7 @@ print_plan() {
   irt_info "  pg image: ${IRT_PG_IMAGE} (--pull=never)"
   irt_info "  network: none"
   irt_info "  ports: none"
+  irt_info "  pg_restore: --no-owner --no-acl (role-independent integrity)"
   irt_info "  limits: memory=${IRT_DOCKER_MEMORY} cpus=${IRT_DOCKER_CPUS} pids=${IRT_DOCKER_PIDS_LIMIT}"
   irt_info "  evidence: ${IRT_ENV_EVIDENCE_DIR}"
   irt_info "  timeout sec: ${IRT_OVERALL_TIMEOUT_SEC}"
@@ -1094,7 +1298,7 @@ emergency_cleanup() {
     if [[ -e "$IRT_SNAPSHOT_PATH" ]]; then
       rm -f -- "$IRT_SNAPSHOT_PATH" || empty_cleanup_rc=1
     fi
-    rm -f -- "${run_dir}/dump.snapshot.partial" 2>/dev/null || true
+    irt_purge_run_dir_files "$run_dir" 1
     verify_cleanup_proof || true
     if [[ "$IRT_TEMP_ABSENT" -ne 1 || "$IRT_SNAPSHOT_ABSENT" -ne 1 ]]; then
       empty_cleanup_rc=1
@@ -1108,7 +1312,15 @@ emergency_cleanup() {
         if [[ "$cidfile" != "$resolved" ]]; then
           rm -f -- "$cidfile" 2>/dev/null || true
         fi
+        irt_purge_run_dir_files "$run_dir" 0
         rmdir "$run_dir" 2>/dev/null || true
+        if [[ -d "$run_dir" ]]; then
+          empty_cleanup_rc=1
+          IRT_CLEANUP_OK=0
+          IRT_TEMP_ABSENT=0
+          irt_info "ISOLATED_RESTORE_TEST EMERGENCY incomplete empty-cid cleanup RUN_ID=${IRT_RUN_ID}"
+          return 1
+        fi
         [[ -f "$marker" ]] && rm -f -- "$marker" 2>/dev/null || true
         irt_info "ISOLATED_RESTORE_TEST EMERGENCY no-op (empty cid; RUN_ID already finalized)"
         return 0
@@ -1125,7 +1337,14 @@ emergency_cleanup() {
       if [[ "$cidfile" != "$resolved" ]]; then
         rm -f -- "$cidfile" 2>/dev/null || true
       fi
+      irt_purge_run_dir_files "$run_dir" 0
       rmdir "$run_dir" 2>/dev/null || true
+      if [[ -d "$run_dir" ]]; then
+        IRT_CLEANUP_OK=0
+        IRT_TEMP_ABSENT=0
+        irt_info "ISOLATED_RESTORE_TEST EMERGENCY incomplete empty-cid cleanup RUN_ID=${IRT_RUN_ID}"
+        return 1
+      fi
       [[ -f "$marker" ]] && rm -f -- "$marker" 2>/dev/null || true
       irt_info "ISOLATED_RESTORE_TEST EMERGENCY failure evidence for empty-cid RUN_ID=${IRT_RUN_ID}"
       return 0
@@ -1170,7 +1389,7 @@ emergency_cleanup() {
   if [[ -e "${IRT_SNAPSHOT_PATH}" ]]; then
     rm -f -- "$IRT_SNAPSHOT_PATH" || cleanup_rc=1
   fi
-  rm -f -- "${run_dir}/dump.snapshot.partial" 2>/dev/null || true
+  irt_purge_run_dir_files "$run_dir" 1
   # Keep resolved/marker cidfile until cleanup_ok && evidence_ok (retry safety).
 
   verify_cleanup_proof || true
@@ -1190,7 +1409,12 @@ emergency_cleanup() {
       if [[ "$cidfile" != "$resolved" ]]; then
         rm -f -- "$cidfile" 2>/dev/null || true
       fi
+      irt_purge_run_dir_files "$run_dir" 0
       rmdir "$run_dir" 2>/dev/null || true
+      if [[ -d "$run_dir" ]]; then
+        irt_info "ISOLATED_RESTORE_TEST EMERGENCY incomplete cleanup for finalized RUN_ID=${IRT_RUN_ID}"
+        return 1
+      fi
       [[ -f "$marker" ]] && rm -f -- "$marker" 2>/dev/null || true
       irt_info "ISOLATED_RESTORE_TEST EMERGENCY no-op (RUN_ID=${IRT_RUN_ID} already finalized)"
       return 0
@@ -1213,11 +1437,18 @@ emergency_cleanup() {
       # Drop the marker-side symlink path; never use its dirname for snapshot cleanup.
       rm -f -- "$cidfile" 2>/dev/null || true
     fi
+    irt_purge_run_dir_files "$run_dir" 0
     rmdir "$run_dir" 2>/dev/null || true
-    if [[ -f "$marker" ]]; then
-      marker_run="$(irt_marker_get "$marker" RUN_ID || true)"
-      if [[ "$marker_run" == "$IRT_RUN_ID" ]]; then
-        rm -f -- "$marker" 2>/dev/null || true
+    if [[ -d "$run_dir" ]]; then
+      cleanup_rc=1
+      IRT_CLEANUP_OK=0
+      IRT_TEMP_ABSENT=0
+    else
+      if [[ -f "$marker" ]]; then
+        marker_run="$(irt_marker_get "$marker" RUN_ID || true)"
+        if [[ "$marker_run" == "$IRT_RUN_ID" ]]; then
+          rm -f -- "$marker" 2>/dev/null || true
+        fi
       fi
     fi
   fi

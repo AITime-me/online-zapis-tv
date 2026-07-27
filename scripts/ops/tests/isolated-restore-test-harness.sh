@@ -199,8 +199,302 @@ scenario_restorefail() {
   if [[ "$rc" -eq 30 ]]; then ok "restorefail"; else bad "restorefail" "rc=$rc"; fi
   local attempt="${EVIDENCE}/production/last-attempt.env"
   [[ -f "$attempt" ]] || { bad "restorefail_evidence" "no last-attempt"; return; }
+  [[ "$(read_key "$attempt" ERROR_CODE)" == "PG_RESTORE_FAILED" ]] \
+    && ok "restorefail_code" \
+    || bad "restorefail_code" "ERROR_CODE=$(read_key "$attempt" ERROR_CODE)"
   [[ "$(read_key "$attempt" CLEANUP_OK)" == "1" ]] || bad "restorefail_cleanup" "CLEANUP_OK!=1"
   [[ "$(read_key "$attempt" TEMP_RESOURCES_ABSENT)" == "1" ]] || bad "restorefail_absent" "absent!=1"
+  local run_id diag_rel diag_path latest
+  run_id="$(read_key "$attempt" RUN_ID)"
+  diag_rel="$(read_key "$attempt" PG_RESTORE_ERROR_LOG)"
+  if [[ -n "$run_id" && "$diag_rel" == "history/pg_restore_${run_id}.error.log" ]]; then
+    ok "restorefail_diag_link"
+  else
+    bad "restorefail_diag_link" "RUN_ID=$run_id PG_RESTORE_ERROR_LOG=$diag_rel"
+  fi
+  diag_path="${EVIDENCE}/production/${diag_rel}"
+  latest="${EVIDENCE}/production/last-pg-restore-error.log"
+  if [[ -f "$diag_path" && -f "$latest" ]]; then
+    ok "restorefail_diag_files"
+  else
+    bad "restorefail_diag_files" "missing diag path=$diag_path latest=$latest"
+  fi
+  if grep -Eq 'missing_table|relation' "$diag_path" 2>/dev/null; then
+    ok "restorefail_diag_content"
+  else
+    bad "restorefail_diag_content" "expected pg_restore error text"
+  fi
+  if grep -Eq 'super-secret-token-do-not-leak|postgres://user:secret@|do-not-leak-9f3a' "$diag_path" "$latest" 2>/dev/null; then
+    bad "restorefail_diag_no_secret" "secret leaked into diagnostic evidence"
+  else
+    ok "restorefail_diag_no_secret"
+  fi
+  if grep -Eq 'PGPASSWORD=<redacted>|DATABASE_URL=<redacted>' "$diag_path" 2>/dev/null; then
+    ok "restorefail_diag_redacted"
+  else
+    bad "restorefail_diag_redacted" "expected redacted markers"
+  fi
+  # Mode bits: evidence files must not be group/world readable when chmod works.
+  # Git Bash/Windows often cannot enforce Unix 0600 on NTFS — skip mode assert there.
+  case "$(uname -s 2>/dev/null || echo unknown)" in
+    MINGW*|MSYS*|CYGWIN*)
+      skip "restorefail_diag_mode" "chmod 0600 not reliable on this host"
+      ;;
+    *)
+      local mode
+      mode="$(stat -c '%a' "$diag_path" 2>/dev/null || echo unknown)"
+      if [[ "$mode" == "600" ]]; then
+        ok "restorefail_diag_mode"
+      else
+        bad "restorefail_diag_mode" "mode=$mode (expected 600)"
+      fi
+      ;;
+  esac
+  if [[ -d "${STATE}/containers" ]] && compgen -G "${STATE}/containers/*" >/dev/null; then
+    bad "restorefail_docker_cleaned" "container still present"
+  else
+    ok "restorefail_docker_cleaned"
+  fi
+}
+
+scenario_foreign_owner_ok() {
+  # Dump objects owned by role tvoe_vremya (absent in clean container).
+  # Must succeed via --no-owner --no-acl without creating that role.
+  setup_case foreign-owner
+  make_dump >/dev/null
+  set +e
+  run_irt production
+  local rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]]; then ok "foreign_owner_ok"; else bad "foreign_owner_ok" "rc=$rc"; fi
+  local success="${EVIDENCE}/production/last-success.env"
+  [[ -f "$success" ]] || { bad "foreign_owner_success_evidence" "no last-success"; return; }
+  [[ "$(read_key "$success" STATUS)" == "success" ]] \
+    && ok "foreign_owner_status" \
+    || bad "foreign_owner_status" "STATUS=$(read_key "$success" STATUS)"
+  [[ "$(read_key "$success" CLEANUP_OK)" == "1" ]] || bad "foreign_owner_cleanup" "CLEANUP_OK!=1"
+  [[ "$(read_key "$success" TEMP_RESOURCES_ABSENT)" == "1" ]] || bad "foreign_owner_absent" "absent!=1"
+  [[ -z "$(read_key "$success" PG_RESTORE_ERROR_LOG)" ]] \
+    && ok "foreign_owner_no_diag" \
+    || bad "foreign_owner_no_diag" "PG_RESTORE_ERROR_LOG set on success"
+  if [[ -f "${EVIDENCE}/production/last-pg-restore-error.log" ]]; then
+    bad "foreign_owner_no_active_diag" "active error log present after success"
+  else
+    ok "foreign_owner_no_active_diag"
+  fi
+}
+
+scenario_diag_cleared_on_success() {
+  # Failed restore leaves active diagnostic; following success must clear it.
+  # Keep one CASE_DIR so evidence root persists across the fail→success sequence.
+  setup_case restorefail
+  make_dump >/dev/null
+  set +e
+  run_irt production
+  local rc=$?
+  set -e
+  [[ "$rc" -eq 30 ]] || { bad "diag_clear_fail_rc" "rc=$rc"; return; }
+  local latest="${EVIDENCE}/production/last-pg-restore-error.log"
+  [[ -f "$latest" ]] || { bad "diag_clear_precondition" "expected active error log after fail"; return; }
+  local fail_run
+  fail_run="$(read_key "${EVIDENCE}/production/last-attempt.env" RUN_ID)"
+  local hist_diag="${EVIDENCE}/production/history/pg_restore_${fail_run}.error.log"
+  [[ -f "$hist_diag" ]] || { bad "diag_clear_history_kept_pre" "history diag missing"; return; }
+  local hist_before
+  hist_before="$(cat "$hist_diag")"
+
+  export FAKE_DOCKER_MODE="ok"
+  make_dump >/dev/null
+  set +e
+  run_irt production
+  rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]]; then ok "diag_clear_success_rc"; else bad "diag_clear_success_rc" "rc=$rc"; fi
+  if [[ -f "$latest" ]]; then
+    bad "diag_clear_active_gone" "active error log still present after success"
+  else
+    ok "diag_clear_active_gone"
+  fi
+  if [[ ! -f "$hist_diag" ]]; then
+    bad "diag_clear_history_retained" "history diagnostic missing after success"
+  elif [[ "$(cat "$hist_diag")" != "$hist_before" ]]; then
+    bad "diag_clear_history_retained" "history diagnostic content changed"
+  else
+    ok "diag_clear_history_retained"
+  fi
+  local success="${EVIDENCE}/production/last-success.env"
+  local success_run
+  success_run="$(read_key "$success" RUN_ID)"
+  if [[ -n "$success_run" && "$success_run" != "$fail_run" ]]; then
+    ok "diag_clear_success_run_id"
+  else
+    bad "diag_clear_success_run_id" "success_run=$success_run fail_run=$fail_run"
+  fi
+  [[ -z "$(read_key "$success" PG_RESTORE_ERROR_LOG)" ]] \
+    && ok "diag_clear_success_key_empty" \
+    || bad "diag_clear_success_key_empty" "PG_RESTORE_ERROR_LOG=$(read_key "$success" PG_RESTORE_ERROR_LOG)"
+  if [[ -d "${STATE}/containers" ]] && compgen -G "${STATE}/containers/*" >/dev/null; then
+    bad "diag_clear_cleanup" "container still present"
+  else
+    ok "diag_clear_cleanup"
+  fi
+}
+
+scenario_restorefail_diag_size_cap() {
+  setup_case restorefail-huge
+  make_dump >/dev/null
+  set +e
+  run_irt production
+  local rc=$?
+  set -e
+  if [[ "$rc" -eq 30 ]]; then ok "diag_size_rc"; else bad "diag_size_rc" "rc=$rc"; fi
+  local attempt="${EVIDENCE}/production/last-attempt.env"
+  local run_id diag_rel diag_path latest size latest_size
+  run_id="$(read_key "$attempt" RUN_ID)"
+  diag_rel="$(read_key "$attempt" PG_RESTORE_ERROR_LOG)"
+  if [[ "$diag_rel" == "history/pg_restore_${run_id}.error.log" ]]; then
+    ok "diag_size_link"
+  else
+    bad "diag_size_link" "PG_RESTORE_ERROR_LOG=$diag_rel"
+  fi
+  diag_path="${EVIDENCE}/production/${diag_rel}"
+  latest="${EVIDENCE}/production/last-pg-restore-error.log"
+  [[ -f "$diag_path" && -f "$latest" ]] || { bad "diag_size_files" "missing"; return; }
+  size="$(wc -c <"$diag_path" | tr -d '[:space:]')"
+  latest_size="$(wc -c <"$latest" | tr -d '[:space:]')"
+  if [[ "$size" =~ ^[0-9]+$ ]] && (( size <= 16384 )); then
+    ok "diag_size_history_cap"
+  else
+    bad "diag_size_history_cap" "size=$size"
+  fi
+  if [[ "$latest_size" =~ ^[0-9]+$ ]] && (( latest_size <= 16384 )); then
+    ok "diag_size_active_cap"
+  else
+    bad "diag_size_active_cap" "size=$latest_size"
+  fi
+  if grep -Fq '[truncated to 16384 bytes]' "$diag_path"; then
+    ok "diag_size_trailer"
+  else
+    bad "diag_size_trailer" "missing truncation trailer"
+  fi
+  if grep -Eq 'super-secret-token-do-not-leak|do-not-leak-9f3a' "$diag_path" "$latest" 2>/dev/null; then
+    bad "diag_size_no_secret" "secret leaked"
+  else
+    ok "diag_size_no_secret"
+  fi
+}
+
+scenario_pg_restore_flags_contract() {
+  # Prove fake pg_restore rejects missing flags; production path supplies all three.
+  setup_case foreign-owner
+  local out rc
+  set +e
+  out="$("${BIN}/docker" exec fake-cid pg_restore -U postgres -d restore_test --exit-on-error /dump 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]] && echo "$out" | grep -q 'tvoe_vremya'; then
+    ok "flags_missing_both_owners"
+  else
+    bad "flags_missing_both_owners" "rc=$rc out=$out"
+  fi
+  set +e
+  out="$("${BIN}/docker" exec fake-cid pg_restore -U postgres -d restore_test --exit-on-error --no-owner /dump 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]] && echo "$out" | grep -q 'tvoe_vremya'; then
+    ok "flags_missing_no_acl"
+  else
+    bad "flags_missing_no_acl" "rc=$rc out=$out"
+  fi
+  set +e
+  out="$("${BIN}/docker" exec fake-cid pg_restore -U postgres -d restore_test --exit-on-error --no-acl /dump 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]] && echo "$out" | grep -q 'tvoe_vremya'; then
+    ok "flags_missing_no_owner"
+  else
+    bad "flags_missing_no_owner" "rc=$rc out=$out"
+  fi
+  set +e
+  out="$("${BIN}/docker" exec fake-cid pg_restore -U postgres -d restore_test --no-owner --no-acl /dump 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]] && echo "$out" | grep -q 'tvoe_vremya'; then
+    ok "flags_missing_exit_on_error"
+  else
+    bad "flags_missing_exit_on_error" "rc=$rc out=$out"
+  fi
+  set +e
+  out="$("${BIN}/docker" exec fake-cid pg_restore -U postgres -d restore_test --exit-on-error --no-owner --no-acl /dump 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]]; then
+    ok "flags_all_present_ok"
+  else
+    bad "flags_all_present_ok" "rc=$rc out=$out"
+  fi
+  # Production script path must pass the full flag set (enforced by fake on success).
+  make_dump >/dev/null
+  set +e
+  run_irt production
+  rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]]; then ok "flags_production_path"; else bad "flags_production_path" "rc=$rc"; fi
+}
+
+scenario_emergency_purges_pg_restore_log() {
+  # SIGKILL/ExecStopPost path must remove raw runtime pg_restore.log and the run-dir.
+  setup_case ok
+  local run_id="cafebabecafebabe"
+  local cid="abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567"
+  local run_dir="${EVIDENCE}/production/runtime/${run_id}"
+  mkdir -p "$run_dir" "${STATE}/containers/${cid}"
+  printf 'oz-rt-production-%s\n' "$run_id" >"${STATE}/containers/${cid}/name"
+  printf 'running\n' >"${STATE}/containers/${cid}/status"
+  cat >"${STATE}/containers/${cid}/labels" <<EOF
+com.online-zapis-tv.component=isolated-restore-test
+com.online-zapis-tv.environment=production
+com.online-zapis-tv.run-id=${run_id}
+EOF
+  local cidfile="${run_dir}/container.cid"
+  printf '%s' "$cid" >"$cidfile"
+  printf 'RAW PGPASSWORD=super-secret-token-do-not-leak\n' >"${run_dir}/pg_restore.log"
+  : >"${run_dir}/schemas.count"
+  : >"${run_dir}/tables.count"
+  : >"${run_dir}/dump.snapshot.partial"
+  cat >"${EVIDENCE}/production/runtime/current.env" <<EOF
+RUN_ID=${run_id}
+CIDFILE=${cidfile}
+ENVIRONMENT=production
+STARTED_AT_EPOCH=$(date +%s)
+EOF
+  [[ -f "${run_dir}/pg_restore.log" ]] || { bad "emergency_log_precondition" "log missing"; return; }
+  set +e
+  bash "$SCRIPT" --emergency-cleanup --environment production --evidence-root "$EVIDENCE"
+  local rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]]; then ok "emergency_log_rc"; else bad "emergency_log_rc" "rc=$rc"; fi
+  if [[ -e "${run_dir}/pg_restore.log" ]]; then
+    bad "emergency_log_gone" "pg_restore.log remains"
+  else
+    ok "emergency_log_gone"
+  fi
+  if [[ -d "$run_dir" ]]; then
+    bad "emergency_rundir_gone" "run-dir remains"
+  else
+    ok "emergency_rundir_gone"
+  fi
+  if [[ -d "${STATE}/containers/${cid}" ]]; then
+    bad "emergency_log_container_gone" "container remains"
+  else
+    ok "emergency_log_container_gone"
+  fi
+  [[ "$(read_key "${EVIDENCE}/production/last-attempt.env" TEMP_RESOURCES_ABSENT)" == "1" ]] \
+    && ok "emergency_log_absent_flag" \
+    || bad "emergency_log_absent_flag" "TEMP_RESOURCES_ABSENT!=1"
+  [[ "$(read_key "${EVIDENCE}/production/last-attempt.env" CLEANUP_OK)" == "1" ]] \
+    && ok "emergency_log_cleanup_ok" \
+    || bad "emergency_log_cleanup_ok" "CLEANUP_OK!=1"
 }
 
 scenario_integrityfail() {
@@ -536,6 +830,14 @@ scenario_success_ok() {
   [[ -f "$attempt" && -f "$success" ]] || { bad "success_evidence" "missing files"; return; }
   [[ "$(read_key "$success" CLEANUP_OK)" == "1" ]] || bad "success_cleanup" "CLEANUP_OK"
   [[ "$(read_key "$success" TEMP_RESOURCES_ABSENT)" == "1" ]] || bad "success_absent" "absent"
+  [[ -z "$(read_key "$success" PG_RESTORE_ERROR_LOG)" ]] \
+    && ok "success_no_diag" \
+    || bad "success_no_diag" "PG_RESTORE_ERROR_LOG set on success"
+  if [[ -f "${EVIDENCE}/production/last-pg-restore-error.log" ]]; then
+    bad "success_no_active_diag" "active error log present after success"
+  else
+    ok "success_no_active_diag"
+  fi
   local dur
   dur="$(read_key "$success" DURATION_SEC)"
   if [[ "$dur" =~ ^[0-9]+$ ]] && (( dur >= 0 )); then
@@ -1007,6 +1309,10 @@ main() {
   scenario_noimage
   scenario_notready
   scenario_restorefail
+  scenario_foreign_owner_ok
+  scenario_diag_cleared_on_success
+  scenario_restorefail_diag_size_cap
+  scenario_pg_restore_flags_contract
   scenario_integrityfail
   scenario_term
   scenario_term_during_restore
@@ -1019,6 +1325,7 @@ main() {
   scenario_success_ok
   scenario_toctou
   scenario_emergency
+  scenario_emergency_purges_pg_restore_log
   scenario_emergency_overrides_old_attempt
   scenario_emergency_same_run_finalized_noop
   scenario_emergency_symlink_cidfile

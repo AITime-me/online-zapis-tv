@@ -29,7 +29,9 @@
   production/
     last-attempt.env
     last-success.env       # не затирается неудачной попыткой
+    last-pg-restore-error.log  # активный diagnostic; удаляется при success
     history/               # unique names: timestamp+PID+run-id
+                           # + pg_restore_<RUN_ID>.error.log (0600, bounded)
     runtime/               # 0700: cidfile, current.env, private dump snapshot
   staging/
     ...
@@ -130,9 +132,25 @@ Running orphan после systemd kill — зона `ExecStopPost` по cidfile.
 - `--memory=1g`, `--cpus=1.0`, `--pids-limit=256`
   (256: штатный PG restore с worker'ами, но потолок для runaway forks);
 - без join к production/staging networks/volumes;
+- `pg_restore --no-owner --no-acl`: тест проверяет **переносимость и целостность**
+  данных/схемы, а не наличие исходных ролей БД (например staging `tvoe_vremya`).
+  Роли из исходного окружения в чистый контейнер **не** создаются;
 - рабочие контейнеры: pre/post metadata snapshot (id/name/running/restarts/started);
   изменение → `FORBIDDEN_CONTAINER_CHANGED` (80), без утверждения «untouched» при внешнем дрейфе;
 - пароль temp PG никогда не логируется и не пишется в evidence.
+
+## Diagnostic evidence (pg_restore)
+
+При `PG_RESTORE_FAILED` stderr/stdout `pg_restore` больше не отбрасывается в `/dev/null`:
+
+- пишется ограниченный sanitized лог `history/pg_restore_<RUN_ID>.error.log` (mode `0600`);
+- активный указатель `last-pg-restore-error.log` (тот же текст, `0600`);
+- в `last-attempt` / history — однострочный ключ `PG_RESTORE_ERROR_LOG=history/pg_restore_<RUN_ID>.error.log`
+  (без многострочного тела, пригодного для `source`);
+- секреты (`*PASSWORD*`, `*SECRET*`, `DATABASE_URL`, `postgres://…`) редактируются;
+- размер ограничен (`IRT_PG_RESTORE_DIAG_MAX_BYTES`, по умолчанию 16 KiB);
+- успешный запуск очищает активный `last-pg-restore-error.log` и оставляет
+  `PG_RESTORE_ERROR_LOG` пустым (history-копии прошлых RUN_ID могут остаться до prune).
 
 ## IHM
 
