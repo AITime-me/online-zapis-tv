@@ -152,24 +152,40 @@ export function ScheduleMonthView({
         readOnly={!canEdit}
         canEditManagerNotes={canEdit}
         bookingRequestDetailLevel={bookingRequestDetailLevel}
-        onCellOpen={(cellData) => {
-          closeAllEditors();
-          setEditorData(cellData);
-        }}
-        onManagerCellOpen={(managerData) => {
-          closeAllEditors();
-          setManagerEditorData(managerData);
-        }}
-        onOwnerCellOpen={(ownerData) => {
-          closeAllEditors();
-          setOwnerEditorData(ownerData);
-        }}
-        onRequestOpen={(request) => {
-          closeAllEditors();
-          setSelectedRequest(request);
-        }}
+        onCellOpen={
+          canEdit
+            ? (cellData) => {
+                closeAllEditors();
+                setEditorData(cellData);
+              }
+            : undefined
+        }
+        onManagerCellOpen={
+          canEdit
+            ? (managerData) => {
+                closeAllEditors();
+                setManagerEditorData(managerData);
+              }
+            : undefined
+        }
+        onOwnerCellOpen={
+          canEdit
+            ? (ownerData) => {
+                closeAllEditors();
+                setOwnerEditorData(ownerData);
+              }
+            : undefined
+        }
+        onRequestOpen={
+          canEdit
+            ? (request) => {
+                closeAllEditors();
+                setSelectedRequest(request);
+              }
+            : undefined
+        }
       />
-      {editorData ? (
+      {editorData && canEdit ? (
         <QuickDayEditor
           data={editorData}
           canEdit={canEdit}
@@ -178,7 +194,7 @@ export function ScheduleMonthView({
           onScheduleChange={refreshAfterSave}
         />
       ) : null}
-      {managerEditorData ? (
+      {managerEditorData && canEdit ? (
         <QuickManagerEditor
           data={managerEditorData}
           canEdit={canEdit}
@@ -190,14 +206,14 @@ export function ScheduleMonthView({
           }}
         />
       ) : null}
-      {ownerEditorData ? (
+      {ownerEditorData && canEdit ? (
         <QuickOwnerEditor
           data={ownerEditorData}
           canEdit={canEdit}
           onClose={() => setOwnerEditorData(null)}
         />
       ) : null}
-      {selectedRequest ? (
+      {selectedRequest && canEdit ? (
         canViewFullBookingRequestDetails ? (
           <ScheduleBookingRequestDetailModal
             request={selectedRequest}

@@ -175,7 +175,11 @@ export function ScheduleDayView({
             <ManagerColumn
               notes={data.managerNotes}
               bookingRequests={data.bookingRequests}
-              onRequestOpen={setSelectedRequest}
+              onRequestOpen={
+                canEditManagerNotes || canEditRequests
+                  ? setSelectedRequest
+                  : undefined
+              }
               bookingRequestDetailLevel={bookingRequestDetailLevel}
               className={`${COLUMN_CLASS} ${STICKY_MANAGER_BODY}`}
             />

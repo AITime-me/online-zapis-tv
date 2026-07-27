@@ -155,6 +155,121 @@ test.describe("Security Batch 1", () => {
     }
   });
 
+  test("MASTER sees masterNote for every appointment in the shared schedule table", async ({
+    request,
+  }) => {
+    const studioMonth = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Yekaterinburg",
+      year: "numeric",
+      month: "2-digit",
+    })
+      .format(new Date())
+      .slice(0, 7);
+
+    const ownerApi = await getAuthedApiContext(request, "owner@example.local");
+    const monthResponse = await ownerApi.get(
+      `/api/schedule/month?month=${encodeURIComponent(studioMonth)}`,
+    );
+    expect(monthResponse.ok()).toBeTruthy();
+    const monthPayload = (await monthResponse.json()) as {
+      studioToday?: string;
+      masters?: { id: string }[];
+    };
+    const dateKey = monthPayload.studioToday;
+    expect(dateKey).toBeTruthy();
+    expect((monthPayload.masters ?? []).length).toBeGreaterThanOrEqual(2);
+
+    const ownerDay = await ownerApi.get(
+      `/api/schedule/day?date=${encodeURIComponent(dateKey!)}`,
+    );
+    expect(ownerDay.ok()).toBeTruthy();
+    const ownerPayload = (await ownerDay.json()) as {
+      masters: {
+        id: string;
+        appointments: Record<string, unknown>[];
+      }[];
+    };
+
+    const ownerNotesById = new Map<string, string>();
+    for (const column of ownerPayload.masters ?? []) {
+      for (const appointment of column.appointments ?? []) {
+        if (
+          typeof appointment.importantNote === "string" &&
+          appointment.importantNote.trim()
+        ) {
+          ownerNotesById.set(String(appointment.id), appointment.importantNote);
+          expect(appointment).toHaveProperty("clientPhone");
+        }
+      }
+    }
+    expect(
+      ownerNotesById.size,
+      "seed should include at least one importantNote today",
+    ).toBeGreaterThan(0);
+
+    const managerApi = await getAuthedApiContext(
+      request,
+      "manager@example.local",
+    );
+    const managerDay = await managerApi.get(
+      `/api/schedule/day?date=${encodeURIComponent(dateKey!)}`,
+    );
+    expect(managerDay.ok()).toBeTruthy();
+    const managerPayload = await managerDay.json();
+    for (const [id, note] of ownerNotesById) {
+      const row = collectAppointmentObjects(managerPayload).find(
+        (item) => item.id === id,
+      );
+      expect(row?.importantNote).toBe(note);
+    }
+
+    async function assertMasterSeesAllNotes(email: string) {
+      const api = await getAuthedApiContext(request, email);
+      const day = await api.get(
+        `/api/schedule/day?date=${encodeURIComponent(dateKey!)}`,
+      );
+      expect(day.ok()).toBeTruthy();
+      const payload = await day.json();
+      assertNoForbiddenMasterAppointmentKeys(payload);
+      expect((payload.masters ?? []).length).toBe(
+        (monthPayload.masters ?? []).length,
+      );
+
+      const byId = new Map(
+        collectAppointmentObjects(payload).map((item) => [
+          String(item.id),
+          item,
+        ]),
+      );
+
+      for (const [id, note] of ownerNotesById) {
+        const row = byId.get(id);
+        expect(row, `${email} missing appointment ${id}`).toBeTruthy();
+        expect(row).toHaveProperty("masterNote", note);
+        expect(row).not.toHaveProperty("clientPhone");
+        expect(row).not.toHaveProperty("comment");
+        expect(row).not.toHaveProperty("email");
+        expect(row).not.toHaveProperty("importantNote");
+      }
+
+      const patchId = ownerNotesById.keys().next().value as string;
+      const patchForbidden = await api.patch(`/api/appointments/${patchId}`, {
+        data: { importantNote: "попытка изменить пометку" },
+      });
+      expect(patchForbidden.status()).toBe(403);
+      assertNoPiiInBody(await patchForbidden.text());
+
+      return collectAppointmentObjects(payload)
+        .filter((item) => "masterNote" in item)
+        .map((item) => [String(item.id), item.masterNote] as const)
+        .sort(([left], [right]) => left.localeCompare(right));
+    }
+
+    const master1Notes = await assertMasterSeesAllNotes("master@example.local");
+    const master2Notes = await assertMasterSeesAllNotes("master2@example.local");
+    expect(master1Notes).toEqual(master2Notes);
+  });
+
   test("MASTER cannot access schedule cell editor API", async ({ request }) => {
     const api = await getAuthedApiContext(request, "master@example.local");
     const response = await api.get(

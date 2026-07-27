@@ -50,13 +50,15 @@ export function AppointmentCard({
         />
       ) : null}
 
-      {operational && appointment.importantNote ? (
+      {operational && appointment.importantNote?.trim() ? (
         <div className="mt-0.5">
           <AppointmentMasterNoteBlock note={appointment.importantNote} />
         </div>
       ) : null}
 
-      {master && appointment.masterNote ? (
+      {!operational &&
+      "masterNote" in appointment &&
+      appointment.masterNote?.trim() ? (
         <div className="mt-0.5">
           <AppointmentMasterNoteBlock note={appointment.masterNote} />
         </div>

@@ -272,6 +272,7 @@ function testMasterDtoAndScheduleOptions(): void {
 
   const ownerOpts = scheduleLoadOptionsForRole("OWNER");
   assert.equal(ownerOpts.includeOperationalNotes, true);
+  assert.equal(ownerOpts.appointmentVisibility, "operational");
 
   const masterAppointment = {
     id: "a1",
@@ -298,6 +299,37 @@ function testMasterDtoAndScheduleOptions(): void {
       false,
       `MASTER appointment не должен содержать ${key}`,
     );
+  }
+
+  // MASTER must not receive OWNER/MANAGER operational DTO
+  assert.notEqual(masterOpts.appointmentVisibility, "operational");
+  assert.ok(!WRITE_SCHEDULE_ROLES.includes("MASTER"));
+
+  // No per-master note scoping helpers; role options stay scheduleLoadOptionsForRole
+  assert.equal(
+    fs.existsSync(path.join(ROOT, "src/lib/schedule/viewer-master.ts")),
+    false,
+  );
+  assert.equal(
+    fs.existsSync(
+      path.join(ROOT, "src/lib/schedule/master-appointment-visibility.ts"),
+    ),
+    false,
+  );
+
+  for (const relative of [
+    "src/app/api/schedule/day/route.ts",
+    "src/app/api/schedule/month/route.ts",
+    "src/app/(internal)/schedule/page.tsx",
+  ]) {
+    const src = read(relative);
+    assert.match(
+      src,
+      /scheduleLoadOptionsForRole/,
+      `${relative}: ожидается scheduleLoadOptionsForRole`,
+    );
+    assert.doesNotMatch(src, /scheduleLoadOptionsForUser/);
+    assert.doesNotMatch(src, /viewerMasterId/);
   }
 
   const fullRequest: FullScheduleBookingRequestDto = {

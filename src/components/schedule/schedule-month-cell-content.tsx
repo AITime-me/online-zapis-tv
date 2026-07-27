@@ -38,9 +38,9 @@ export function formatMonthCellLine(item: ScheduleMonthCellItem): {
       isFullDayBlock: false,
       isExtraWork: false,
       hasMasterNote: operational
-        ? Boolean(item.importantNote)
-        : master
-          ? Boolean(item.masterNote)
+        ? Boolean(item.importantNote?.trim())
+        : "masterNote" in item
+          ? Boolean(item.masterNote?.trim())
           : false,
       hasPromotionLabels: operational
         ? item.appliedPromotions.length > 0
@@ -49,9 +49,9 @@ export function formatMonthCellLine(item: ScheduleMonthCellItem): {
           : false,
       promotionLabels: master ? item.promotionLabels : [],
       masterNote: operational
-        ? item.importantNote
-        : master
-          ? item.masterNote
+        ? item.importantNote?.trim() || null
+        : "masterNote" in item
+          ? item.masterNote?.trim() || null
           : null,
       rescheduleNotice:
         item.statusCode === "RESCHEDULED" ? CLIENT_RESCHEDULE_APPOINTMENT_NOTICE : null,

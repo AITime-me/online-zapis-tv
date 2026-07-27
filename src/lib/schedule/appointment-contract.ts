@@ -91,7 +91,9 @@ export function isMasterScheduleAppointment(
     | ScheduleAppointmentMasterFields
     | ScheduleAppointmentViewOnlyFields,
 ): appointment is ScheduleAppointmentMasterFields {
-  return "promotionLabels" in appointment;
+  // Discriminator is masterNote (always present on MASTER DTO, even when null).
+  // promotionLabels alone is insufficient if a client omits empty arrays.
+  return "masterNote" in appointment && !("clientPhone" in appointment);
 }
 
 export function assertMasterAppointmentShape(value: Record<string, unknown>): void {
