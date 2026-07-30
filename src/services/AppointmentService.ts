@@ -53,6 +53,15 @@ import {
   syncCompletedAppointmentClientLink,
 } from "@/services/AppointmentClientLinkService";
 import type { AppointmentClientLinkResult } from "@/types/appointment-client-link";
+import {
+  assertWritableIdNotExplicitlyCleared,
+  lockAndAssertAppointmentServicePolicy,
+  MASTER_ID_REQUIRED_MESSAGE,
+  MASTER_SERVICE_ID_REQUIRED_MESSAGE,
+  MasterServiceAssignmentError,
+  shouldValidateMasterServiceAssignment,
+  type AppointmentServicePolicy,
+} from "@/lib/schedule/master-service-assignment";
 
 export {
   resolveAppointmentWriteConflict,
@@ -103,6 +112,13 @@ function rethrowTimingValidation(error: unknown): never {
   throw error;
 }
 
+export function rethrowMasterServiceAssignment(error: unknown): never {
+  if (error instanceof MasterServiceAssignmentError) {
+    throw new AppointmentValidationError(error.message);
+  }
+  throw error;
+}
+
 function toBusyTimingSnapshot(
   appointment: AppointmentBusyTimingSnapshot,
 ): AppointmentBusyTimingSnapshot {
@@ -143,6 +159,29 @@ export async function runSerializableAppointmentWrite<T>(
   }
 
   throw new Error("appointment serializable transaction failed");
+}
+
+export type AppointmentServiceRuntime = {
+  db: Pick<Prisma.TransactionClient, "appointment">;
+  runSerializableWrite: typeof runSerializableAppointmentWrite;
+  resolveServiceTiming: typeof resolveServiceTimingForMaster;
+  recordPublicAcceptances: typeof recordRequiredPublicFormAcceptances;
+  syncCompletedClientLink: typeof syncCompletedAppointmentClientLink;
+};
+
+const DEFAULT_APPOINTMENT_SERVICE_RUNTIME: AppointmentServiceRuntime = {
+  db: prisma,
+  runSerializableWrite: runSerializableAppointmentWrite,
+  resolveServiceTiming: resolveServiceTimingForMaster,
+  recordPublicAcceptances: recordRequiredPublicFormAcceptances,
+  syncCompletedClientLink: syncCompletedAppointmentClientLink,
+};
+
+/** Узкая DI-seam для runtime/DB regression tests; HTTP payload её не контролирует. */
+export function createAppointmentServiceRuntime(
+  overrides: Partial<AppointmentServiceRuntime> = {},
+): AppointmentServiceRuntime {
+  return { ...DEFAULT_APPOINTMENT_SERVICE_RUNTIME, ...overrides };
 }
 
 function assertValidMasterNote(value: string | null | undefined): string | null {
@@ -247,8 +286,9 @@ function mapOperationalAppointment(
 
 async function reloadOperationalAppointmentDto(
   id: string,
+  runtime: AppointmentServiceRuntime = DEFAULT_APPOINTMENT_SERVICE_RUNTIME,
 ): Promise<OperationalAppointmentDto> {
-  const appointment = await prisma.appointment.findUnique({
+  const appointment = await runtime.db.appointment.findUnique({
     where: { id },
     include: { service: true },
   });
@@ -389,6 +429,11 @@ export type CreateAppointmentOptions = {
   allowAppointmentOverlap?: boolean;
 };
 
+type CreateAppointmentRecordOptions = CreateAppointmentOptions & {
+  /** Выбирается только серверным entrypoint, не принимается из HTTP payload. */
+  servicePolicy: AppointmentServicePolicy;
+};
+
 export type UpdateAppointmentOptions = {
   /**
    * Только ручной PATCH при смене тайминга или активации блокирующего статуса:
@@ -405,18 +450,21 @@ export async function createAppointment(
   input: AppointmentWriteInput,
   createdByUserId: string,
   options?: CreateAppointmentOptions,
+  runtime: AppointmentServiceRuntime = DEFAULT_APPOINTMENT_SERVICE_RUNTIME,
 ): Promise<AppointmentMutationResult> {
   const result = await createAppointmentRecord(input, createdByUserId, {
     allowAppointmentOverlap: options?.allowAppointmentOverlap === true,
-  });
+    servicePolicy: "INTERNAL",
+  }, runtime);
 
   const shouldSync = result.appointment.statusCode === "COMPLETED";
   const clientLink = shouldSync
-    ? await syncCompletedAppointmentClientLink(result.appointment.id)
+    ? await runtime.syncCompletedClientLink(result.appointment.id)
     : ({ status: "not_applicable" } satisfies AppointmentClientLinkResult);
 
   const appointment = await reloadOperationalAppointmentDto(
     result.appointment.id,
+    runtime,
   );
 
   return { appointment, clientLink };
@@ -426,6 +474,7 @@ export async function createOnlineAppointment(
   input: Omit<AppointmentWriteInput, "status" | "source"> & {
     serviceId: string;
   },
+  runtime: AppointmentServiceRuntime = DEFAULT_APPOINTMENT_SERVICE_RUNTIME,
 ): Promise<OnlineAppointmentCreateResult> {
   // Public path never receives overlap override options — overlap stays blocked.
   const result = await createAppointmentRecord(
@@ -436,6 +485,8 @@ export async function createOnlineAppointment(
       recordPublicLegalAcceptances: true,
     },
     null,
+    { servicePolicy: "PUBLIC_ONLINE" },
+    runtime,
   );
 
   if (!result.issuedManageToken) {
@@ -458,14 +509,23 @@ type AppointmentCreateRecordResult = {
 async function createAppointmentRecord(
   input: AppointmentWriteInput,
   createdByUserId: string | null,
-  options?: CreateAppointmentOptions,
+  options: CreateAppointmentRecordOptions,
+  runtime: AppointmentServiceRuntime,
 ): Promise<AppointmentCreateRecordResult> {
   try {
-    if (!input.masterId?.trim()) {
-      throw new AppointmentValidationError("Не указан мастер");
-    }
-    if (!input.serviceId?.trim()) {
-      throw new AppointmentValidationError("Не указана услуга");
+    try {
+      assertWritableIdNotExplicitlyCleared({
+        fieldPresent: true,
+        value: input.masterId,
+        emptyMessage: MASTER_ID_REQUIRED_MESSAGE,
+      });
+      assertWritableIdNotExplicitlyCleared({
+        fieldPresent: true,
+        value: input.serviceId,
+        emptyMessage: MASTER_SERVICE_ID_REQUIRED_MESSAGE,
+      });
+    } catch (error) {
+      rethrowMasterServiceAssignment(error);
     }
     if (!input.status) {
       throw new AppointmentValidationError("Не указан статус записи");
@@ -491,7 +551,7 @@ async function createAppointmentRecord(
       throw new AppointmentValidationError("Окончание должно быть позже начала");
     }
 
-    const serviceTiming = await resolveServiceTimingForMaster(
+    const serviceTiming = await runtime.resolveServiceTiming(
       input.masterId,
       input.serviceId!,
     );
@@ -578,7 +638,7 @@ async function createAppointmentRecord(
       });
     }
 
-    const appointment = await runSerializableAppointmentWrite(async (tx) => {
+    const appointment = await runtime.runSerializableWrite(async (tx) => {
       if (input.clientId) {
         try {
           await assertLinkableClientForAppointment(input.clientId, tx);
@@ -594,13 +654,20 @@ async function createAppointmentRecord(
         allowAppointmentOverlap: options?.allowAppointmentOverlap === true,
       });
 
-      const created = await tx.appointment.create({
-        data: createPayload,
-        include: { service: true },
-      });
+      let created;
+      try {
+        created = await createAppointmentWithValidatedServicePolicy(tx, {
+          masterId: input.masterId,
+          serviceId: input.serviceId!,
+          policy: options.servicePolicy,
+          data: createPayload,
+        });
+      } catch (error) {
+        rethrowMasterServiceAssignment(error);
+      }
 
       if (input.recordPublicLegalAcceptances && input.source === "ONLINE") {
-        await recordRequiredPublicFormAcceptances(tx, {
+        await runtime.recordPublicAcceptances(tx, {
           source: "ONLINE_BOOKING",
           appointmentId: created.id,
           clientId: input.clientId ?? null,
@@ -635,163 +702,224 @@ async function createAppointmentRecord(
   }
 }
 
+type AppointmentPolicyWriteTx = Pick<
+  Prisma.TransactionClient,
+  "$queryRaw" | "appointment"
+>;
+
+/**
+ * Production orchestration point: policy lock и create используют один tx,
+ * причём lock выполняется непосредственно перед write.
+ */
+async function createAppointmentWithValidatedServicePolicy(
+  tx: AppointmentPolicyWriteTx,
+  input: {
+    masterId: string;
+    serviceId: string;
+    policy: AppointmentServicePolicy;
+    data: Prisma.AppointmentCreateInput;
+  },
+): Promise<Appointment & { service: { publicName: string } | null }> {
+  await lockAndAssertAppointmentServicePolicy(tx, {
+    masterId: input.masterId,
+    serviceId: input.serviceId,
+    policy: input.policy,
+  });
+
+  return tx.appointment.create({
+    data: input.data,
+    include: { service: true },
+  });
+}
+
+async function lockAndLoadAppointmentForUpdate(
+  tx: Prisma.TransactionClient,
+  id: string,
+): Promise<(Appointment & { service: { publicName: string } | null }) | null> {
+  const locked = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    SELECT a."id"
+    FROM "appointments" AS a
+    WHERE a."id" = ${id}::uuid
+    FOR UPDATE OF a
+  `);
+  if (locked.length === 0) {
+    return null;
+  }
+
+  return tx.appointment.findUnique({
+    where: { id },
+    include: { service: true },
+  });
+}
+
 export async function updateAppointment(
   id: string,
   input: Partial<AppointmentWriteInput>,
   options?: UpdateAppointmentOptions,
+  runtime: AppointmentServiceRuntime = DEFAULT_APPOINTMENT_SERVICE_RUNTIME,
 ): Promise<AppointmentMutationResult> {
-  const existing = await prisma.appointment.findUnique({
-    where: { id },
-    include: { service: true },
-  });
-
-  if (!existing) {
-    throw new AppointmentValidationError("Запись не найдена");
-  }
-
-  // Защита от гонки: отложенный PATCH после мягкой отмены не должен
-  // восстанавливать CANCELLED запись в активный статус.
-  if (existing.status === "CANCELLED") {
-    throw new AppointmentValidationError(
-      "Запись уже отменена и не может быть изменена",
-    );
-  }
-
-  const retryOnly =
-    options?.retryClientLink === true &&
-    Object.keys(input).length === 0;
-
-  if (retryOnly) {
-    if (existing.status !== "COMPLETED") {
-      throw new AppointmentValidationError(
-        "Повторная привязка доступна только для выполненной записи",
-      );
-    }
-    const clientLink = await syncCompletedAppointmentClientLink(id);
-    const appointment = await reloadOperationalAppointmentDto(id);
-    return { appointment, clientLink };
-  }
-
-  const existingSnapshot = toBusyTimingSnapshot(existing);
-  const currentBusyEnd = getAppointmentBusyInterval(existingSnapshot).endsAt;
-
-  const merged: AppointmentWriteInput = {
-    masterId: input.masterId ?? existing.masterId,
-    dateKey: input.dateKey ?? formatDateKeyInStudio(existing.startsAt),
-    startTime: input.startTime ?? formatStudioTimeInput(existing.startsAt),
-    endTime:
-      input.endTime !== undefined
-        ? input.endTime
-        : formatStudioTimeInput(currentBusyEnd),
-    serviceId:
-      input.serviceId !== undefined ? input.serviceId : existing.serviceId,
-    clientName: input.clientName ?? existing.clientName,
-    clientPhone: input.clientPhone ?? existing.clientPhone,
-    status: input.status ?? existing.status,
-    source: input.source ?? existing.source,
-    comment: input.comment !== undefined ? input.comment : existing.comment,
-    importantNote:
-      input.importantNote !== undefined
-        ? assertValidMasterNote(input.importantNote)
-        : existing.importantNote,
-    isBold: input.isBold ?? existing.isBold,
-    isManualTimeOverride:
-      input.isManualTimeOverride ?? existing.isManualTimeOverride,
-  };
-
-  const desiredStartsAt = parseStudioDateTime(merged.dateKey, merged.startTime);
-  const desiredFreeAt = parseStudioDateTime(merged.dateKey, merged.endTime);
-
-  if (desiredFreeAt <= desiredStartsAt) {
-    throw new AppointmentValidationError("Окончание должно быть позже начала");
-  }
-
-  const timingDirty = isAppointmentTimingDirty({
-    current: existingSnapshot,
-    currentServiceId: existing.serviceId,
-    currentMasterId: existing.masterId,
-    currentDateKey: formatDateKeyInStudio(existing.startsAt),
-    desiredStartsAt,
-    desiredFreeAt,
-    desiredServiceId: merged.serviceId ?? null,
-    desiredMasterId: merged.masterId,
-    desiredDateKey: merged.dateKey,
-  });
-
-  const nonTimingData: Prisma.AppointmentUpdateInput = {
-    service:
-      merged.serviceId != null
-        ? { connect: { id: merged.serviceId } }
-        : { disconnect: true },
-    clientName: merged.clientName.trim(),
-    clientPhone: merged.clientPhone.trim(),
-    comment: merged.comment?.trim() || null,
-    importantNote: assertValidMasterNote(merged.importantNote),
-    isBold: merged.isBold ?? false,
-    status: merged.status,
-    source: merged.source,
-  };
-
+  const hasMasterIdField = Object.prototype.hasOwnProperty.call(
+    input,
+    "masterId",
+  );
+  const hasServiceIdField = Object.prototype.hasOwnProperty.call(
+    input,
+    "serviceId",
+  );
   const hasClientIdChange = Object.prototype.hasOwnProperty.call(
     input,
     "clientId",
   );
+  const retryOnly =
+    options?.retryClientLink === true && Object.keys(input).length === 0;
 
-  let data: Prisma.AppointmentUpdateInput = nonTimingData;
-
-  if (timingDirty) {
-    const serviceTiming = merged.serviceId
-      ? await resolveServiceTimingForMaster(merged.masterId, merged.serviceId)
-      : null;
-
-    let timingWrite;
-    try {
-      timingWrite = buildAppointmentTimingWriteData({
-        startsAt: desiredStartsAt,
-        desiredFreeAt,
-        standardDurationMinutes: serviceTiming?.durationMinutes ?? null,
-        standardBreakAfterMinutes: serviceTiming?.breakAfterMinutes ?? null,
-        breakAfterMinutes: serviceTiming?.breakAfterMinutes ?? 0,
-        existing: existingSnapshot,
-        isUpdate: true,
-      });
-    } catch (error) {
-      rethrowTimingValidation(error);
-    }
-
-    data = {
-      ...nonTimingData,
-      master: { connect: { id: merged.masterId } },
-      startsAt: desiredStartsAt,
-      endsAt: timingWrite.endsAt,
-      serviceDurationMinutes: timingWrite.serviceDurationMinutes,
-      breakAfterMinutes: timingWrite.breakAfterMinutes,
-      standardDurationMinutes: timingWrite.standardDurationMinutes,
-      standardBreakAfterMinutes: timingWrite.standardBreakAfterMinutes,
-      isManualTimeOverride: timingWrite.isManualTimeOverride,
-      timingSemanticsVersion: timingWrite.timingSemanticsVersion,
-      timingCanonicalStoredAt: timingWrite.timingCanonicalStoredAt,
-    };
+  try {
+    assertWritableIdNotExplicitlyCleared({
+      fieldPresent: hasMasterIdField,
+      value: input.masterId,
+      emptyMessage: MASTER_ID_REQUIRED_MESSAGE,
+    });
+    assertWritableIdNotExplicitlyCleared({
+      fieldPresent: hasServiceIdField,
+      value: input.serviceId,
+      emptyMessage: MASTER_SERVICE_ID_REQUIRED_MESSAGE,
+    });
+  } catch (error) {
+    rethrowMasterServiceAssignment(error);
   }
 
-  const needsConflictCheck = isBlockingAppointmentStatus(merged.status);
-  const wasBlocking = isBlockingAppointmentStatus(existing.status);
-  const willBeBlocking = needsConflictCheck;
-  // Авто-allow только для уже занятого слота: тайминг не менялся и статус
-  // остаётся блокирующим. Активация RESCHEDULED/CANCELLED → blocking
-  // требует явного allowAppointmentOverlap (как смена времени).
-  const allowAppointmentOverlap =
-    options?.allowAppointmentOverlap === true ||
-    (!timingDirty && wasBlocking && willBeBlocking);
+  const transactionResult = await runtime.runSerializableWrite(async (tx) => {
+    const existing = await lockAndLoadAppointmentForUpdate(tx, id);
+    if (!existing) {
+      throw new AppointmentValidationError("Запись не найдена");
+    }
+    if (existing.status === "CANCELLED") {
+      throw new AppointmentValidationError(
+        "Запись уже отменена и не может быть изменена",
+      );
+    }
+    if (retryOnly) {
+      if (existing.status !== "COMPLETED") {
+        throw new AppointmentValidationError(
+          "Повторная привязка доступна только для выполненной записи",
+        );
+      }
+      return { appointment: existing, existing };
+    }
 
-  async function applyClientLinkAndUpdate(
-    tx: Prisma.TransactionClient,
-  ): Promise<Appointment & { service: { publicName: string } | null }> {
-    const writeData: Prisma.AppointmentUpdateInput = { ...data };
+    const existingSnapshot = toBusyTimingSnapshot(existing);
+    const currentBusyEnd = getAppointmentBusyInterval(existingSnapshot).endsAt;
+    const merged: AppointmentWriteInput = {
+      masterId: hasMasterIdField
+        ? (input.masterId as string)
+        : existing.masterId,
+      dateKey: input.dateKey ?? formatDateKeyInStudio(existing.startsAt),
+      startTime: input.startTime ?? formatStudioTimeInput(existing.startsAt),
+      endTime:
+        input.endTime !== undefined
+          ? input.endTime
+          : formatStudioTimeInput(currentBusyEnd),
+      serviceId: hasServiceIdField
+        ? (input.serviceId as string)
+        : existing.serviceId,
+      clientName: input.clientName ?? existing.clientName,
+      clientPhone: input.clientPhone ?? existing.clientPhone,
+      status: input.status ?? existing.status,
+      source: input.source ?? existing.source,
+      comment: input.comment !== undefined ? input.comment : existing.comment,
+      importantNote:
+        input.importantNote !== undefined
+          ? assertValidMasterNote(input.importantNote)
+          : existing.importantNote,
+      isBold: input.isBold ?? existing.isBold,
+      isManualTimeOverride:
+        input.isManualTimeOverride ?? existing.isManualTimeOverride,
+    };
+
+    const desiredStartsAt = parseStudioDateTime(
+      merged.dateKey,
+      merged.startTime,
+    );
+    const desiredFreeAt = parseStudioDateTime(merged.dateKey, merged.endTime);
+    if (desiredFreeAt <= desiredStartsAt) {
+      throw new AppointmentValidationError("Окончание должно быть позже начала");
+    }
+
+    const needsAssignmentCheck = shouldValidateMasterServiceAssignment({
+      isCreate: false,
+      existingMasterId: existing.masterId,
+      existingServiceId: existing.serviceId,
+      desiredMasterId: merged.masterId,
+      desiredServiceId: merged.serviceId,
+    });
+    const timingDirty = isAppointmentTimingDirty({
+      current: existingSnapshot,
+      currentServiceId: existing.serviceId,
+      currentMasterId: existing.masterId,
+      currentDateKey: formatDateKeyInStudio(existing.startsAt),
+      desiredStartsAt,
+      desiredFreeAt,
+      desiredServiceId: merged.serviceId ?? null,
+      desiredMasterId: merged.masterId,
+      desiredDateKey: merged.dateKey,
+    });
+
+    let data: Prisma.AppointmentUpdateInput = {
+      ...(merged.masterId !== existing.masterId
+        ? { master: { connect: { id: merged.masterId } } }
+        : {}),
+      ...(merged.serviceId !== existing.serviceId
+        ? {
+            service:
+              merged.serviceId != null
+                ? { connect: { id: merged.serviceId } }
+                : { disconnect: true },
+          }
+        : {}),
+      clientName: merged.clientName.trim(),
+      clientPhone: merged.clientPhone.trim(),
+      comment: merged.comment?.trim() || null,
+      importantNote: assertValidMasterNote(merged.importantNote),
+      isBold: merged.isBold ?? false,
+      status: merged.status,
+      source: merged.source,
+    };
+
+    if (timingDirty) {
+      const serviceTiming = merged.serviceId
+        ? await runtime.resolveServiceTiming(merged.masterId, merged.serviceId)
+        : null;
+      let timingWrite;
+      try {
+        timingWrite = buildAppointmentTimingWriteData({
+          startsAt: desiredStartsAt,
+          desiredFreeAt,
+          standardDurationMinutes: serviceTiming?.durationMinutes ?? null,
+          standardBreakAfterMinutes: serviceTiming?.breakAfterMinutes ?? null,
+          breakAfterMinutes: serviceTiming?.breakAfterMinutes ?? 0,
+          existing: existingSnapshot,
+          isUpdate: true,
+        });
+      } catch (error) {
+        rethrowTimingValidation(error);
+      }
+      data = {
+        ...data,
+        startsAt: desiredStartsAt,
+        endsAt: timingWrite.endsAt,
+        serviceDurationMinutes: timingWrite.serviceDurationMinutes,
+        breakAfterMinutes: timingWrite.breakAfterMinutes,
+        standardDurationMinutes: timingWrite.standardDurationMinutes,
+        standardBreakAfterMinutes: timingWrite.standardBreakAfterMinutes,
+        isManualTimeOverride: timingWrite.isManualTimeOverride,
+        timingSemanticsVersion: timingWrite.timingSemanticsVersion,
+        timingCanonicalStoredAt: timingWrite.timingCanonicalStoredAt,
+      };
+    }
 
     if (hasClientIdChange) {
       if (input.clientId === null) {
-        writeData.client = { disconnect: true };
+        data.client = { disconnect: true };
       } else if (typeof input.clientId === "string" && input.clientId.trim()) {
         try {
           await assertLinkableClientForAppointment(input.clientId.trim(), tx);
@@ -800,35 +928,49 @@ export async function updateAppointment(
             "Выбранный клиент недоступен для привязки",
           );
         }
-        writeData.client = { connect: { id: input.clientId.trim() } };
+        data.client = { connect: { id: input.clientId.trim() } };
       }
     }
 
-    return tx.appointment.update({
+    const needsConflictCheck = isBlockingAppointmentStatus(merged.status);
+    const wasBlocking = isBlockingAppointmentStatus(existing.status);
+    const willBeBlocking = needsConflictCheck;
+    const allowAppointmentOverlap =
+      options?.allowAppointmentOverlap === true ||
+      (!timingDirty && wasBlocking && willBeBlocking);
+    if (needsConflictCheck) {
+      await assertNoBlockingConflict(tx, merged, id, {
+        allowAppointmentOverlap,
+      });
+    }
+
+    if (needsAssignmentCheck) {
+      try {
+        await lockAndAssertAppointmentServicePolicy(tx, {
+          masterId: merged.masterId,
+          serviceId: merged.serviceId!,
+          policy: "INTERNAL",
+        });
+      } catch (error) {
+        rethrowMasterServiceAssignment(error);
+      }
+    }
+
+    const appointment = await tx.appointment.update({
       where: { id },
-      data: writeData,
+      data,
       include: { service: true },
     });
+    return { appointment, existing };
+  });
+
+  if (retryOnly) {
+    const clientLink = await runtime.syncCompletedClientLink(id);
+    const appointment = await reloadOperationalAppointmentDto(id, runtime);
+    return { appointment, clientLink };
   }
 
-  const appointment = needsConflictCheck
-    ? await runSerializableAppointmentWrite(async (tx) => {
-        // merged.endTime is desired free-at; candidate breakAfterMinutes = 0.
-        // excludeAppointmentId = id — запись не конфликтует сама с собой.
-        await assertNoBlockingConflict(tx, merged, id, {
-          allowAppointmentOverlap,
-        });
-
-        return applyClientLinkAndUpdate(tx);
-      })
-    : hasClientIdChange
-      ? await prisma.$transaction(async (tx) => applyClientLinkAndUpdate(tx))
-      : await prisma.appointment.update({
-          where: { id },
-          data,
-          include: { service: true },
-        });
-
+  const { appointment, existing } = transactionResult;
   const becameCompleted =
     existing.status !== "COMPLETED" && appointment.status === "COMPLETED";
   const hasExplicitClientConnect =
@@ -839,17 +981,15 @@ export async function updateAppointment(
     becameCompleted ||
     (options?.retryClientLink === true && appointment.status === "COMPLETED") ||
     (appointment.status === "COMPLETED" && hasExplicitClientConnect);
-
   const clientLink = shouldSync
-    ? await syncCompletedAppointmentClientLink(appointment.id)
+    ? await runtime.syncCompletedClientLink(appointment.id)
     : ({ status: "not_applicable" } satisfies AppointmentClientLinkResult);
-
   const appointmentDto =
     clientLink.status === "created" ||
     clientLink.status === "linked" ||
     clientLink.status === "already_linked" ||
     hasClientIdChange
-      ? await reloadOperationalAppointmentDto(appointment.id)
+      ? await reloadOperationalAppointmentDto(appointment.id, runtime)
       : mapOperationalAppointment(appointment);
 
   return { appointment: appointmentDto, clientLink };

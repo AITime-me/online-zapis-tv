@@ -26,7 +26,11 @@ import {
   type SlotChainTiming,
   type SlotChainWorkWindow,
 } from "@/lib/booking/online-slot-chains";
-import { onlinePublicMasterServiceWhere } from "@/lib/booking/online-public-master-service";
+import {
+  isOnlinePublicBookable,
+  onlinePublicMastersForServiceWhere,
+  onlinePublicMasterServiceWhere,
+} from "@/lib/booking/online-public-master-service";
 import {
   addMinutesSafe,
   formatStudioTimeInput,
@@ -72,6 +76,21 @@ export type {
   BookingCatalogService,
   BookingServiceMode,
 } from "@/lib/booking/catalog-types";
+
+export type BookingPolicyDb = Pick<
+  Prisma.TransactionClient,
+  "service" | "master" | "masterService"
+>;
+
+export type BookingPolicyRuntime = {
+  db: BookingPolicyDb;
+  resolveTiming: typeof resolveServiceTimingForMaster;
+};
+
+const DEFAULT_BOOKING_POLICY_RUNTIME: BookingPolicyRuntime = {
+  db: prisma,
+  resolveTiming: resolveServiceTimingForMaster,
+};
 
 export type OnlineBookingInput = {
   serviceId: string;
@@ -306,29 +325,39 @@ async function loadServicePromoContext(serviceId: string) {
   });
 }
 
-async function assertOnlineBookable(
+export async function assertOnlineBookable(
   masterId: string,
   serviceId: string,
+  runtime: BookingPolicyRuntime = DEFAULT_BOOKING_POLICY_RUNTIME,
 ): Promise<{ durationMinutes: number; breakAfterMinutes: number }> {
   const [service, master, masterService, timing] = await Promise.all([
-    prisma.service.findUnique({
+    runtime.db.service.findUnique({
       where: { id: serviceId },
       select: {
+        id: true,
         isActive: true,
         isOnlineBookingEnabled: true,
         isPublic: true,
         category: { select: { isActive: true, isPublic: true } },
       },
     }),
-    prisma.master.findUnique({
+    runtime.db.master.findUnique({
       where: { id: masterId },
-      select: { isActive: true, isOnlineBookingEnabled: true },
+      select: {
+        isActive: true,
+        isPublic: true,
+        isOnlineBookingEnabled: true,
+      },
     }),
-    prisma.masterService.findUnique({
+    runtime.db.masterService.findUnique({
       where: { masterId_serviceId: { masterId, serviceId } },
-      select: { isEnabled: true, isOnlineBookingEnabled: true },
+      select: {
+        isEnabled: true,
+        isPublic: true,
+        isOnlineBookingEnabled: true,
+      },
     }),
-    resolveServiceTimingForMaster(masterId, serviceId),
+    runtime.resolveTiming(masterId, serviceId),
   ]);
 
   if (!service) {
@@ -336,23 +365,31 @@ async function assertOnlineBookable(
   }
 
   if (
-    !service.isActive ||
-    !service.isOnlineBookingEnabled ||
-    !service.isPublic ||
-    !service.category?.isActive ||
-    !service.category?.isPublic
+    !isOnlinePublicBookable({
+      service,
+      master,
+      masterService,
+    })
   ) {
-    throw new OnlineServiceUnavailableError();
+    if (
+      !service.isActive ||
+      !service.isOnlineBookingEnabled ||
+      !service.isPublic ||
+      !service.category?.isActive ||
+      !service.category?.isPublic
+    ) {
+      throw new OnlineServiceUnavailableError();
+    }
+
+    throw new AppointmentValidationError(
+      "Услуга или мастер недоступны для онлайн-записи",
+    );
   }
 
-  if (
-    !master?.isActive ||
-    !master.isOnlineBookingEnabled ||
-    masterService?.isEnabled !== true ||
-    masterService.isOnlineBookingEnabled !== true ||
-    timing == null
-  ) {
-    throw new AppointmentValidationError("Услуга или мастер недоступны для онлайн-записи");
+  if (timing == null) {
+    throw new AppointmentValidationError(
+      "Услуга или мастер недоступны для онлайн-записи",
+    );
   }
 
   return timing;
@@ -461,31 +498,46 @@ type ServiceBookingModeResult = {
   managerMasterName: string | null;
 };
 
-async function canBookServiceOnline(
+export async function canBookServiceOnline(
   serviceId: string,
-  service: { isOnlineBookingEnabled: boolean },
+  service: {
+    id: string;
+    isActive: boolean;
+    isPublic: boolean;
+    isOnlineBookingEnabled: boolean;
+    category: { isActive: boolean; isPublic: boolean } | null;
+  },
   link: {
     isEnabled: boolean;
+    isPublic: boolean;
     isOnlineBookingEnabled: boolean;
     masterId: string;
-    master: { isOnlineBookingEnabled: boolean };
+    master: {
+      isActive: boolean;
+      isPublic: boolean;
+      isOnlineBookingEnabled: boolean;
+    };
   },
+  resolveTiming: typeof resolveServiceTimingForMaster =
+    resolveServiceTimingForMaster,
 ): Promise<boolean> {
   if (
-    !service.isOnlineBookingEnabled ||
-    !link.isEnabled ||
-    !link.isOnlineBookingEnabled ||
-    !link.master.isOnlineBookingEnabled
+    !isOnlinePublicBookable({
+      service,
+      master: link.master,
+      masterService: link,
+    })
   ) {
     return false;
   }
 
-  const timing = await resolveServiceTimingForMaster(link.masterId, serviceId);
+  const timing = await resolveTiming(link.masterId, serviceId);
   return timing != null;
 }
 
-async function resolveServiceBookingModes(
+export async function resolveServiceBookingModes(
   serviceIds: string[],
+  runtime: BookingPolicyRuntime = DEFAULT_BOOKING_POLICY_RUNTIME,
 ): Promise<Map<string, ServiceBookingModeResult>> {
   const result = new Map<string, ServiceBookingModeResult>();
 
@@ -494,11 +546,17 @@ async function resolveServiceBookingModes(
   }
 
   const [services, links] = await Promise.all([
-    prisma.service.findMany({
+    runtime.db.service.findMany({
       where: { id: { in: serviceIds } },
-      select: { id: true, isActive: true, isOnlineBookingEnabled: true },
+      select: {
+        id: true,
+        isActive: true,
+        isPublic: true,
+        isOnlineBookingEnabled: true,
+        category: { select: { isActive: true, isPublic: true } },
+      },
     }),
-    prisma.masterService.findMany({
+    runtime.db.masterService.findMany({
       where: {
         serviceId: { in: serviceIds },
         isEnabled: true,
@@ -509,6 +567,8 @@ async function resolveServiceBookingModes(
           select: {
             id: true,
             publicName: true,
+            isActive: true,
+            isPublic: true,
             isOnlineBookingEnabled: true,
             sortOrder: true,
           },
@@ -537,7 +597,14 @@ async function resolveServiceBookingModes(
 
     let hasOnlinePath = false;
     for (const link of serviceLinks) {
-      if (await canBookServiceOnline(serviceId, service, link)) {
+      if (
+        await canBookServiceOnline(
+          serviceId,
+          service,
+          link,
+          runtime.resolveTiming,
+        )
+      ) {
         hasOnlinePath = true;
         break;
       }
@@ -630,20 +697,10 @@ export async function getBookingCatalog(): Promise<{
 
 export async function listMastersForService(
   serviceId: string,
+  runtime: BookingPolicyRuntime = DEFAULT_BOOKING_POLICY_RUNTIME,
 ): Promise<BookingCatalogMaster[]> {
-  const masters = await prisma.master.findMany({
-    where: {
-      isActive: true,
-      isOnlineBookingEnabled: true,
-      isPublic: true,
-      masterServices: {
-        some: {
-          serviceId,
-          isEnabled: true,
-          isOnlineBookingEnabled: true,
-        },
-      },
-    },
+  const masters = await runtime.db.master.findMany({
+    where: onlinePublicMastersForServiceWhere(serviceId),
     orderBy: { sortOrder: "asc" },
     select: {
       id: true,
@@ -657,7 +714,7 @@ export async function listMastersForService(
   const withTiming = await Promise.all(
     masters.map(async (master) => ({
       master,
-      timing: await resolveServiceTimingForMaster(master.id, serviceId),
+      timing: await runtime.resolveTiming(master.id, serviceId),
     })),
   );
 
@@ -685,18 +742,10 @@ export async function listBookableMasters(): Promise<BookingCatalogMaster[]> {
 
 export async function listServicesForMaster(
   masterId: string,
+  runtime: BookingPolicyRuntime = DEFAULT_BOOKING_POLICY_RUNTIME,
 ): Promise<BookingCatalogService[]> {
-  const masterServices = await prisma.masterService.findMany({
-    where: {
-      masterId,
-      isEnabled: true,
-      isOnlineBookingEnabled: true,
-      service: {
-        isActive: true,
-        isOnlineBookingEnabled: true,
-        id: { notIn: [...SEED_TEST_SERVICE_IDS] },
-      },
-    },
+  const masterServices = await runtime.db.masterService.findMany({
+    where: onlinePublicMasterServiceWhere(masterId),
     include: {
       service: {
         select: {
@@ -717,7 +766,7 @@ export async function listServicesForMaster(
   const services: BookingCatalogService[] = [];
 
   for (const entry of masterServices) {
-    const timing = await resolveServiceTimingForMaster(masterId, entry.serviceId);
+    const timing = await runtime.resolveTiming(masterId, entry.serviceId);
     if (!timing) {
       continue;
     }

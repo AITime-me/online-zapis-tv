@@ -4,8 +4,8 @@ import {
   APPOINTMENT_SOURCE_LABELS,
   APPOINTMENT_STATUS_LABELS,
 } from "@/lib/schedule/labels";
+import { internalEditorMasterServiceWhere } from "@/lib/schedule/internal-editor-master-service";
 import { resolveMasterWorkHours } from "@/lib/schedule/master-work-hours";
-import { SEED_TEST_SERVICE_IDS } from "@/lib/services/seed-test-service-ids";
 import { resolveServiceTimingForMaster } from "@/services/ServiceTimingService";
 
 export type EditorServiceOption = {
@@ -57,75 +57,11 @@ async function mapBookableServiceOption(
   };
 }
 
-async function resolveIncludedServiceOption(
-  masterId: string,
-  serviceId: string,
-): Promise<EditorServiceOption | null> {
-  const service = await prisma.service.findUnique({
-    where: { id: serviceId },
-    select: {
-      id: true,
-      publicName: true,
-      durationMinutes: true,
-      breakAfterMinutes: true,
-      priceFrom: true,
-      priceTo: true,
-      isActive: true,
-      isOnlineBookingEnabled: true,
-    },
-  });
-
-  if (!service) {
-    return null;
-  }
-
-  const masterService = await prisma.masterService.findUnique({
-    where: {
-      masterId_serviceId: { masterId, serviceId },
-    },
-    select: { isEnabled: true, isOnlineBookingEnabled: true },
-  });
-
-  const timing = await resolveServiceTimingForMaster(masterId, serviceId);
-  const durationMinutes = timing?.durationMinutes ?? service.durationMinutes;
-  const breakAfterMinutes =
-    timing?.breakAfterMinutes ?? service.breakAfterMinutes;
-
-  const isBookable =
-    service.isActive &&
-    service.isOnlineBookingEnabled &&
-    masterService?.isEnabled === true &&
-    masterService.isOnlineBookingEnabled === true &&
-    timing != null;
-
-  return {
-    id: service.id,
-    publicName: isBookable
-      ? service.publicName
-      : `${service.publicName} (текущая, недоступна для новых записей)`,
-    durationMinutes,
-    breakAfterMinutes,
-    totalBusyMinutes: durationMinutes + breakAfterMinutes,
-    priceFrom: decimalToNumber(service.priceFrom),
-    priceTo: decimalToNumber(service.priceTo),
-    unavailable: !isBookable,
-  };
-}
-
 export async function listBookableServicesForMaster(
   masterId: string,
 ): Promise<EditorServiceOption[]> {
   const masterServices = await prisma.masterService.findMany({
-    where: {
-      masterId,
-      isEnabled: true,
-      isOnlineBookingEnabled: true,
-      service: {
-        isActive: true,
-        isOnlineBookingEnabled: true,
-        id: { notIn: [...SEED_TEST_SERVICE_IDS] },
-      },
-    },
+    where: internalEditorMasterServiceWhere(masterId),
     include: {
       service: {
         select: {
@@ -149,7 +85,6 @@ export async function listBookableServicesForMaster(
 export async function getScheduleEditorOptions(
   masterId: string,
   dateKey: string,
-  includeServiceId?: string | null,
 ) {
   const master = await prisma.master.findUnique({
     where: { id: masterId },
@@ -167,19 +102,6 @@ export async function getScheduleEditorOptions(
 
   const workHours = resolveMasterWorkHours(master, dateKey);
   const services = await listBookableServicesForMaster(masterId);
-
-  if (
-    includeServiceId &&
-    !services.some((service) => service.id === includeServiceId)
-  ) {
-    const included = await resolveIncludedServiceOption(
-      masterId,
-      includeServiceId,
-    );
-    if (included) {
-      services.unshift(included);
-    }
-  }
 
   return {
     master: {
