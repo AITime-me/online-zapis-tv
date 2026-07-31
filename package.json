@@ -51,6 +51,7 @@
     "test:security:schedule-zoom-ui": "tsx scripts/schedule-zoom-ui-check.tsx",
     "test:security:client-suggest-ui": "tsx scripts/client-suggest-field-ui-check.tsx",
     "test:security:problem-report": "tsx scripts/security-problem-report-check.ts",
+    "test:security:problem-report-compose-env": "tsx scripts/security-problem-report-compose-env-check.ts",
     "test:security:problem-report-db": "tsx scripts/security-problem-report-db-check.ts",
     "test:security:problem-report-ui": "tsx scripts/report-problem-form-ui-check.tsx",
     "test:e2e:ux-bundle": "playwright test tests/ux-bundle-critical.spec.ts",
