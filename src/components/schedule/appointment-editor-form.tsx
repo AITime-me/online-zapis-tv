@@ -961,6 +961,7 @@ export function AppointmentEditorForm({
           inputId={fieldId("clientName")}
           value={form.clientName}
           disabled={!canEdit || isLinkActionPending}
+          linkedClientId={selectedClientId}
           onValueChange={(value) => {
             setForm((current) => ({ ...current, clientName: value }));
             const cleared = resolveNextClientLinkUiState({
@@ -999,6 +1000,7 @@ export function AppointmentEditorForm({
           inputId={fieldId("clientPhone")}
           value={form.clientPhone}
           disabled={!canEdit || isLinkActionPending}
+          linkedClientId={selectedClientId}
           onValueChange={(value) => {
             setForm((current) => ({ ...current, clientPhone: value }));
             const cleared = resolveNextClientLinkUiState({
@@ -1561,6 +1563,7 @@ export function NewAppointmentForm({
           mode="name"
           inputId={fieldId("clientName")}
           value={form.clientName}
+          linkedClientId={selectedClientId}
           onValueChange={(value) => {
             setForm((current) => ({ ...current, clientName: value }));
             setSelectedClientId(null);
@@ -1585,6 +1588,7 @@ export function NewAppointmentForm({
           mode="phone"
           inputId={fieldId("clientPhone")}
           value={form.clientPhone}
+          linkedClientId={selectedClientId}
           onValueChange={(value) => {
             setForm((current) => ({ ...current, clientPhone: value }));
             setSelectedClientId(null);
@@ -1599,6 +1603,18 @@ export function NewAppointmentForm({
           }}
         />
       </EditorField>
+
+      {selectedClientId ? (
+        <div className="mt-1 text-[10px] text-zinc-600">
+          <button
+            type="button"
+            className="underline"
+            onClick={() => setSelectedClientId(null)}
+          >
+            Снять связь
+          </button>
+        </div>
+      ) : null}
 
       <div className="mt-2 grid grid-cols-2 gap-2">
         <EditorField field="status" htmlFor={fieldId("status")}>

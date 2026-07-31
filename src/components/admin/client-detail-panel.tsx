@@ -13,10 +13,12 @@ const REQUEST_TYPE_LABELS: Record<BookingRequestType, string> = {
   MANAGER_REQUEST: "Заявка через менеджера",
   CONSULTATION_REQUEST: "Консультация",
   RESCHEDULE_REQUEST: "Перенос записи",
+  WEBSITE_PROBLEM_REPORT: "Проблема на сайте",
 };
 
 const REQUEST_SOURCE_LABELS = {
   ONLINE: "Онлайн",
+  WEBSITE_PROBLEM_REPORT: "Проблема на сайте",
 } as const;
 
 function formatDate(value: string | null): string {

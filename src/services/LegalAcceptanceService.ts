@@ -84,6 +84,31 @@ export async function recordRequiredPublicFormAcceptances(
   });
 }
 
+/**
+ * Только согласие на ПД (без оферты) — для форм вроде «Сообщить о проблеме».
+ */
+export async function recordPersonalDataConsentAcceptance(
+  tx: Tx,
+  link: PublicLegalAcceptanceLink,
+): Promise<void> {
+  const consentPublished = await requirePublishedVersion(tx, "consent");
+
+  await tx.legalAcceptanceRecord.create({
+    data: {
+      acceptanceType: "PERSONAL_DATA_CONSENT",
+      documentVersionId: consentPublished.version.id,
+      documentSlug: consentPublished.document.slug,
+      contentHash: consentPublished.version.contentHash,
+      source: link.source,
+      appointmentId: link.appointmentId ?? null,
+      bookingRequestId: link.bookingRequestId ?? null,
+      clientId: link.clientId ?? null,
+      gamePlayId: link.gamePlayId ?? null,
+      requestReference: link.requestReference ?? null,
+    },
+  });
+}
+
 export function resolveAcceptanceSourceForBookingRequestType(
   type: "MANAGER_REQUEST" | "CONSULTATION_REQUEST",
   hasGamePlay: boolean,

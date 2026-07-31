@@ -4,6 +4,7 @@ import {
   BookingHeader,
   BookingHero,
 } from "@/components/booking/booking-ui";
+import { ReportProblemEntry } from "@/components/booking/report-problem-form";
 
 export const metadata = {
   title: "Онлайн-запись — Твоё время",
@@ -17,6 +18,7 @@ export default function BookingPage() {
       <main className="booking-page-main mx-auto min-w-0 max-w-3xl px-4 pb-12 md:px-6 md:pb-16">
         <BookingHero />
         <BookingWizard />
+        <ReportProblemEntry />
       </main>
     </BookingBrandShell>
   );

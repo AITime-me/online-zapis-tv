@@ -76,10 +76,12 @@ enum BookingRequestType {
   MANAGER_REQUEST
   CONSULTATION_REQUEST
   RESCHEDULE_REQUEST
+  WEBSITE_PROBLEM_REPORT
 }
 
 enum BookingRequestSource {
   ONLINE
+  WEBSITE_PROBLEM_REPORT
 }
 
 enum PromotionType {
@@ -880,6 +882,7 @@ enum LegalAcceptanceSource {
   MANAGER_REQUEST
   CONSULTATION_REQUEST
   GAME_CLAIM
+  WEBSITE_PROBLEM_REPORT
 }
 
 /// Append-only журнал юридически значимых подтверждений. Не редактируется через админку.

@@ -2,6 +2,7 @@ export type RateLimitPolicyId =
   | "login"
   | "bookingCreate"
   | "bookingRequest"
+  | "problemReport"
   | "bookingClientContext"
   | "bookingManage"
   | "gamePlay"

@@ -99,31 +99,42 @@ export function collectCsrfCoverageIssues(apiRoot = path.join("src", "app", "api
 }
 
 function collectBookingRequestOriginGuardIssues(): CoverageIssue[] {
-  const routeFile = path.join("src", "app", "api", "booking", "request", "route.ts");
-  if (!fs.existsSync(routeFile)) {
-    return [
-      {
-        file: "src/app/api/booking/request/route.ts",
+  const routes = [
+    {
+      file: "src/app/api/booking/request/route.ts",
+      pathname: "/api/booking/request",
+    },
+    {
+      file: "src/app/api/booking/problem-report/route.ts",
+      pathname: "/api/booking/problem-report",
+    },
+  ] as const;
+
+  const issues: CoverageIssue[] = [];
+
+  for (const route of routes) {
+    if (!fs.existsSync(route.file)) {
+      issues.push({
+        file: route.file,
         method: "POST",
-        pathname: "/api/booking/request",
-        reason: "booking request route file is missing",
-      },
-    ];
+        pathname: route.pathname,
+        reason: "route file is missing",
+      });
+      continue;
+    }
+
+    const source = fs.readFileSync(route.file, "utf8");
+    if (!source.includes("enforceSameOriginForMutatingRequest")) {
+      issues.push({
+        file: route.file,
+        method: "POST",
+        pathname: route.pathname,
+        reason: "route must call enforceSameOriginForMutatingRequest",
+      });
+    }
   }
 
-  const source = fs.readFileSync(routeFile, "utf8");
-  if (!source.includes("enforceSameOriginForMutatingRequest")) {
-    return [
-      {
-        file: "src/app/api/booking/request/route.ts",
-        method: "POST",
-        pathname: "/api/booking/request",
-        reason: "booking request route must call enforceSameOriginForMutatingRequest",
-      },
-    ];
-  }
-
-  return [];
+  return issues;
 }
 
 function collectManageOriginGuardIssues(): CoverageIssue[] {

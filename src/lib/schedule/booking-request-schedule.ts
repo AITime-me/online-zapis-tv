@@ -132,6 +132,9 @@ export function getScheduleBookingRequestSourceLabel(
   if (request.type === "RESCHEDULE_REQUEST") {
     return "Перенос записи";
   }
+  if (request.type === "WEBSITE_PROBLEM_REPORT") {
+    return "Проблема на сайте";
+  }
   return "Заявка";
 }
 
@@ -149,6 +152,9 @@ export function getScheduleBookingRequestShortSourceLabel(
   }
   if (request.type === "RESCHEDULE_REQUEST") {
     return "Перенос";
+  }
+  if (request.type === "WEBSITE_PROBLEM_REPORT") {
+    return "Проблема";
   }
   return "Заявка";
 }
