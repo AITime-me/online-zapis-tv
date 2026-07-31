@@ -62,6 +62,7 @@ const REQUEST_TYPE_LABELS: Record<BookingRequestType, string> = {
   MANAGER_REQUEST: "Заявка через менеджера",
   CONSULTATION_REQUEST: "Консультация",
   RESCHEDULE_REQUEST: "Перенос записи",
+  WEBSITE_PROBLEM_REPORT: "Проблема на сайте",
 };
 
 const REQUEST_STATUS_LABELS: Record<BookingRequestStatus, string> = {

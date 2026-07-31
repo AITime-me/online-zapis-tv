@@ -20,6 +20,7 @@ export function ClientSuggestField({
   onPick,
   inputId,
   disabled,
+  linkedClientId,
 }: {
   mode: "name" | "phone";
   value: string;
@@ -28,12 +29,58 @@ export function ClientSuggestField({
   onPick: (client: ClientSuggestItem) => void;
   inputId: string;
   disabled?: boolean;
+  /** Когда связь снимается (id → null), снова разрешаем suggest. */
+  linkedClientId?: string | null;
 }) {
   const listId = useId();
   const [items, setItems] = useState<ClientSuggestItem[]>([]);
   const [open, setOpen] = useState(false);
+  const [highlightIndex, setHighlightIndex] = useState(-1);
   const abortRef = useRef<AbortController | null>(null);
   const seqRef = useRef(0);
+  /**
+   * После выбора клиента value обновляется родителем → debounce-fetch снова
+   * находит того же клиента и без этого флага снова открывает список.
+   * Сбрасывается при вводе. При установке linkedClientId suppress включается
+   * на обоих полях (name/phone), чтобы парное обновление value не открыло список.
+   * При снятии связи только разрешаем следующий ввод — без авто-fetch текущего value
+   * (иначе поле телефона сразу снова откроет suggest).
+   */
+  const suppressSuggestRef = useRef(false);
+  const prevLinkedClientIdRef = useRef<string | null | undefined>(linkedClientId);
+
+  useEffect(() => {
+    const prev = prevLinkedClientIdRef.current;
+    prevLinkedClientIdRef.current = linkedClientId;
+    // Связь установлена (в т.ч. через парное поле name/phone) — не открывать suggest.
+    if (linkedClientId) {
+      suppressSuggestRef.current = true;
+      abortRef.current?.abort();
+      seqRef.current += 1;
+      setOpen(false);
+      setItems([]);
+      setHighlightIndex(-1);
+      return;
+    }
+    if (prev && !linkedClientId) {
+      suppressSuggestRef.current = false;
+      abortRef.current?.abort();
+      seqRef.current += 1;
+      setOpen(false);
+      setItems([]);
+      setHighlightIndex(-1);
+    }
+  }, [linkedClientId]);
+
+  function pickClient(client: ClientSuggestItem) {
+    suppressSuggestRef.current = true;
+    abortRef.current?.abort();
+    seqRef.current += 1;
+    setOpen(false);
+    setItems([]);
+    setHighlightIndex(-1);
+    onPick(client);
+  }
 
   useEffect(() => {
     const q = value.trim();
@@ -43,10 +90,18 @@ export function ClientSuggestField({
 
     abortRef.current?.abort();
 
+    if (suppressSuggestRef.current) {
+      setItems([]);
+      setOpen(false);
+      setHighlightIndex(-1);
+      return;
+    }
+
     const timer = setTimeout(() => {
       if (!ready || disabled) {
         setItems([]);
         setOpen(false);
+        setHighlightIndex(-1);
         return;
       }
 
@@ -64,24 +119,27 @@ export function ClientSuggestField({
             ok?: boolean;
             clients?: ClientSuggestItem[];
           };
-          if (seq !== seqRef.current) {
+          if (seq !== seqRef.current || suppressSuggestRef.current) {
             return;
           }
           if (!response.ok || !payload.ok) {
             setItems([]);
             setOpen(false);
+            setHighlightIndex(-1);
             return;
           }
           const next = payload.clients ?? [];
           setItems(next);
           setOpen(next.length > 0);
+          setHighlightIndex(next.length > 0 ? 0 : -1);
         } catch (error) {
           if (error instanceof DOMException && error.name === "AbortError") {
             return;
           }
-          if (seq === seqRef.current) {
+          if (seq === seqRef.current && !suppressSuggestRef.current) {
             setItems([]);
             setOpen(false);
+            setHighlightIndex(-1);
           }
         }
       })();
@@ -104,37 +162,86 @@ export function ClientSuggestField({
         id={inputId}
         value={value}
         disabled={disabled}
-        onChange={(event) => onValueChange(event.target.value)}
+        onChange={(event) => {
+          suppressSuggestRef.current = false;
+          onValueChange(event.target.value);
+        }}
         onBlur={() => {
           window.setTimeout(() => setOpen(false), 150);
           onBlur?.();
         }}
         onFocus={() => {
-          if (items.length > 0) {
+          if (!suppressSuggestRef.current && items.length > 0) {
             setOpen(true);
+          }
+        }}
+        onKeyDown={(event) => {
+          if (!open || items.length === 0) {
+            return;
+          }
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
+            setHighlightIndex((index) =>
+              index < items.length - 1 ? index + 1 : 0,
+            );
+            return;
+          }
+          if (event.key === "ArrowUp") {
+            event.preventDefault();
+            setHighlightIndex((index) =>
+              index > 0 ? index - 1 : items.length - 1,
+            );
+            return;
+          }
+          if (event.key === "Enter") {
+            const picked =
+              highlightIndex >= 0 && highlightIndex < items.length
+                ? items[highlightIndex]
+                : items[0];
+            if (picked) {
+              event.preventDefault();
+              pickClient(picked);
+            }
+            return;
+          }
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setOpen(false);
           }
         }}
         className="w-full border border-[#dadce0] px-1 py-0.5"
         autoComplete="off"
+        role="combobox"
+        aria-expanded={open && items.length > 0}
         aria-autocomplete="list"
         aria-controls={listId}
+        aria-activedescendant={
+          open && highlightIndex >= 0
+            ? `${listId}-option-${highlightIndex}`
+            : undefined
+        }
       />
       {open && items.length > 0 ? (
         <ul
           id={listId}
+          data-testid="client-suggest-list"
           className="absolute z-20 mt-0.5 max-h-40 w-full overflow-auto border border-[#dadce0] bg-white text-[10px] shadow"
           role="listbox"
         >
-          {items.map((client) => (
-            <li key={client.id}>
+          {items.map((client, index) => (
+            <li key={client.id} role="presentation">
               <button
                 type="button"
-                className="flex w-full flex-col items-start px-2 py-1 text-left hover:bg-[#e8f0fe]"
+                id={`${listId}-option-${index}`}
+                role="option"
+                aria-selected={index === highlightIndex}
+                data-testid={`client-suggest-option-${client.id}`}
+                className={`flex w-full flex-col items-start px-2 py-1 text-left hover:bg-[#e8f0fe] ${
+                  index === highlightIndex ? "bg-[#e8f0fe]" : ""
+                }`}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
-                  onPick(client);
-                  setOpen(false);
-                  setItems([]);
+                  pickClient(client);
                 }}
               >
                 <span className="font-medium text-zinc-800">{client.fullName}</span>

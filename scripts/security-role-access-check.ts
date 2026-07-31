@@ -428,6 +428,7 @@ const PUBLIC_OR_TOKEN_API = new Set([
   "src/app/api/booking/slots/route.ts",
   "src/app/api/booking/create/route.ts",
   "src/app/api/booking/request/route.ts",
+  "src/app/api/booking/problem-report/route.ts",
   "src/app/api/booking/client-context/route.ts",
   "src/app/api/booking/manage/route.ts",
   "src/app/api/booking/manage/cancel/route.ts",

@@ -32,6 +32,8 @@ export function ScheduleMonthTable({
   showManagerColumn = true,
   canEditManagerNotes = true,
   bookingRequestDetailLevel = "full",
+  contentZoom = 1,
+  scrollRef,
 }: {
   data: ScheduleMonthData;
   onCellOpen?: (editorData: QuickDayEditorData) => void;
@@ -42,13 +44,24 @@ export function ScheduleMonthTable({
   showManagerColumn?: boolean;
   canEditManagerNotes?: boolean;
   bookingRequestDetailLevel?: ScheduleBookingRequestDetailLevel;
+  /** Локальный масштаб содержимого (layout-aware via CSS zoom). */
+  contentZoom?: number;
+  scrollRef?: (node: HTMLDivElement | null) => void;
 }) {
+  const zoom = Number.isFinite(contentZoom) ? contentZoom : 1;
+
   return (
     <div
+      ref={scrollRef}
       data-testid="schedule-month-table-scroll"
+      data-schedule-zoom={String(zoom)}
       className={`${SCHEDULE_TABLE_SCROLL} min-h-0 flex-1 border ${BORDER_OUTER} bg-white pb-[env(safe-area-inset-bottom,0px)]`}
     >
-      <table className="w-max border-separate border-spacing-0 text-left">
+      <table
+        className="w-max border-separate border-spacing-0 text-left"
+        data-testid="schedule-month-table-content"
+        style={{ zoom }}
+      >
         <thead className={HEADER_BG}>
           <tr className={`border-b ${BORDER_OUTER}`}>
             <th

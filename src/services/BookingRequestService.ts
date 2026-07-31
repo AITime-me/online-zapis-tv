@@ -1151,6 +1151,8 @@ export async function listActiveBookingRequestsForRange(
     where: {
       createdAt: { gte: rangeStart, lte: rangeEnd },
       status: { in: ["NEW", "CONTACTED"] },
+      // Сообщения о проблеме на сайте — только в /admin/booking-requests.
+      type: { not: "WEBSITE_PROBLEM_REPORT" },
     },
     include: {
       master: { select: { publicName: true } },

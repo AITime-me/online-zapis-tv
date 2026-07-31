@@ -21,6 +21,10 @@ import {
   type BookingRequestDto,
   type BookingRequestListApiPayload,
 } from "@/lib/booking-requests/booking-request-contract";
+import {
+  parseProblemReportComment,
+  summarizeUserAgent,
+} from "@/lib/problem-report/validation";
 import { ClientTagsInlineEditor } from "@/components/admin/client-tags-inline-editor";
 import { ClientTagBadge } from "@/components/admin/client-tag-badges";
 import { ListPaginationBar } from "@/components/admin/list-pagination-bar";
@@ -249,9 +253,41 @@ function ClientLinkCell({
   );
 }
 
-function CommentCell({ comment }: { comment: string | null }) {
+function CommentCell({ request }: { request: BookingRequestDto }) {
   const [expanded, setExpanded] = useState(false);
-  const text = comment?.trim() || "—";
+
+  if (request.type === "WEBSITE_PROBLEM_REPORT") {
+    const parsed = parseProblemReportComment(request.comment);
+    const description = parsed.description || "—";
+    const meta = parsed.meta;
+
+    return (
+      <div className="max-w-[18rem] space-y-1 break-words text-sm sm:max-w-sm">
+        <div className="font-medium text-amber-800">Проблема на сайте</div>
+        <div className="whitespace-pre-line">{description}</div>
+        {meta ? (
+          <div className="space-y-0.5 text-xs text-zinc-500">
+            <div>
+              <span className="text-zinc-400">Страница: </span>
+              {meta.pagePath}
+            </div>
+            <div>
+              <span className="text-zinc-400">Устройство: </span>
+              {summarizeUserAgent(meta.userAgent)}
+            </div>
+            {meta.viewportWidth > 0 && meta.viewportHeight > 0 ? (
+              <div>
+                <span className="text-zinc-400">Viewport: </span>
+                {meta.viewportWidth}×{meta.viewportHeight}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  const text = request.comment?.trim() || "—";
 
   if (text === "—") {
     return <span className="text-zinc-400">—</span>;
@@ -357,7 +393,15 @@ function RequestTable({
                 {request.serviceNameSnapshot ?? "—"}
               </td>
               <td className="px-3 py-2 whitespace-nowrap">
-                {getBookingRequestTypeLabel(request.type)}
+                <span
+                  className={
+                    request.type === "WEBSITE_PROBLEM_REPORT"
+                      ? "rounded bg-amber-50 px-1.5 py-0.5 text-xs font-medium text-amber-900"
+                      : undefined
+                  }
+                >
+                  {getBookingRequestTypeLabel(request.type)}
+                </span>
               </td>
               <td className="px-3 py-2">
                 <RescheduleContextCell request={request} />
@@ -373,7 +417,7 @@ function RequestTable({
                 />
               </td>
               <td className="px-3 py-2">
-                <CommentCell comment={request.comment} />
+                <CommentCell request={request} />
               </td>
               <td className="px-3 py-2 whitespace-nowrap">
                 <select
