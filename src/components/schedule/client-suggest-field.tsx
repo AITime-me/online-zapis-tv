@@ -36,8 +36,10 @@ export function ClientSuggestField({
   const [items, setItems] = useState<ClientSuggestItem[]>([]);
   const [open, setOpen] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState(-1);
+  const [focused, setFocused] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const seqRef = useRef(0);
+  const focusedRef = useRef(false);
   /**
    * После выбора клиента value обновляется родителем → debounce-fetch снова
    * находит того же клиента и без этого флага снова открывает список.
@@ -49,36 +51,33 @@ export function ClientSuggestField({
   const suppressSuggestRef = useRef(false);
   const prevLinkedClientIdRef = useRef<string | null | undefined>(linkedClientId);
 
+  function invalidateSuggest() {
+    abortRef.current?.abort();
+    seqRef.current += 1;
+    setOpen(false);
+    setItems([]);
+    setHighlightIndex(-1);
+  }
+
   useEffect(() => {
     const prev = prevLinkedClientIdRef.current;
     prevLinkedClientIdRef.current = linkedClientId;
     // Связь установлена (в т.ч. через парное поле name/phone) — не открывать suggest.
     if (linkedClientId) {
       suppressSuggestRef.current = true;
-      abortRef.current?.abort();
-      seqRef.current += 1;
-      setOpen(false);
-      setItems([]);
-      setHighlightIndex(-1);
+      invalidateSuggest();
       return;
     }
     if (prev && !linkedClientId) {
+      // Разрешаем следующий явный focus/ввод, но не авто-fetch текущего value.
       suppressSuggestRef.current = false;
-      abortRef.current?.abort();
-      seqRef.current += 1;
-      setOpen(false);
-      setItems([]);
-      setHighlightIndex(-1);
+      invalidateSuggest();
     }
   }, [linkedClientId]);
 
   function pickClient(client: ClientSuggestItem) {
     suppressSuggestRef.current = true;
-    abortRef.current?.abort();
-    seqRef.current += 1;
-    setOpen(false);
-    setItems([]);
-    setHighlightIndex(-1);
+    invalidateSuggest();
     onPick(client);
   }
 
@@ -89,8 +88,9 @@ export function ClientSuggestField({
       mode === "name" ? q.length >= 2 : digits.length >= 4;
 
     abortRef.current?.abort();
+    const seq = ++seqRef.current;
 
-    if (suppressSuggestRef.current) {
+    if (suppressSuggestRef.current || !focused || !ready || disabled) {
       setItems([]);
       setOpen(false);
       setHighlightIndex(-1);
@@ -98,16 +98,17 @@ export function ClientSuggestField({
     }
 
     const timer = setTimeout(() => {
-      if (!ready || disabled) {
-        setItems([]);
-        setOpen(false);
-        setHighlightIndex(-1);
+      if (
+        seq !== seqRef.current ||
+        suppressSuggestRef.current ||
+        !focusedRef.current ||
+        disabled
+      ) {
         return;
       }
 
       const controller = new AbortController();
       abortRef.current = controller;
-      const seq = ++seqRef.current;
 
       void (async () => {
         try {
@@ -119,7 +120,11 @@ export function ClientSuggestField({
             ok?: boolean;
             clients?: ClientSuggestItem[];
           };
-          if (seq !== seqRef.current || suppressSuggestRef.current) {
+          if (
+            seq !== seqRef.current ||
+            suppressSuggestRef.current ||
+            !focusedRef.current
+          ) {
             return;
           }
           if (!response.ok || !payload.ok) {
@@ -136,19 +141,23 @@ export function ClientSuggestField({
           if (error instanceof DOMException && error.name === "AbortError") {
             return;
           }
-          if (seq === seqRef.current && !suppressSuggestRef.current) {
+          if (
+            seq === seqRef.current &&
+            !suppressSuggestRef.current &&
+            focusedRef.current
+          ) {
             setItems([]);
             setOpen(false);
             setHighlightIndex(-1);
           }
         }
       })();
-    }, ready && !disabled ? DEBOUNCE_MS : 0);
+    }, DEBOUNCE_MS);
 
     return () => {
       clearTimeout(timer);
     };
-  }, [disabled, mode, value]);
+  }, [disabled, focused, mode, value]);
 
   useEffect(() => {
     return () => {
@@ -167,15 +176,27 @@ export function ClientSuggestField({
           onValueChange(event.target.value);
         }}
         onBlur={() => {
-          window.setTimeout(() => setOpen(false), 150);
+          focusedRef.current = false;
+          setFocused(false);
+          invalidateSuggest();
           onBlur?.();
         }}
         onFocus={() => {
-          if (!suppressSuggestRef.current && items.length > 0) {
-            setOpen(true);
+          if (disabled) {
+            return;
           }
+          focusedRef.current = true;
+          setFocused(true);
         }}
         onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            if (!open && items.length === 0) {
+              return;
+            }
+            event.preventDefault();
+            invalidateSuggest();
+            return;
+          }
           if (!open || items.length === 0) {
             return;
           }
@@ -202,11 +223,6 @@ export function ClientSuggestField({
               event.preventDefault();
               pickClient(picked);
             }
-            return;
-          }
-          if (event.key === "Escape") {
-            event.preventDefault();
-            setOpen(false);
           }
         }}
         className="w-full border border-[#dadce0] px-1 py-0.5"
