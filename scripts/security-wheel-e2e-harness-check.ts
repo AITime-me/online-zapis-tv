@@ -30,6 +30,7 @@ import {
   playwrightCliJs,
   readInstalledPlaywrightVersion,
 } from "./lib/wheel-isolated-runtime";
+import { shouldBypassRateLimitForIsolatedWheelE2e } from "../src/lib/security/rate-limit/enforce-policy";
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -605,10 +606,25 @@ function assertWheelSpecNoSilentSkipInIsolatedMode(): void {
   assert.match(spec, /getByTestId\(["']legal-personal-data-consent["']\)/);
   assert.match(spec, /getByTestId\(["']legal-offer-acknowledgement["']\)/);
   assert.match(spec, /getByTestId\(["']wheel-error-alert["']\)/);
-  assert.match(spec, /assertNoWheelGameError|alertTexts/);
+  assert.match(spec, /assertNoWheelGameError/);
+  assert.match(spec, /__next-route-announcer__|role="alert"/);
+  assert.match(
+    spec,
+    /Fail only on the game error region|must not be treated as a game error/,
+  );
+  assert.doesNotMatch(
+    spec,
+    /gameErrorCount > 0 \|\| alertCount > 0/,
+    "assertNoWheelGameError must not fail on unrelated role=alert (Next.js route announcer)",
+  );
   assert.match(spec, /waitForResponse/);
   assert.match(spec, /\/api\/game\/wheel\/start/);
   assert.match(spec, /wheel start failed/);
+  assert.match(spec, /Origin:\s*origin/);
+  assert.match(spec, /phoneE164/);
+  assert.match(spec, /getByTestId\(["']wheel-prize-name["']\)/);
+  assert.match(spec, /getByTestId\(["']wheel-submitted["']\)/);
+  assert.match(spec, /startPostCount\)\.toBe\(1\)/);
   assert.doesNotMatch(
     spec,
     /if \(\(await personal\.count\(\)\) > 0\)/,
@@ -635,9 +651,44 @@ function assertWheelSpecNoSilentSkipInIsolatedMode(): void {
   assert.match(wheelUi, /data-testid=["']wheel-phone-input["']/);
   assert.match(wheelUi, /aria-label=["']Номер телефона["']/);
   assert.match(wheelUi, /type=["']tel["']/);
+  assert.match(wheelUi, /data-testid=["']wheel-prize-name["']/);
+  assert.match(wheelUi, /data-testid=["']wheel-submitted["']/);
+  assert.match(wheelUi, /startRequestSerial/);
+  assert.match(wheelUi, /startSucceededRef/);
+  assert.doesNotMatch(
+    wheelUi,
+    /wheel_lead_draft_|writeLeadDraft|readLeadDraft/,
+    "must not persist lead PII in sessionStorage",
+  );
 
   const countrySelect = read("src/components/booking/phone-country-select.tsx");
   assert.match(countrySelect, /aria-label=["']Код страны["']/);
+
+  const rateLimitEnforce = read("src/lib/security/rate-limit/enforce-policy.ts");
+  assert.match(rateLimitEnforce, /shouldBypassRateLimitForIsolatedWheelE2e/);
+  assert.match(
+    rateLimitEnforce,
+    /WHEEL_E2E_ISOLATED\s*===\s*["']1["']/,
+    "rate-limit bypass must require WHEEL_E2E_ISOLATED=1",
+  );
+  assert.match(
+    rateLimitEnforce,
+    /if \(shouldBypassRateLimitForIsolatedWheelE2e\(\)\)\s*\{\s*return null;/,
+  );
+
+  assert.equal(
+    shouldBypassRateLimitForIsolatedWheelE2e({}),
+    false,
+    "rate-limit bypass must be off without WHEEL_E2E_ISOLATED",
+  );
+  assert.equal(
+    shouldBypassRateLimitForIsolatedWheelE2e({ WHEEL_E2E_ISOLATED: "1" }),
+    true,
+  );
+  assert.equal(
+    shouldBypassRateLimitForIsolatedWheelE2e({ WHEEL_E2E_ISOLATED: "0" }),
+    false,
+  );
 
   const envSource = read("src/lib/env.ts");
   assert.match(

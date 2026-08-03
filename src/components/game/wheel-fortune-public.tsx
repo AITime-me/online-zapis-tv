@@ -431,8 +431,48 @@ export function WheelFortunePublic({
           }}
         >
           <p className="rounded bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
-            Ваш результат: <strong>{animation.prizeDisplayName}</strong>
+            Ваш результат:{" "}
+            <strong data-testid="wheel-prize-name">
+              {animation.prizeDisplayName}
+            </strong>
           </p>
+          {/*
+            Name/phone stay in React state across spin→claim, but are lost on
+            refresh. Claim form must collect them again (no PII in sessionStorage).
+          */}
+          <label className="flex flex-col gap-1 text-sm">
+            Имя
+            <input
+              className="min-h-12 rounded border border-zinc-300 px-3"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              autoComplete="name"
+              required
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            Телефон
+            <div className="flex gap-2">
+              <PhoneCountrySelect
+                value={countryCode}
+                onChange={setCountryCode}
+                borderColor="#d4d4d8"
+                className="min-h-12 rounded border px-3 text-sm"
+              />
+              <input
+                type="tel"
+                className="min-h-12 flex-1 rounded border border-zinc-300 px-3"
+                value={phoneLocal}
+                onChange={(event) => setPhoneLocal(event.target.value)}
+                placeholder={getPhonePlaceholder(countryCode)}
+                inputMode="tel"
+                autoComplete="tel-national"
+                aria-label="Номер телефона"
+                data-testid="wheel-phone-input"
+                required
+              />
+            </div>
+          </label>
           <fieldset className="flex flex-col gap-2">
             <legend className="text-sm font-medium">Что вас интересует?</legend>
             {WHEEL_PUBLIC_INTEREST_KEYS.map((key) => (
@@ -487,9 +527,14 @@ export function WheelFortunePublic({
       ) : null}
 
       {phase === "submitted" ? (
-        <div className="rounded border border-emerald-200 bg-emerald-50 px-4 py-5 text-center text-sm text-emerald-950">
+        <div
+          className="rounded border border-emerald-200 bg-emerald-50 px-4 py-5 text-center text-sm text-emerald-950"
+          data-testid="wheel-submitted"
+        >
           <p className="text-base font-semibold">Спасибо!</p>
-          <p className="mt-2">{statusMessage}</p>
+          <p className="mt-2" data-testid="wheel-submitted-status">
+            {statusMessage}
+          </p>
         </div>
       ) : null}
 

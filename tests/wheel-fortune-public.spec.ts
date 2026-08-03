@@ -36,10 +36,17 @@ export function phoneForTest(testNumber: number): string {
   return digits.slice(-10);
 }
 
+function phoneE164(localPhone: string): string {
+  return `+7${localPhone}`;
+}
+
 async function dismissCookieBanner(page: Page) {
   const accept = page.getByRole("button", { name: "Понятно" });
-  if ((await accept.count()) > 0) {
-    await accept.click({ force: true });
+  try {
+    // Banner mounts asynchronously; short wait, then ignore if absent.
+    await accept.click({ timeout: 3_000 });
+  } catch {
+    // Optional UI — absence is not a failure.
   }
 }
 
@@ -105,26 +112,43 @@ function safeWheelStartFailureMessage(
   return `wheel start failed: HTTP ${status}, code=${code}, error=${error}`;
 }
 
+/**
+ * Fail only on the game error region (data-testid=wheel-error-alert).
+ * Next.js App Router mounts `#__next-route-announcer__` with role="alert"
+ * and empty text on first load — that must not be treated as a game error.
+ */
 async function assertNoWheelGameError(
   page: Page,
   startMeta: { status: number; body: WheelStartApiBody; startPostCount: number },
 ): Promise<void> {
   const gameError = page.getByTestId("wheel-error-alert");
+  const gameErrorCount = await gameError.count();
+  const gameErrorText =
+    gameErrorCount > 0
+      ? ((await gameError.textContent()) ?? "").replace(/\s+/g, " ").trim()
+      : "";
+
+  // Diagnostics only — do not fail on unrelated role="alert" nodes.
   const alerts = page.getByRole("alert");
   const alertCount = await alerts.count();
   const alertTexts = (await alerts.allTextContents())
     .map((text) => text.replace(/\s+/g, " ").trim())
     .filter(Boolean);
-  const gameErrorCount = await gameError.count();
-  const completeVisible = await page.getByTestId("wheel-complete-button").isVisible().catch(() => false);
-  const startVisible = await page.getByTestId("wheel-start-button").isVisible().catch(() => false);
+  const completeVisible = await page
+    .getByTestId("wheel-complete-button")
+    .isVisible()
+    .catch(() => false);
+  const startVisible = await page
+    .getByTestId("wheel-start-button")
+    .isVisible()
+    .catch(() => false);
   const phaseHint = completeVisible
     ? "claim-or-later"
     : startVisible
       ? "lead-or-spinning"
       : "unknown";
 
-  if (gameErrorCount > 0 || alertCount > 0) {
+  if (gameErrorCount > 0) {
     const startCode =
       typeof startMeta.body.code === "string" ? startMeta.body.code : "none";
     const startError =
@@ -132,8 +156,9 @@ async function assertNoWheelGameError(
     throw new Error(
       [
         "wheel game error alert present after start",
-        `alertCount=${alertCount}`,
         `gameErrorCount=${gameErrorCount}`,
+        `gameErrorText=${JSON.stringify(gameErrorText)}`,
+        `alertCount=${alertCount}`,
         `alertTexts=${JSON.stringify(alertTexts)}`,
         `uiPhaseHint=${phaseHint}`,
         `completeButtonVisible=${completeVisible}`,
@@ -154,7 +179,10 @@ async function spinWheel(page: Page, phone: string) {
   await fillLeadForm(page, phone);
 
   let startPostCount = 0;
-  const onStartResponse = (response: { url(): string; request(): { method(): string } }) => {
+  const onStartResponse = (response: {
+    url(): string;
+    request(): { method(): string };
+  }) => {
     if (
       response.url().includes("/api/game/wheel/start") &&
       response.request().method() === "POST"
@@ -219,7 +247,10 @@ test.describe("Wheel of Fortune public flow", () => {
     await page.getByRole("radio", { name: "Губы" }).check();
     await acceptConsents(page);
     await page.getByTestId("wheel-complete-button").click();
-    await expect(page.getByText("Спасибо!")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("wheel-submitted")).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page.getByText("Спасибо!")).toBeVisible();
   });
 
   test("mobile viewport shows wheel", async ({ page }) => {
@@ -245,40 +276,54 @@ test.describe("Wheel of Fortune public flow", () => {
     await gotoActiveWheel(page);
     const phone = phoneForTest(5);
     await fillLeadForm(page, phone);
-    const start = page.getByTestId("wheel-start-button");
-    await start.dblclick();
-    await expect(page.getByTestId("wheel-complete-button")).toBeVisible({
-      timeout: 30_000,
-    });
-    const resultResponse = await page.request.get(
-      `/api/game/wheel/result?catalogSlug=${encodeURIComponent(WHEEL_SLUG)}`,
-    );
-    expect(resultResponse.ok()).toBeTruthy();
-    const body = (await resultResponse.json()) as {
-      animation?: { sectorIndex: number };
+
+    let startPostCount = 0;
+    const onStartResponse = (response: {
+      url(): string;
+      request(): { method(): string };
+    }) => {
+      if (
+        response.url().includes("/api/game/wheel/start") &&
+        response.request().method() === "POST"
+      ) {
+        startPostCount += 1;
+      }
     };
-    expect(typeof body.animation?.sectorIndex).toBe("number");
+    page.on("response", onStartResponse);
+
+    try {
+      const start = page.getByTestId("wheel-start-button");
+      await start.dblclick();
+      await expect(page.getByTestId("wheel-complete-button")).toBeVisible({
+        timeout: 30_000,
+      });
+      expect(startPostCount).toBe(1);
+
+      const resultResponse = await page.request.get(
+        `/api/game/wheel/result?catalogSlug=${encodeURIComponent(WHEEL_SLUG)}`,
+      );
+      expect(resultResponse.ok()).toBeTruthy();
+      const body = (await resultResponse.json()) as {
+        animation?: { sectorIndex: number };
+      };
+      expect(typeof body.animation?.sectorIndex).toBe("number");
+    } finally {
+      page.off("response", onStartResponse);
+    }
   });
 
   test("refresh restores same sector and prize", async ({ page }) => {
     await gotoActiveWheel(page);
     const phone = phoneForTest(6);
     await spinWheel(page, phone);
-    const prizeBefore = await page
-      .locator("strong")
-      .filter({ hasText: /.+/ })
-      .first()
-      .textContent();
+    const prizeBefore = await page.getByTestId("wheel-prize-name").textContent();
+    expect(prizeBefore?.trim()).toBeTruthy();
     await page.reload();
     await dismissCookieBanner(page);
     await expect(page.getByTestId("wheel-complete-button")).toBeVisible({
       timeout: 30_000,
     });
-    const prizeAfter = await page
-      .locator("strong")
-      .filter({ hasText: /.+/ })
-      .first()
-      .textContent();
+    const prizeAfter = await page.getByTestId("wheel-prize-name").textContent();
     expect(prizeAfter).toBe(prizeBefore);
   });
 
@@ -292,12 +337,16 @@ test.describe("Wheel of Fortune public flow", () => {
     await acceptConsents(page);
     const complete = page.getByTestId("wheel-complete-button");
     await complete.click();
-    await expect(page.getByText("Спасибо!")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("wheel-submitted")).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page.getByText("Спасибо!")).toBeVisible();
     await page.reload();
     await dismissCookieBanner(page);
     await expect(page.getByText("Заявка уже отправлена")).toBeVisible({
       timeout: 30_000,
     });
+    await expect(page.getByTestId("wheel-complete-button")).toHaveCount(0);
   });
 
   test("different interest after success does not change submitted state", async ({
@@ -309,22 +358,35 @@ test.describe("Wheel of Fortune public flow", () => {
     await page.getByRole("radio", { name: "Губы" }).check();
     await acceptConsents(page);
     await page.getByTestId("wheel-complete-button").click();
-    await expect(page.getByText("Спасибо!")).toBeVisible({ timeout: 30_000 });
-    const submitted = await page.locator(".text-emerald-950 p").last().textContent();
+    await expect(page.getByTestId("wheel-submitted")).toBeVisible({
+      timeout: 30_000,
+    });
 
-    const cookies = await page.context().cookies();
+    const resultBeforeResponse = await page.request.get(
+      `/api/game/wheel/result?catalogSlug=${encodeURIComponent(WHEEL_SLUG)}`,
+    );
+    expect(resultBeforeResponse.ok()).toBeTruthy();
+    const resultBefore = (await resultBeforeResponse.json()) as {
+      bookingSubmitted?: boolean;
+      animation?: { sectorIndex?: number; prizeDisplayName?: string };
+    };
+    expect(resultBefore.bookingSubmitted).toBe(true);
+    expect(typeof resultBefore.animation?.sectorIndex).toBe("number");
+    expect(resultBefore.animation?.prizeDisplayName).toBeTruthy();
+
+    const origin = new URL(page.url()).origin;
     const retry = await page.request.post("/api/game/wheel/complete", {
       data: {
         catalogSlug: WHEEL_SLUG,
         interest: "brows",
         name: TEST_NAME,
-        phone: `+7 ${phone.slice(0, 3)} ${phone.slice(3, 6)}-${phone.slice(6, 8)}-${phone.slice(8)}`,
+        phone: phoneE164(phone),
         personalDataConsent: true,
         offerAcknowledgement: true,
       },
       headers: {
         "Idempotency-Key": `e2e-interest-retry-${phone}`,
-        Cookie: cookies.map((c) => `${c.name}=${c.value}`).join("; "),
+        Origin: origin,
       },
     });
     expect(retry.ok()).toBeTruthy();
@@ -336,8 +398,23 @@ test.describe("Wheel of Fortune public flow", () => {
     await expect(page.getByText("Заявка уже отправлена")).toBeVisible({
       timeout: 30_000,
     });
-    const afterReload = await page.locator(".text-emerald-950 p").last().textContent();
-    expect(afterReload).toBe(submitted);
+    await expect(page.getByTestId("wheel-complete-button")).toHaveCount(0);
+
+    const resultAfterResponse = await page.request.get(
+      `/api/game/wheel/result?catalogSlug=${encodeURIComponent(WHEEL_SLUG)}`,
+    );
+    expect(resultAfterResponse.ok()).toBeTruthy();
+    const resultAfter = (await resultAfterResponse.json()) as {
+      bookingSubmitted?: boolean;
+      animation?: { sectorIndex?: number; prizeDisplayName?: string };
+    };
+    expect(resultAfter.bookingSubmitted).toBe(true);
+    expect(resultAfter.animation?.sectorIndex).toBe(
+      resultBefore.animation?.sectorIndex,
+    );
+    expect(resultAfter.animation?.prizeDisplayName).toBe(
+      resultBefore.animation?.prizeDisplayName,
+    );
   });
 
   test("network retry on complete preserves idempotency key", async ({
@@ -360,10 +437,15 @@ test.describe("Wheel of Fortune public flow", () => {
     });
 
     await page.getByTestId("wheel-complete-button").click();
-    await expect(page.getByTestId("wheel-error-alert")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("wheel-error-alert")).toBeVisible({
+      timeout: 15_000,
+    });
     await page.unroute("**/api/game/wheel/complete");
     await page.getByTestId("wheel-complete-button").click();
-    await expect(page.getByText("Спасибо!")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("wheel-submitted")).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page.getByText("Спасибо!")).toBeVisible();
   });
 });
 
