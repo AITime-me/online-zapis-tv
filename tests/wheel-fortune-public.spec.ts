@@ -105,11 +105,64 @@ function safeWheelStartFailureMessage(
   return `wheel start failed: HTTP ${status}, code=${code}, error=${error}`;
 }
 
+async function assertNoWheelGameError(
+  page: Page,
+  startMeta: { status: number; body: WheelStartApiBody; startPostCount: number },
+): Promise<void> {
+  const gameError = page.getByTestId("wheel-error-alert");
+  const alerts = page.getByRole("alert");
+  const alertCount = await alerts.count();
+  const alertTexts = (await alerts.allTextContents())
+    .map((text) => text.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  const gameErrorCount = await gameError.count();
+  const completeVisible = await page.getByTestId("wheel-complete-button").isVisible().catch(() => false);
+  const startVisible = await page.getByTestId("wheel-start-button").isVisible().catch(() => false);
+  const phaseHint = completeVisible
+    ? "claim-or-later"
+    : startVisible
+      ? "lead-or-spinning"
+      : "unknown";
+
+  if (gameErrorCount > 0 || alertCount > 0) {
+    const startCode =
+      typeof startMeta.body.code === "string" ? startMeta.body.code : "none";
+    const startError =
+      typeof startMeta.body.error === "string" ? startMeta.body.error : "none";
+    throw new Error(
+      [
+        "wheel game error alert present after start",
+        `alertCount=${alertCount}`,
+        `gameErrorCount=${gameErrorCount}`,
+        `alertTexts=${JSON.stringify(alertTexts)}`,
+        `uiPhaseHint=${phaseHint}`,
+        `completeButtonVisible=${completeVisible}`,
+        `startPostCount=${startMeta.startPostCount}`,
+        `startHTTP=${startMeta.status}`,
+        `startOk=${String(startMeta.body.ok === true)}`,
+        `startCode=${startCode}`,
+        `startError=${startError}`,
+      ].join("; "),
+    );
+  }
+}
+
 /**
  * Fill lead form, POST /api/game/wheel/start, assert success, wait for claim UI.
  */
 async function spinWheel(page: Page, phone: string) {
   await fillLeadForm(page, phone);
+
+  let startPostCount = 0;
+  const onStartResponse = (response: { url(): string; request(): { method(): string } }) => {
+    if (
+      response.url().includes("/api/game/wheel/start") &&
+      response.request().method() === "POST"
+    ) {
+      startPostCount += 1;
+    }
+  };
+  page.on("response", onStartResponse);
 
   const startResponsePromise = page.waitForResponse(
     (response) =>
@@ -117,30 +170,45 @@ async function spinWheel(page: Page, phone: string) {
       response.request().method() === "POST",
   );
 
-  await page.getByTestId("wheel-start-button").click();
-
-  const startResponse = await startResponsePromise;
-  let body: WheelStartApiBody = {};
   try {
-    body = (await startResponse.json()) as WheelStartApiBody;
-  } catch {
-    body = {};
-  }
+    await page.getByTestId("wheel-start-button").click();
 
-  if (
-    startResponse.status() !== 200 ||
-    body.ok !== true ||
-    !body.animation ||
-    typeof body.animation.sectorIndex !== "number" ||
-    typeof body.animation.prizeDisplayName !== "string"
-  ) {
-    throw new Error(safeWheelStartFailureMessage(startResponse.status(), body));
-  }
+    const startResponse = await startResponsePromise;
+    let body: WheelStartApiBody = {};
+    try {
+      body = (await startResponse.json()) as WheelStartApiBody;
+    } catch {
+      body = {};
+    }
 
-  await expect(page.getByRole("alert")).toHaveCount(0);
-  await expect(page.getByTestId("wheel-complete-button")).toBeVisible({
-    timeout: 30_000,
-  });
+    if (
+      startResponse.status() !== 200 ||
+      body.ok !== true ||
+      !body.animation ||
+      typeof body.animation.sectorIndex !== "number" ||
+      typeof body.animation.prizeDisplayName !== "string"
+    ) {
+      throw new Error(safeWheelStartFailureMessage(startResponse.status(), body));
+    }
+
+    const startMeta = {
+      status: startResponse.status(),
+      body,
+      startPostCount,
+    };
+    await assertNoWheelGameError(page, startMeta);
+    await expect(page.getByTestId("wheel-complete-button")).toBeVisible({
+      timeout: 30_000,
+    });
+    // Re-check after claim UI: catch late overlapping start failures.
+    await assertNoWheelGameError(page, {
+      status: startMeta.status,
+      body: startMeta.body,
+      startPostCount,
+    });
+  } finally {
+    page.off("response", onStartResponse);
+  }
 }
 
 test.describe("Wheel of Fortune public flow", () => {
@@ -170,7 +238,7 @@ test.describe("Wheel of Fortune public flow", () => {
   test("name, phone and consents are required before start", async ({ page }) => {
     await gotoActiveWheel(page);
     await page.getByTestId("wheel-start-button").click();
-    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(page.getByTestId("wheel-error-alert")).toBeVisible();
   });
 
   test("double-click start creates one session result", async ({ page }) => {
@@ -292,7 +360,7 @@ test.describe("Wheel of Fortune public flow", () => {
     });
 
     await page.getByTestId("wheel-complete-button").click();
-    await expect(page.getByRole("alert")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("wheel-error-alert")).toBeVisible({ timeout: 15_000 });
     await page.unroute("**/api/game/wheel/complete");
     await page.getByTestId("wheel-complete-button").click();
     await expect(page.getByText("Спасибо!")).toBeVisible({ timeout: 30_000 });

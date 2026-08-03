@@ -604,6 +604,8 @@ function assertWheelSpecNoSilentSkipInIsolatedMode(): void {
   assert.match(spec, /getByTestId\(["']wheel-phone-input["']\)/);
   assert.match(spec, /getByTestId\(["']legal-personal-data-consent["']\)/);
   assert.match(spec, /getByTestId\(["']legal-offer-acknowledgement["']\)/);
+  assert.match(spec, /getByTestId\(["']wheel-error-alert["']\)/);
+  assert.match(spec, /assertNoWheelGameError|alertTexts/);
   assert.match(spec, /waitForResponse/);
   assert.match(spec, /\/api\/game\/wheel\/start/);
   assert.match(spec, /wheel start failed/);

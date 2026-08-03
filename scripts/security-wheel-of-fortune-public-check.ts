@@ -120,6 +120,8 @@ function assertPublicContracts(): void {
   assert.match(client, /data-testid=["']wheel-phone-input["']/);
   assert.match(client, /aria-label=["']Номер телефона["']/);
   assert.match(client, /type=["']tel["']/);
+  assert.match(client, /data-testid=["']wheel-error-alert["']/);
+  assert.match(client, /startRequestSerial|startSucceededRef/);
   assert.doesNotMatch(client, /wheel_lead_|persistLead|sessionStorage\.setItem\([^)]*phone|sessionStorage\.setItem\([^)]*name/i);
 
   const countrySelect = read("src/components/booking/phone-country-select.tsx");

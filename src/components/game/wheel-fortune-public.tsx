@@ -76,6 +76,8 @@ export function WheelFortunePublic({
   const [statusMessage, setStatusMessage] = useState("");
   const [busy, startTransition] = useTransition();
   const spinningLock = useRef(false);
+  const startRequestSerial = useRef(0);
+  const startSucceededRef = useRef(false);
   const totalSectors = Math.max(sectorLabels.length, 16);
   const sectorAngle = 360 / totalSectors;
   void sectorAngle;
@@ -165,6 +167,8 @@ export function WheelFortunePublic({
       return;
     }
     spinningLock.current = true;
+    startSucceededRef.current = false;
+    const requestSerial = ++startRequestSerial.current;
     startTransition(async () => {
       try {
         const response = await fetch("/api/game/wheel/start", {
@@ -185,11 +189,21 @@ export function WheelFortunePublic({
           error?: string;
           animation?: AnimationResult;
         };
+        // Ignore stale responses from overlapping submits (e.g. double-click /
+        // parallel requests that lost the visitor-cookie race).
+        if (requestSerial !== startRequestSerial.current) {
+          return;
+        }
         if (!response.ok || !data.ok || !data.animation) {
+          if (startSucceededRef.current) {
+            return;
+          }
           setError(data.error || "Не удалось начать игру");
           spinningLock.current = false;
           return;
         }
+        startSucceededRef.current = true;
+        setError(null);
         setAnimation(data.animation);
         setPhase("spinning");
         setStatusMessage("Колесо крутится…");
@@ -209,11 +223,20 @@ export function WheelFortunePublic({
           setRotationDeg(target);
         });
         window.setTimeout(() => {
+          if (requestSerial !== startRequestSerial.current) {
+            return;
+          }
           setPhase("claim");
           setStatusMessage(`Ваш приз: ${data.animation!.prizeDisplayName}`);
           spinningLock.current = false;
         }, 4200);
       } catch {
+        if (
+          requestSerial !== startRequestSerial.current ||
+          startSucceededRef.current
+        ) {
+          return;
+        }
         setError("Сеть недоступна. Попробуйте ещё раз.");
         spinningLock.current = false;
       }
@@ -327,12 +350,16 @@ export function WheelFortunePublic({
         </div>
       </section>
 
-      <div className="sr-only" aria-live="polite">
+      <div className="sr-only" aria-live="polite" role="status">
         {statusMessage}
       </div>
 
       {error ? (
-        <p className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800" role="alert">
+        <p
+          className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+          role="alert"
+          data-testid="wheel-error-alert"
+        >
           {error}
         </p>
       ) : null}
