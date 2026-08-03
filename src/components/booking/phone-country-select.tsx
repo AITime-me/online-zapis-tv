@@ -46,6 +46,7 @@ export function PhoneCountrySelect({
     <div ref={rootRef} className="relative shrink-0">
       <button
         type="button"
+        aria-label="Код страны"
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={listId}

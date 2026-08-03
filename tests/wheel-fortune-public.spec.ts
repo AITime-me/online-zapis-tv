@@ -76,7 +76,9 @@ async function acceptConsents(page: Page) {
 
 async function fillLeadForm(page: Page, phone: string) {
   await page.getByLabel("Имя").fill(TEST_NAME);
-  await page.getByLabel("Телефон").fill(phone);
+  // Phone input: data-testid + aria-label «Номер телефона».
+  // Country code uses aria-label «Код страны» — do not use the bare «Телефон» label.
+  await page.getByTestId("wheel-phone-input").fill(phone);
   await acceptConsents(page);
 }
 

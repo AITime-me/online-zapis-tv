@@ -237,6 +237,9 @@ function assertIsolatedEnvModule(): void {
   assert.equal(runtimeEnv.PORT, "38123");
   assert.equal(runtimeEnv.HOSTNAME, "127.0.0.1");
   assert.equal(runtimeEnv.PLAYWRIGHT_BASE_URL, "http://127.0.0.1:38123");
+  assert.equal(runtimeEnv.AUTH_URL, "http://127.0.0.1:38123");
+  assert.equal(runtimeEnv.WHEEL_E2E_ISOLATED, "1");
+  assert.equal(runtimeEnv.NODE_ENV, "production");
   assert.equal(runtimeEnv.PLAYWRIGHT_BROWSERS_PATH, undefined);
   assert.notEqual(
     runtimeEnv.DATABASE_URL,
@@ -598,6 +601,12 @@ function assertWheelSpecNoSilentSkipInIsolatedMode(): void {
   assert.match(spec, /phoneForTest/);
   assert.match(spec, /wheel-promo-unavailable/);
   assert.match(spec, /wheel-promo-invalid-config/);
+  assert.match(spec, /getByTestId\(["']wheel-phone-input["']\)/);
+  assert.doesNotMatch(
+    spec,
+    /getByLabel\(["']Телефон["']\)/,
+    "phone fill must not target the ambiguous Телефон label (country-code button)",
+  );
   assert.doesNotMatch(
     spec,
     /desktop happy path[\s\S]*?test\.skip\(!\(await wheelAvailable/,
@@ -609,6 +618,24 @@ function assertWheelSpecNoSilentSkipInIsolatedMode(): void {
     EXPECTED_WHEEL_E2E_TEST_COUNT,
     `wheel-fortune-public.spec.ts must define ${EXPECTED_WHEEL_E2E_TEST_COUNT} tests`,
   );
+
+  const wheelUi = read("src/components/game/wheel-fortune-public.tsx");
+  assert.match(wheelUi, /data-testid=["']wheel-phone-input["']/);
+  assert.match(wheelUi, /aria-label=["']Номер телефона["']/);
+  assert.match(wheelUi, /type=["']tel["']/);
+
+  const countrySelect = read("src/components/booking/phone-country-select.tsx");
+  assert.match(countrySelect, /aria-label=["']Код страны["']/);
+
+  const envSource = read("src/lib/env.ts");
+  assert.match(
+    envSource,
+    /allowIsolatedE2eLoopbackHttp:\s*process\.env\.WHEEL_E2E_ISOLATED\s*===\s*["']1["']/,
+    "production AUTH_URL loopback bypass must require WHEEL_E2E_ISOLATED=1",
+  );
+  const authPolicy = read("src/lib/auth-url-policy.ts");
+  assert.match(authPolicy, /allowIsolatedE2eLoopbackHttp/);
+  assert.match(authPolicy, /isLoopbackHostname/);
 }
 
 function assertPackageScript(): void {

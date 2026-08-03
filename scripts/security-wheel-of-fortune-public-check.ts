@@ -117,7 +117,13 @@ function assertPublicContracts(): void {
   assert.match(client, /\/api\/game\/wheel\/start/);
   assert.match(client, /\/api\/game\/wheel\/complete/);
   assert.match(client, /\/api\/game\/wheel\/result/);
+  assert.match(client, /data-testid=["']wheel-phone-input["']/);
+  assert.match(client, /aria-label=["']Номер телефона["']/);
+  assert.match(client, /type=["']tel["']/);
   assert.doesNotMatch(client, /wheel_lead_|persistLead|sessionStorage\.setItem\([^)]*phone|sessionStorage\.setItem\([^)]*name/i);
+
+  const countrySelect = read("src/components/booking/phone-country-select.tsx");
+  assert.match(countrySelect, /aria-label=["']Код страны["']/);
 
   const promo = read("src/app/promo/[slug]/page.tsx");
   assert.match(promo, /WheelFortunePublic/);

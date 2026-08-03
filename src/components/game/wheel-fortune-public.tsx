@@ -365,11 +365,15 @@ export function WheelFortunePublic({
                 className="min-h-12 rounded border px-3 text-sm"
               />
               <input
+                type="tel"
                 className="min-h-12 flex-1 rounded border border-zinc-300 px-3"
                 value={phoneLocal}
                 onChange={(event) => setPhoneLocal(event.target.value)}
                 placeholder={getPhonePlaceholder(countryCode)}
                 inputMode="tel"
+                autoComplete="tel-national"
+                aria-label="Номер телефона"
+                data-testid="wheel-phone-input"
                 required
               />
             </div>
