@@ -44,7 +44,6 @@ export async function GET(request: Request) {
       bookingSubmitted: result.bookingSubmitted,
       animation: result.animation,
       prizeDisplayName: result.prizeDisplayName,
-      gamePlayId: result.gamePlayId,
     });
     applyCookieOperations(response, result.cookieOperations);
     return response;

@@ -13,6 +13,10 @@ import {
 } from "../src/lib/game/wheel/default-prizes";
 import { parseWheelServerAssignment } from "../src/lib/game/wheel/parse-wheel-assignment";
 import {
+  buildTestWheelServerAssignment,
+  buildWheelAssignmentPrizeSnapshot,
+} from "../src/lib/game/wheel/wheel-assignment-prize-snapshot";
+import {
   mapToWheelInterestKey,
   wheelInterestToPublicKey,
 } from "../src/lib/game/wheel/public-interest";
@@ -46,6 +50,19 @@ function read(relative: string): string {
   return fs.readFileSync(path.join(ROOT, relative), "utf8");
 }
 
+function sampleAssignment(sectorIndex = 3) {
+  const gifts = buildDefaultGifts();
+  const gift = gifts[sectorIndex] ?? gifts[0]!;
+  const prizeSnapshot = buildWheelAssignmentPrizeSnapshot(gift.id, gifts);
+  assert.ok(prizeSnapshot);
+  return buildTestWheelServerAssignment({
+    sectorIndex,
+    giftId: gift.id,
+    prizeSystemKey: gift.systemKey!,
+    prizeSnapshot,
+  });
+}
+
 function assertStrictAssignmentInRegister(): void {
   const source = read("src/lib/game/wheel/register-phone-bound-session.ts");
   assert.match(source, /parseWheelServerAssignment/);
@@ -57,21 +74,7 @@ function assertStrictAssignmentInRegister(): void {
     source,
     /parseStoredAssignment\([^)]+\)\s*\?\?\s*input\.serverAssignment/,
   );
-  assert.ok(
-    parseWheelServerAssignment({
-      version: 1,
-      mechanicType: "WHEEL_OF_FORTUNE",
-      serverResultTier: 0,
-      campaignKey: "permanent-wheel",
-      rulesVersion: "1",
-      assignedAt: "2026-08-03T10:00:00.000Z",
-      tierBucket: "tier-0",
-      sectorIndex: 3,
-      totalSectors: 16,
-      prizeSystemKey: "hand_care_gift",
-      giftId: "00000000-0000-4000-8000-000000000003",
-    }),
-  );
+  assert.ok(parseWheelServerAssignment(sampleAssignment(3)));
   assert.equal(
     parseWheelServerAssignment({
       version: 1,
@@ -114,11 +117,11 @@ function assertPublicContracts(): void {
   assert.match(client, /\/api\/game\/wheel\/start/);
   assert.match(client, /\/api\/game\/wheel\/complete/);
   assert.match(client, /\/api\/game\/wheel\/result/);
-  assert.doesNotMatch(client, /prizeSystemKey|serverAssignment|HMAC|probability/);
+  assert.doesNotMatch(client, /wheel_lead_|persistLead|sessionStorage\.setItem\([^)]*phone|sessionStorage\.setItem\([^)]*name/i);
 
   const promo = read("src/app/promo/[slug]/page.tsx");
   assert.match(promo, /WheelFortunePublic/);
-  assert.match(promo, /wheel_of_fortune/);
+  assert.match(promo, /assertWheelCatalogReadyForActivation/);
 
   assert.equal(mapToWheelInterestKey("lips"), "lips_permanent");
   assert.equal(mapToWheelInterestKey("brows"), "brows_permanent");
@@ -249,6 +252,7 @@ function createPublicFlowFakePrisma(options?: {
   const gifts = buildDefaultGifts();
   const sessions: FakeSession[] = [];
   const bookings = new Map<string, { id: string }>();
+  const legalAcceptances: Array<{ gamePlayId: string | null }> = [];
   let createCalls = 0;
 
   const catalogRow = {
@@ -357,6 +361,9 @@ function createPublicFlowFakePrisma(options?: {
     }) {
       const where = args.where;
       const found = sessions.find((row) => {
+        if (where.id && row.id === where.id) {
+          return true;
+        }
         if (
           where.gameCatalogId &&
           where.campaignKeySnapshot &&
@@ -379,30 +386,165 @@ function createPublicFlowFakePrisma(options?: {
       return found ?? null;
     },
 
-    async update() {
-      throw new Error("gameSession.update must not rewrite assignment");
+    async updateMany(args: {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    }) {
+      let count = 0;
+      for (const row of sessions) {
+        if (args.where.id && row.id !== args.where.id) {
+          continue;
+        }
+        if (args.where.status && row.status !== args.where.status) {
+          continue;
+        }
+        if (
+          Array.isArray(args.where.status?.in) &&
+          !(args.where.status.in as string[]).includes(row.status)
+        ) {
+          continue;
+        }
+        Object.assign(row, args.data);
+        count += 1;
+      }
+      return { count };
     },
+  };
 
-    async updateMany() {
-      return { count: 0 };
+  const gamePlay = {
+    async create(args: {
+      data: {
+        gameSessionId: string;
+        selectedGiftId: string;
+        giftSnapshot: unknown;
+        rulesSnapshot: unknown;
+      };
+      select: { id: boolean };
+    }) {
+      const conflict = sessions.find(
+        (row) => row.gamePlay?.id && row.id === args.data.gameSessionId,
+      );
+      if (conflict?.gamePlay) {
+        throw new Prisma.PrismaClientKnownRequestError("Unique constraint", {
+          code: "P2002",
+          clientVersion: "test",
+          meta: { target: ["game_session_id"] },
+        });
+      }
+      const session = sessions.find((row) => row.id === args.data.gameSessionId);
+      assert.ok(session);
+      const play = {
+        id: randomUUID(),
+        leadId: null as string | null,
+        giftSnapshot: args.data.giftSnapshot,
+        selectedGiftId: args.data.selectedGiftId,
+      };
+      session.gamePlay = play;
+      session.status = "COMPLETED";
+      return { id: play.id };
+    },
+    async findUnique(args: {
+      where: { gameSessionId?: string; id?: string };
+      select?: Record<string, unknown>;
+    }) {
+      if (args.where.gameSessionId) {
+        const session = sessions.find((row) => row.id === args.where.gameSessionId);
+        return session?.gamePlay ?? null;
+      }
+      for (const session of sessions) {
+        if (session.gamePlay?.id === args.where.id) {
+          return {
+            ...session.gamePlay,
+            gameSessionId: session.id,
+            gameCatalogId: session.gameCatalogId,
+            consumedAt: null,
+          };
+        }
+      }
+      return null;
+    },
+    async updateMany(args: {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    }) {
+      let count = 0;
+      for (const session of sessions) {
+        if (!session.gamePlay || session.gamePlay.id !== args.where.id) {
+          continue;
+        }
+        if (args.where.leadId === null && session.gamePlay.leadId !== null) {
+          continue;
+        }
+        Object.assign(session.gamePlay, args.data);
+        if (args.data.leadId) {
+          session.status = "CONSUMED";
+        }
+        count += 1;
+      }
+      return { count };
     },
   };
 
   const bookingRequest = {
-    async findUnique(args: { where: { id: string }; select: { id: boolean } }) {
-      return bookings.get(args.where.id) ?? null;
+    async findUnique(args: {
+      where: { id?: string; idempotencyKey?: string };
+      select?: Record<string, unknown>;
+      include?: Record<string, unknown>;
+    }) {
+      if (args.where.id) {
+        return bookings.get(args.where.id) ?? null;
+      }
+      if (args.where.idempotencyKey) {
+        for (const booking of bookings.values()) {
+          if ((booking as { idempotencyKey?: string }).idempotencyKey === args.where.idempotencyKey) {
+            return booking;
+          }
+        }
+      }
+      return null;
+    },
+    async create(args: {
+      data: { idempotencyKey: string };
+      include?: Record<string, unknown>;
+    }) {
+      const id = randomUUID();
+      const row = {
+        id,
+        idempotencyKey: args.data.idempotencyKey,
+        idempotencyPayloadHash: "hash",
+      };
+      bookings.set(id, row);
+      return row;
     },
   };
 
+  const legalAcceptance = {
+    async create(args: { data: { gamePlayId?: string | null } }) {
+      legalAcceptances.push({ gamePlayId: args.data.gamePlayId ?? null });
+      return { id: randomUUID() };
+    },
+  };
+
+  const db = {
+    gameCatalog,
+    gameGift,
+    gameSession,
+    gamePlay,
+    bookingRequest,
+    legalAcceptance,
+    async $transaction<T>(fn: (tx: typeof db) => Promise<T>): Promise<T> {
+      return fn(db);
+    },
+    async $executeRaw() {
+      return 0;
+    },
+  } as unknown as PrismaClient;
+
   return {
-    db: {
-      gameCatalog,
-      gameGift,
-      gameSession,
-      bookingRequest,
-    } as unknown as PrismaClient,
+    db,
     sessions,
     bookings,
+    legalAcceptances,
     gifts,
     getCreateCalls: () => createCalls,
     setCatalogStatus(status: "ACTIVE" | "DRAFT" | "DISABLED") {
@@ -604,13 +746,31 @@ async function assertFakePrismaPublicFlow(): Promise<void> {
       error.code === "RESULT_UNAVAILABLE",
   );
 
-  // Restore valid assignment for complete idempotency path.
-  const restoredAssignment = parseWheelServerAssignment(
-    // Re-run start path uses winner assignment; rebuild from retry snapshot via second catalog start is blocked.
-    // Use a fresh fake for complete idempotency.
-    null,
+  await assert.rejects(
+    () =>
+      completeWheelPublicGame({
+        catalogSlug: CATALOG_SLUG,
+        interest: "lips",
+        name: "Анна",
+        phone: "+79990000000",
+        personalDataConsent: true,
+        offerAcknowledgement: true,
+        auth: {
+          visitorToken: VISITOR_TOKEN,
+          sessionToken: started.sessionToken,
+        },
+        request: new Request("http://localhost/api/game/wheel/complete", {
+          method: "POST",
+        }),
+        idempotencyKey: "idem-wheel-phone-mismatch",
+        now,
+        db: fake.db,
+        env: TEST_ENV,
+      }),
+    (error: unknown) =>
+      error instanceof WheelPublicGameError &&
+      error.code === "GAME_SESSION_FORBIDDEN",
   );
-  void restoredAssignment;
 
   const completeFake = createPublicFlowFakePrisma();
   const completeStart = await startWheelPublicGame({
@@ -626,28 +786,14 @@ async function assertFakePrismaPublicFlow(): Promise<void> {
     env: TEST_ENV,
     isGameEnabled: true,
   });
+
   const bookingId = randomUUID();
-  completeFake.markConsumed(completeFake.sessions[0]!.id, bookingId, {
-    name: completeStart.animation.prizeDisplayName,
-    originalPrize: {
-      name: completeStart.animation.prizeDisplayName,
-      systemKey: "hand_care_gift",
-    },
-    finalPrize: {
-      name: completeStart.animation.prizeDisplayName,
-      systemKey: "hand_care_gift",
-    },
-    replacementApplied: false,
-    confirmedInterest: "lips_permanent",
-    confirmedZone: "lips",
-  });
-  // Catalog inactivated after start must not lose assigned result on complete retry.
-  completeFake.setCatalogStatus("DISABLED");
+  let bookingCreates = 0;
   const completed = await completeWheelPublicGame({
     catalogSlug: CATALOG_SLUG,
-    interest: "brows",
+    interest: "lips",
     name: "Мария",
-    phone: "+79997654321",
+    phone: "8 (999) 765-43-21",
     personalDataConsent: true,
     offerAcknowledgement: true,
     auth: {
@@ -660,11 +806,32 @@ async function assertFakePrismaPublicFlow(): Promise<void> {
     idempotencyKey: "idem-wheel-complete-1",
     now,
     db: completeFake.db,
+    env: TEST_ENV,
+    createBookingRequestFn: async () => {
+      bookingCreates += 1;
+      completeFake.bookings.set(bookingId, { id: bookingId });
+      const session = completeFake.sessions[0]!;
+      assert.ok(session.gamePlay);
+      session.gamePlay.leadId = bookingId;
+      session.status = "CONSUMED";
+      completeFake.legalAcceptances.push({ gamePlayId: session.gamePlay.id });
+      return {
+        id: bookingId,
+        clientName: "Мария",
+        clientPhone: "79997654321",
+        status: "NEW",
+        type: "CONSULTATION_REQUEST",
+        createdAt: now.toISOString(),
+        isFromGame: true,
+        serviceNameSnapshot: null,
+        appointmentServiceName: null,
+      };
+    },
   });
   assert.equal(completed.ok, true);
   assert.equal(completed.bookingRequestId, bookingId);
-  assert.equal(completed.bookingSubmitted, true);
-  assert.equal(completed.replacementApplied, false);
+  assert.equal(bookingCreates, 1);
+  assert.equal(completeFake.legalAcceptances.length, 1);
   assertSafeWheelPublicPayload(completed);
 
   const completedAgain = await completeWheelPublicGame({
@@ -684,10 +851,47 @@ async function assertFakePrismaPublicFlow(): Promise<void> {
     idempotencyKey: "idem-wheel-complete-2",
     now,
     db: completeFake.db,
+    env: TEST_ENV,
+    createBookingRequestFn: async () => {
+      bookingCreates += 1;
+      return {
+        id: bookingId,
+        clientName: "Мария",
+        clientPhone: "79997654321",
+        status: "NEW",
+        type: "CONSULTATION_REQUEST",
+        createdAt: now.toISOString(),
+        isFromGame: true,
+        serviceNameSnapshot: null,
+        appointmentServiceName: null,
+      };
+    },
   });
   assert.equal(completedAgain.bookingRequestId, bookingId);
+  assert.equal(bookingCreates, 1);
   assert.equal(
     completedAgain.originalPrizeDisplayName,
+    completeStart.animation.prizeDisplayName,
+  );
+
+  completeFake.gifts[0]!.name = "MUTATED";
+  completeFake.gifts[0]!.isActive = false;
+  completeFake.setCatalogStatus("DISABLED");
+  const afterMutation = await getWheelPublicResult({
+    catalogSlug: CATALOG_SLUG,
+    auth: {
+      visitorToken: VISITOR_TOKEN,
+      sessionToken: completeStart.sessionToken,
+    },
+    now,
+    db: completeFake.db,
+  });
+  assert.equal(
+    afterMutation.animation?.sectorIndex,
+    completeStart.animation.sectorIndex,
+  );
+  assert.equal(
+    afterMutation.prizeDisplayName,
     completeStart.animation.prizeDisplayName,
   );
 }

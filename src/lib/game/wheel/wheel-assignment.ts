@@ -8,6 +8,11 @@ import {
   type WheelSectorGift,
 } from "@/lib/game/wheel/sector-assignment";
 import type { WheelServerAssignmentV1 } from "@/lib/game/wheel/wheel-assignment-contract";
+
+export type WheelServerAssignmentBaseV1 = Omit<
+  WheelServerAssignmentV1,
+  "prizeSnapshot"
+>;
 import {
   defaultWheelSettings,
   resolveWheelSettingsFromCatalogSettings,
@@ -24,7 +29,7 @@ export type BuildWheelServerAssignmentInput = {
 
 export function buildWheelServerAssignment(
   input: BuildWheelServerAssignmentInput,
-): WheelServerAssignmentV1 | null {
+): WheelServerAssignmentBaseV1 | null {
   const parsed = parseGameCatalogSettings(input.settingsRaw);
   const settings = parsed.settings;
   const campaignKey = resolveCampaignKey(input.catalogCampaignKey, settings);
@@ -76,5 +81,6 @@ export function wheelAssignmentToJson(
     totalSectors: assignment.totalSectors,
     prizeSystemKey: assignment.prizeSystemKey,
     giftId: assignment.giftId,
+    prizeSnapshot: assignment.prizeSnapshot,
   };
 }

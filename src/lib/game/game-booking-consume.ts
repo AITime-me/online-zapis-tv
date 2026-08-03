@@ -1,6 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/db";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import {
   buildCatalogSessionCookieName,
   readRequestCookie,
@@ -33,8 +34,9 @@ export function readGameSessionTokenFromRequest(
 
 export async function loadGamePlayForBooking(
   gamePlayId: string,
+  db: PrismaClient | Prisma.TransactionClient = prisma,
 ): Promise<GamePlayBookingRow | null> {
-  return prisma.gamePlay.findUnique({
+  return db.gamePlay.findUnique({
     where: { id: gamePlayId },
     select: {
       id: true,

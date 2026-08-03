@@ -37,7 +37,6 @@ export type WheelPublicResultResponse = {
   bookingSubmitted: boolean;
   animation: WheelPublicAnimationResult | null;
   prizeDisplayName: string | null;
-  gamePlayId: string | null;
 };
 
 export type WheelPublicCompleteResponse = {

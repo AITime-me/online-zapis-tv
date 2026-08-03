@@ -1,4 +1,5 @@
 import type { WheelServerAssignmentV1 } from "@/lib/game/wheel/wheel-assignment-contract";
+import { parseWheelAssignmentPrizeSnapshot } from "@/lib/game/wheel/wheel-assignment-prize-snapshot";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -60,6 +61,11 @@ export function parseWheelServerAssignment(
     return null;
   }
 
+  const prizeSnapshot = parseWheelAssignmentPrizeSnapshot(raw.prizeSnapshot);
+  if (!prizeSnapshot) {
+    return null;
+  }
+
   return {
     version: 1,
     mechanicType: "WHEEL_OF_FORTUNE",
@@ -72,5 +78,6 @@ export function parseWheelServerAssignment(
     totalSectors: raw.totalSectors,
     prizeSystemKey: raw.prizeSystemKey.trim(),
     giftId: raw.giftId.trim(),
+    prizeSnapshot,
   };
 }

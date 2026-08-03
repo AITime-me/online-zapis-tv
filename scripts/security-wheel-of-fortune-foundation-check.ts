@@ -33,6 +33,10 @@ import {
   type WheelSectorGift,
 } from "../src/lib/game/wheel/sector-assignment";
 import { buildWheelServerAssignment } from "../src/lib/game/wheel/wheel-assignment";
+import {
+  enrichWheelAssignmentWithPrizeSnapshot,
+  type WheelPrizeCatalogGift,
+} from "../src/lib/game/wheel/wheel-assignment-prize-snapshot";
 import { parseWheelServerAssignment } from "../src/lib/game/wheel/parse-wheel-assignment";
 import { completeWheelFromServerAssignment } from "../src/lib/game/wheel/wheel-complete";
 import {
@@ -124,6 +128,30 @@ function defaultGiftsAsSectorGifts(): WheelSectorGift[] {
     probability: prize.sectorCount,
     sortOrder: prize.sortOrder,
   }));
+}
+
+function defaultGiftsAsCatalog(): WheelPrizeCatalogGift[] {
+  const sectorGifts = defaultGiftsAsSectorGifts();
+  return DEFAULT_WHEEL_PRIZE_DEFINITIONS.map((definition, index) => {
+    const gift = sectorGifts[index]!;
+    return {
+      id: gift.id,
+      name: definition.name,
+      shortDescription: definition.shortDescription,
+      image: null,
+      priority: "standard",
+      cardStyle: "default",
+      isActive: gift.isActive,
+      probability: gift.probability,
+      systemKey: definition.systemKey,
+      sortOrder: gift.sortOrder,
+      prizeType: definition.prizeType,
+      prizeRules: definition.prizeRules,
+      activationMode: "SINGLE_PAID_SERVICE" as const,
+      minCourseSessions: null,
+      activationConditionText: definition.activationConditionText,
+    };
+  });
 }
 
 function assertZoneReplacementMatrix(): void {
@@ -321,7 +349,10 @@ function assertServerOnlyAssignmentAndIdempotency(): void {
   });
   assert.ok(assignment);
   assert.equal(assignment!.mechanicType, "WHEEL_OF_FORTUNE");
-  assert.equal(parseWheelServerAssignment(assignment)?.sectorIndex, 10);
+  const catalog = defaultGiftsAsCatalog();
+  const enriched = enrichWheelAssignmentWithPrizeSnapshot(assignment!, catalog);
+  assert.ok(enriched);
+  assert.equal(parseWheelServerAssignment(enriched)?.sectorIndex, 10);
 
   const giftDefs = DEFAULT_WHEEL_PRIZE_DEFINITIONS.map((definition, index) => {
     const gift = gifts[index]!;
@@ -342,7 +373,7 @@ function assertServerOnlyAssignmentAndIdempotency(): void {
   });
 
   const first = completeWheelFromServerAssignment({
-    assignment: assignment!,
+    assignment: enriched,
     gifts: giftDefs,
     existingGiftSnapshot: null,
     clientBody: {},
@@ -355,7 +386,7 @@ function assertServerOnlyAssignmentAndIdempotency(): void {
   assert.equal(first.idempotent, false);
 
   const second = completeWheelFromServerAssignment({
-    assignment: assignment!,
+    assignment: enriched,
     gifts: giftDefs,
     existingGiftSnapshot: first.giftSnapshot,
     clientBody: {},
@@ -370,7 +401,7 @@ function assertServerOnlyAssignmentAndIdempotency(): void {
 
   assert.equal(
     completeWheelFromServerAssignment({
-      assignment: assignment!,
+      assignment: enriched,
       gifts: giftDefs,
       existingGiftSnapshot: null,
       clientBody: { sectorIndex: 0 },
@@ -380,7 +411,7 @@ function assertServerOnlyAssignmentAndIdempotency(): void {
   );
   assert.equal(
     completeWheelFromServerAssignment({
-      assignment: assignment!,
+      assignment: enriched,
       gifts: giftDefs,
       existingGiftSnapshot: null,
       clientBody: { prizeId: "evil" },

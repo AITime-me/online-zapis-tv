@@ -44,8 +44,9 @@ function claimStorageKey(slug: string) {
   return `wheel_claim_idempotency_${slug}`;
 }
 
-function leadStorageKey(slug: string) {
-  return `wheel_lead_${slug}`;
+function clearWheelSessionKeys(slug: string) {
+  window.sessionStorage.removeItem(attemptStorageKey(slug));
+  window.sessionStorage.removeItem(claimStorageKey(slug));
 }
 
 function prefersReducedMotion(): boolean {
@@ -95,25 +96,6 @@ export function WheelFortunePublic({
   }, [catalogSlug]);
 
   useEffect(() => {
-    queueMicrotask(() => {
-      const saved = window.sessionStorage.getItem(leadStorageKey(catalogSlug));
-      if (!saved) {
-        return;
-      }
-      try {
-        const parsed = JSON.parse(saved) as {
-          name?: string;
-          phoneLocal?: string;
-          countryCode?: PhoneCountryCode;
-        };
-        if (parsed.name) setName(parsed.name);
-        if (parsed.phoneLocal) setPhoneLocal(parsed.phoneLocal);
-        if (parsed.countryCode) setCountryCode(parsed.countryCode);
-      } catch {
-        // ignore
-      }
-    });
-
     startTransition(async () => {
       try {
         const response = await fetch(
@@ -153,13 +135,6 @@ export function WheelFortunePublic({
     return buildFullPhoneNumber(countryCode, phoneLocal);
   }
 
-  function persistLead() {
-    window.sessionStorage.setItem(
-      leadStorageKey(catalogSlug),
-      JSON.stringify({ name, phoneLocal, countryCode }),
-    );
-  }
-
   function computeTargetRotation(sectorIndex: number, sectors: number) {
     const angle = 360 / sectors;
     const pointerCenter = 0;
@@ -189,7 +164,6 @@ export function WheelFortunePublic({
       setError("Подготовка попытки… попробуйте ещё раз");
       return;
     }
-    persistLead();
     spinningLock.current = true;
     startTransition(async () => {
       try {
@@ -311,6 +285,7 @@ export function WheelFortunePublic({
         setStatusMessage(
           `Заявка принята. Ваш приз: ${data.prizeDisplayName || animation?.prizeDisplayName || "приз"}. Студия свяжется с вами.`,
         );
+        clearWheelSessionKeys(catalogSlug);
         spinningLock.current = false;
       } catch {
         setError("Сеть недоступна. Повторите отправку — результат не потеряется.");
@@ -320,7 +295,10 @@ export function WheelFortunePublic({
   }
 
   return (
-    <main className="mx-auto flex min-h-[100dvh] w-full max-w-[430px] flex-col gap-4 px-4 py-6 text-zinc-900">
+    <main
+      className="mx-auto flex min-h-[100dvh] w-full max-w-[430px] flex-col gap-4 px-4 py-6 text-zinc-900"
+      data-testid="wheel-fortune-public"
+    >
       <header className="text-center">
         <p className="text-xs uppercase tracking-[0.2em] text-emerald-800">
           Твоё время
@@ -406,6 +384,7 @@ export function WheelFortunePublic({
             type="submit"
             className="min-h-12 rounded bg-emerald-800 px-4 text-base font-medium text-white disabled:opacity-60"
             disabled={busy || phase === "spinning"}
+            data-testid="wheel-start-button"
           >
             {phase === "spinning" ? "Крутим…" : "Крутить колесо"}
           </button>
@@ -469,6 +448,7 @@ export function WheelFortunePublic({
             type="submit"
             className="min-h-12 rounded bg-emerald-800 px-4 text-base font-medium text-white disabled:opacity-60"
             disabled={busy}
+            data-testid="wheel-complete-button"
           >
             Отправить заявку
           </button>

@@ -45,7 +45,7 @@ import {
   resolveClientForLead,
   type ClientLeadSource,
 } from "@/services/ClientLinkService";
-import { Prisma } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import {
   buildBookingIdempotencyPayload,
   computeIdempotencyPayloadHash,
@@ -109,6 +109,8 @@ export type CreateBookingRequestInput = {
   serviceName?: string | null;
   idempotencyKey: string;
   request?: Request;
+  /** When set, game booking persistence runs on this client (e.g. wheel complete tx). */
+  db?: Prisma.TransactionClient;
 };
 
 type ResolvedBookingRequestService = {
@@ -436,8 +438,9 @@ async function findOpenGameBookingIdForPhoneCatalog(input: {
 
 async function findIdempotentBookingRequest(
   idempotencyKey: string,
+  db: PrismaClient | Prisma.TransactionClient = prisma,
 ): Promise<BookingRequestRow | null> {
-  return prisma.bookingRequest.findUnique({
+  return db.bookingRequest.findUnique({
     where: { idempotencyKey },
     include: bookingRequestInclude,
   });
@@ -535,8 +538,9 @@ async function createGameBookingRequest(
     throwGameBookingError("GAME_RESULT_UNAVAILABLE");
   }
   const httpRequest = input.request;
+  const dbClient = input.db ?? prisma;
 
-  const play = await loadGamePlayForBooking(resolvedGamePlayId);
+  const play = await loadGamePlayForBooking(resolvedGamePlayId, dbClient);
   const catalogSlug = play?.gameCatalog?.slug ?? "";
   const sessionToken = readGameSessionTokenFromRequest(httpRequest, catalogSlug);
   const validation = validateGameBookingForFirstSubmit(play, sessionToken, now);
@@ -580,143 +584,149 @@ async function createGameBookingRequest(
 
   const gameSessionId = context.session.id;
 
-  try {
-    const request = await prisma.$transaction(async (tx) => {
-      const duplicate = await tx.bookingRequest.findUnique({
-        where: { idempotencyKey: input.idempotencyKey },
-        include: bookingRequestInclude,
-      });
-
-      if (duplicate) {
-        if (
-          !idempotencyPayloadHashesEqual(
-            duplicate.idempotencyPayloadHash,
-            payloadHash,
-          )
-        ) {
-          throw new BookingRequestPublicError(
-            "Idempotency-Key уже использован с другими данными заявки",
-            "IDEMPOTENCY_CONFLICT",
-            409,
-          );
-        }
-        return duplicate;
-      }
-
-      await assertNoOpenGameBookingForPhoneCatalog(tx, {
-        phoneKey,
-        gameCatalogId,
-      });
-
-      const session = await tx.gameSession.findUnique({
-        where: { id: gameSessionId },
-        select: {
-          id: true,
-          gameCatalogId: true,
-          status: true,
-          claimExpiresAt: true,
-          consumedAt: true,
-          tokenHash: true,
-        },
-      });
-
-      const currentPlay = await tx.gamePlay.findUnique({
-        where: { id: resolvedGamePlayId },
-        select: {
-          id: true,
-          gameSessionId: true,
-          gameCatalogId: true,
-          leadId: true,
-          consumedAt: true,
-          selectedGiftId: true,
-        },
-      });
-
-      if (
-        !session ||
-        session.status !== "COMPLETED" ||
-        session.consumedAt !== null ||
-        !session.claimExpiresAt ||
-        session.claimExpiresAt.getTime() <= now.getTime() ||
-        !currentPlay ||
-        currentPlay.gameSessionId !== gameSessionId ||
-        currentPlay.gameCatalogId !== session.gameCatalogId ||
-        currentPlay.gameCatalogId !== gameCatalogId ||
-        currentPlay.leadId !== null ||
-        currentPlay.consumedAt !== null ||
-        !currentPlay.selectedGiftId
-      ) {
-        throwGameBookingError("GAME_RESULT_UNAVAILABLE");
-      }
-
-      const created = await tx.bookingRequest.create({
-        data: {
-          clientName,
-          clientPhone,
-          clientPhoneNormalized: phoneKey,
-          gameCatalogId,
-          comment: requestComment,
-          masterId: input.masterId ?? null,
-          type: input.type,
-          source: "ONLINE",
-          status: "NEW",
-          clientId: clientLink.clientId,
-          idempotencyKey: input.idempotencyKey,
-          idempotencyPayloadHash: payloadHash,
-        },
-        include: bookingRequestInclude,
-      });
-
-      await recordRequiredPublicFormAcceptances(tx, {
-        source: resolveAcceptanceSourceForBookingRequestType(
-          input.type === "MANAGER_REQUEST"
-            ? "MANAGER_REQUEST"
-            : "CONSULTATION_REQUEST",
-          true,
-        ),
-        bookingRequestId: created.id,
-        clientId: clientLink.clientId,
-        gamePlayId: resolvedGamePlayId,
-        requestReference: input.idempotencyKey,
-      });
-
-      const playUpdated = await tx.gamePlay.updateMany({
-        where: {
-          id: resolvedGamePlayId,
-          leadId: null,
-          consumedAt: null,
-          gameSessionId,
-          selectedGiftId: { not: null },
-        },
-        data: {
-          leadId: created.id,
-          consumedAt: now,
-        },
-      });
-
-      if (playUpdated.count !== 1) {
-        throwGameBookingError("GAME_RESULT_UNAVAILABLE");
-      }
-
-      const sessionUpdated = await tx.gameSession.updateMany({
-        where: {
-          id: gameSessionId,
-          status: "COMPLETED",
-          consumedAt: null,
-          claimExpiresAt: { gt: now },
-        },
-        data: {
-          status: "CONSUMED",
-          consumedAt: now,
-        },
-      });
-
-      if (sessionUpdated.count !== 1) {
-        throwGameBookingError("GAME_RESULT_UNAVAILABLE");
-      }
-
-      return created;
+  const runBookingTx = async (
+    tx: Prisma.TransactionClient,
+  ): Promise<BookingRequestRow> => {
+    const duplicate = await tx.bookingRequest.findUnique({
+      where: { idempotencyKey: input.idempotencyKey },
+      include: bookingRequestInclude,
     });
+
+    if (duplicate) {
+      if (
+        !idempotencyPayloadHashesEqual(
+          duplicate.idempotencyPayloadHash,
+          payloadHash,
+        )
+      ) {
+        throw new BookingRequestPublicError(
+          "Idempotency-Key уже использован с другими данными заявки",
+          "IDEMPOTENCY_CONFLICT",
+          409,
+        );
+      }
+      return duplicate;
+    }
+
+    await assertNoOpenGameBookingForPhoneCatalog(tx, {
+      phoneKey,
+      gameCatalogId,
+    });
+
+    const session = await tx.gameSession.findUnique({
+      where: { id: gameSessionId },
+      select: {
+        id: true,
+        gameCatalogId: true,
+        status: true,
+        claimExpiresAt: true,
+        consumedAt: true,
+        tokenHash: true,
+      },
+    });
+
+    const currentPlay = await tx.gamePlay.findUnique({
+      where: { id: resolvedGamePlayId },
+      select: {
+        id: true,
+        gameSessionId: true,
+        gameCatalogId: true,
+        leadId: true,
+        consumedAt: true,
+        selectedGiftId: true,
+      },
+    });
+
+    if (
+      !session ||
+      session.status !== "COMPLETED" ||
+      session.consumedAt !== null ||
+      !session.claimExpiresAt ||
+      session.claimExpiresAt.getTime() <= now.getTime() ||
+      !currentPlay ||
+      currentPlay.gameSessionId !== gameSessionId ||
+      currentPlay.gameCatalogId !== session.gameCatalogId ||
+      currentPlay.gameCatalogId !== gameCatalogId ||
+      currentPlay.leadId !== null ||
+      currentPlay.consumedAt !== null ||
+      !currentPlay.selectedGiftId
+    ) {
+      throwGameBookingError("GAME_RESULT_UNAVAILABLE");
+    }
+
+    const created = await tx.bookingRequest.create({
+      data: {
+        clientName,
+        clientPhone,
+        clientPhoneNormalized: phoneKey,
+        gameCatalogId,
+        comment: requestComment,
+        masterId: input.masterId ?? null,
+        type: input.type,
+        source: "ONLINE",
+        status: "NEW",
+        clientId: clientLink.clientId,
+        idempotencyKey: input.idempotencyKey,
+        idempotencyPayloadHash: payloadHash,
+      },
+      include: bookingRequestInclude,
+    });
+
+    await recordRequiredPublicFormAcceptances(tx, {
+      source: resolveAcceptanceSourceForBookingRequestType(
+        input.type === "MANAGER_REQUEST"
+          ? "MANAGER_REQUEST"
+          : "CONSULTATION_REQUEST",
+        true,
+      ),
+      bookingRequestId: created.id,
+      clientId: clientLink.clientId,
+      gamePlayId: resolvedGamePlayId,
+      requestReference: input.idempotencyKey,
+    });
+
+    const playUpdated = await tx.gamePlay.updateMany({
+      where: {
+        id: resolvedGamePlayId,
+        leadId: null,
+        consumedAt: null,
+        gameSessionId,
+        selectedGiftId: { not: null },
+      },
+      data: {
+        leadId: created.id,
+        consumedAt: now,
+      },
+    });
+
+    if (playUpdated.count !== 1) {
+      throwGameBookingError("GAME_RESULT_UNAVAILABLE");
+    }
+
+    const sessionUpdated = await tx.gameSession.updateMany({
+      where: {
+        id: gameSessionId,
+        status: "COMPLETED",
+        consumedAt: null,
+        claimExpiresAt: { gt: now },
+      },
+      data: {
+        status: "CONSUMED",
+        consumedAt: now,
+      },
+    });
+
+    if (sessionUpdated.count !== 1) {
+      throwGameBookingError("GAME_RESULT_UNAVAILABLE");
+    }
+
+    return created;
+  };
+
+  try {
+    const request = input.db
+      ? await runBookingTx(input.db)
+      : await prisma.$transaction(runBookingTx);
 
     return mapBookingRequest(request);
   } catch (error) {
@@ -904,7 +914,7 @@ export async function createBookingRequest(
 
   let gameSessionId: string | null = null;
   if (resolvedGamePlayId) {
-    const play = await loadGamePlayForBooking(resolvedGamePlayId);
+    const play = await loadGamePlayForBooking(resolvedGamePlayId, input.db);
     gameSessionId = play?.gameSessionId ?? null;
   }
 
@@ -926,7 +936,10 @@ export async function createBookingRequest(
   });
   const payloadHash = computeIdempotencyPayloadHash(payload);
 
-  const existing = await findIdempotentBookingRequest(input.idempotencyKey);
+  const existing = await findIdempotentBookingRequest(
+    input.idempotencyKey,
+    input.db,
+  );
   if (existing) {
     if (
       !idempotencyPayloadHashesEqual(existing.idempotencyPayloadHash, payloadHash)

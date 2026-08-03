@@ -18,9 +18,6 @@ import { hashOpaqueToken } from "@/lib/game/session/game-session-token";
 import { normalizeGameSlug } from "@/lib/games/catalog-contract";
 import { isValidWheelAttemptId } from "@/lib/game/wheel/client-attempt-id";
 import { parseWheelServerAssignment } from "@/lib/game/wheel/parse-wheel-assignment";
-import { resolvePrizeReplacement } from "@/lib/game/wheel/prize-replacement";
-import { parsePrizeRules } from "@/lib/game/wheel/prize-rules-contract";
-import { isGamePrizeType } from "@/lib/game/wheel/prize-types";
 import {
   mapToWheelInterestKey,
   wheelInterestToPublicKey,
@@ -28,13 +25,19 @@ import {
   type WheelPublicInterestKey,
 } from "@/lib/game/wheel/public-interest";
 import { registerWheelPhoneBoundSession } from "@/lib/game/wheel/register-phone-bound-session";
-import { giftsToSectorGifts, assertWheelCatalogReadyForActivation } from "@/lib/game/wheel/wheel-admin";
-import { buildWheelServerAssignment } from "@/lib/game/wheel/wheel-assignment";
-import { completeWheelFromServerAssignment } from "@/lib/game/wheel/wheel-complete";
 import {
-  applyReplacementToWheelGiftSnapshot,
-  type WheelAwareGiftSnapshot,
-} from "@/lib/game/wheel/wheel-gift-snapshot";
+  giftsToSectorGifts,
+  assertWheelCatalogReadyForActivation,
+} from "@/lib/game/wheel/wheel-admin";
+import { buildWheelServerAssignment } from "@/lib/game/wheel/wheel-assignment";
+import {
+  enrichWheelAssignmentWithPrizeSnapshot,
+  type WheelPrizeCatalogGift,
+} from "@/lib/game/wheel/wheel-assignment-prize-snapshot";
+import {
+  buildWheelCompleteGiftSnapshot,
+  prizeDisplayNameFromAssignment,
+} from "@/lib/game/wheel/wheel-public-complete-snapshot";
 import { buildPublicSectorLabels } from "@/lib/game/wheel/wheel-public-labels";
 import {
   assertSafeWheelPublicPayload,
@@ -44,6 +47,9 @@ import {
   type WheelPublicSessionStatus,
   type WheelPublicStartResponse,
 } from "@/lib/game/wheel/wheel-public-dto";
+import { assertWheelSessionPhoneMatches } from "@/lib/game/wheel/wheel-public-session-phone";
+import type { WheelAwareGiftSnapshot } from "@/lib/game/wheel/wheel-gift-snapshot";
+import type { WheelInterestKey } from "@/lib/game/wheel/procedure-types";
 import { validateClaimZoneForInterest } from "@/lib/game/wheel/zone-resolution";
 import { createBookingRequest } from "@/services/BookingRequestService";
 import { ensureVisitorAuth } from "@/services/GameSessionService";
@@ -136,7 +142,10 @@ async function assertWheelPubliclyPlayable(
   }
 }
 
-async function loadSectorGifts(catalogId: string, db: PrismaClient) {
+async function loadSectorGifts(
+  catalogId: string,
+  db: PrismaClient,
+): Promise<WheelPrizeCatalogGift[]> {
   return db.gameGift.findMany({
     where: { gameCatalogId: catalogId },
     select: {
@@ -177,13 +186,6 @@ export async function assertWheelCatalogConfigValid(
   }
 }
 
-function giftDisplayName(
-  gifts: Array<{ id: string; name: string }>,
-  giftId: string,
-): string {
-  return gifts.find((gift) => gift.id === giftId)?.name?.trim() || "Приз";
-}
-
 function mapSessionStatus(
   status: string,
   playExpiresAt: Date | null,
@@ -202,6 +204,43 @@ function mapSessionStatus(
   return "ACTIVE";
 }
 
+function snapshotDisplayNames(snapshot: WheelAwareGiftSnapshot | null): {
+  originalName: string;
+  finalName: string;
+  replacementApplied: boolean;
+} {
+  const originalName =
+    snapshot?.originalPrize?.name?.trim() ||
+    snapshot?.name?.trim() ||
+    "Приз";
+  const finalName =
+    snapshot?.finalPrize?.name?.trim() ||
+    snapshot?.name?.trim() ||
+    originalName;
+  return {
+    originalName,
+    finalName,
+    replacementApplied: Boolean(snapshot?.replacementApplied),
+  };
+}
+
+function resolveLockedInterest(
+  existingSnapshot: WheelAwareGiftSnapshot | null,
+  requested: WheelInterestKey,
+): WheelInterestKey {
+  const locked = existingSnapshot?.confirmedInterest ?? null;
+  return locked ?? requested;
+}
+
+async function lockWheelSessionRow(
+  tx: Prisma.TransactionClient,
+  sessionId: string,
+): Promise<void> {
+  await tx.$executeRaw(
+    Prisma.sql`SELECT id FROM game_sessions WHERE id = ${sessionId}::uuid FOR UPDATE`,
+  );
+}
+
 export async function startWheelPublicGame(input: {
   catalogSlug: string;
   name: string;
@@ -213,7 +252,6 @@ export async function startWheelPublicGame(input: {
   now?: Date;
   db?: PrismaClient;
   env?: NodeJS.ProcessEnv;
-  /** Test override — skips StudioSettings lookup when provided. */
   isGameEnabled?: boolean;
 }): Promise<WheelPublicStartResponse & { cookieOperations: CookieOperation[] }> {
   const now = input.now ?? new Date();
@@ -243,13 +281,21 @@ export async function startWheelPublicGame(input: {
 
   const visitor = ensureVisitorAuth(input.auth);
   const gifts = await loadSectorGifts(catalog.id, db);
-  const assignment = buildWheelServerAssignment({
+  const assignmentBase = buildWheelServerAssignment({
     catalogCampaignKey: catalog.campaignKey,
     catalogRulesVersion: catalog.rulesVersion,
     settingsRaw: catalog.settings,
     gifts: giftsToSectorGifts(gifts),
     now,
   });
+  if (!assignmentBase) {
+    throwWheel("WHEEL_CONFIG_INVALID", "Конфигурация колеса невалидна");
+  }
+
+  const assignment = enrichWheelAssignmentWithPrizeSnapshot(
+    assignmentBase,
+    gifts,
+  );
   if (!assignment) {
     throwWheel("WHEEL_CONFIG_INVALID", "Конфигурация колеса невалидна");
   }
@@ -297,7 +343,7 @@ export async function startWheelPublicGame(input: {
 
   const animation = buildWheelPublicAnimationResult({
     sectorIndex: storedAssignment.sectorIndex,
-    prizeDisplayName: giftDisplayName(gifts, storedAssignment.giftId),
+    prizeDisplayName: prizeDisplayNameFromAssignment(storedAssignment),
     totalSectors: storedAssignment.totalSectors,
   });
 
@@ -375,10 +421,13 @@ export async function getWheelPublicResult(input: {
     throwWheel("RESULT_UNAVAILABLE", "Результат игры временно недоступен", 409);
   }
 
-  const gifts = await loadSectorGifts(catalog.id, db);
-  const snapshot = parseGiftSnapshot(session.gamePlay?.giftSnapshot ?? null);
+  const snapshot = session.gamePlay?.giftSnapshot
+    ? (parseGiftSnapshot(session.gamePlay.giftSnapshot) as WheelAwareGiftSnapshot | null)
+    : null;
   const prizeDisplayName =
-    snapshot?.name?.trim() || giftDisplayName(gifts, assignment.giftId);
+    snapshot?.finalPrize?.name?.trim() ||
+    snapshot?.name?.trim() ||
+    prizeDisplayNameFromAssignment(assignment);
 
   const animation = buildWheelPublicAnimationResult({
     sectorIndex: assignment.sectorIndex,
@@ -415,7 +464,6 @@ export async function getWheelPublicResult(input: {
     bookingSubmitted,
     animation,
     prizeDisplayName,
-    gamePlayId: session.gamePlay?.id ?? null,
   };
   assertSafeWheelPublicPayload(response);
   return { ...response, cookieOperations };
@@ -443,6 +491,24 @@ function buildWheelManagerComment(input: {
   return lines.join("\n");
 }
 
+function buildCompleteResponse(input: {
+  bookingRequestId: string;
+  giftSnapshot: WheelAwareGiftSnapshot;
+  assignment: ReturnType<typeof parseWheelServerAssignment> & object;
+}): WheelPublicCompleteResponse {
+  const names = snapshotDisplayNames(input.giftSnapshot);
+  const response: WheelPublicCompleteResponse = {
+    ok: true,
+    bookingRequestId: input.bookingRequestId,
+    prizeDisplayName: names.finalName,
+    originalPrizeDisplayName: names.originalName,
+    replacementApplied: names.replacementApplied,
+    bookingSubmitted: true,
+  };
+  assertSafeWheelPublicPayload(response);
+  return response;
+}
+
 export async function completeWheelPublicGame(input: {
   catalogSlug: string;
   interest: unknown;
@@ -456,6 +522,9 @@ export async function completeWheelPublicGame(input: {
   idempotencyKey: string;
   now?: Date;
   db?: PrismaClient;
+  env?: NodeJS.ProcessEnv;
+  /** Test injection for fake booking persistence. */
+  createBookingRequestFn?: typeof createBookingRequest;
 }): Promise<
   WheelPublicCompleteResponse & { cookieOperations: CookieOperation[] }
 > {
@@ -478,16 +547,9 @@ export async function completeWheelPublicGame(input: {
     throwWheel("IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key обязателен");
   }
 
-  const interest = mapToWheelInterestKey(input.interest);
-  if (!interest) {
+  const requestedInterest = mapToWheelInterestKey(input.interest);
+  if (!requestedInterest) {
     throwWheel("GAME_INVALID_REQUEST", "Некорректный интерес");
-  }
-  const zoneValidation = validateClaimZoneForInterest({
-    interest,
-    confirmedZone: input.confirmedZone,
-  });
-  if (!zoneValidation.ok) {
-    throwWheel("GAME_INVALID_REQUEST", zoneValidation.error);
   }
 
   // Catalog may become INACTIVE after start; persisted session remains source of truth.
@@ -498,315 +560,336 @@ export async function completeWheelPublicGame(input: {
     throwWheel("GAME_SESSION_NOT_FOUND", "Игровая сессия не найдена", 404);
   }
 
-  const session = await db.gameSession.findFirst({
+  const sessionLookup = await db.gameSession.findFirst({
     where: {
       gameCatalogId: catalog.id,
       tokenHash: hashOpaqueToken(sessionToken),
     },
-    select: {
-      id: true,
-      status: true,
-      playExpiresAt: true,
-      claimExpiresAt: true,
-      browserVisitorHash: true,
-      serverAssignment: true,
-      gamePlay: {
-        select: {
-          id: true,
-          leadId: true,
-          giftSnapshot: true,
-          selectedGiftId: true,
-        },
-      },
-    },
+    select: { id: true },
   });
-
-  if (!session) {
+  if (!sessionLookup) {
     throwWheel("GAME_SESSION_NOT_FOUND", "Игровая сессия не найдена", 404);
   }
-  if (session.browserVisitorHash !== visitor.visitorTokenHash) {
-    throwWheel("GAME_SESSION_FORBIDDEN", "Сессия недоступна", 403);
-  }
 
-  const assignment = parseWheelServerAssignment(session.serverAssignment);
-  if (!assignment) {
-    throwWheel("RESULT_UNAVAILABLE", "Результат игры временно недоступен", 409);
-  }
+  const txResult = await db.$transaction(async (tx) => {
+    await lockWheelSessionRow(tx, sessionLookup.id);
 
-  if (session.status === "EXPIRED") {
-    throwWheel("GAME_SESSION_EXPIRED", "Время игры истекло", 409);
-  }
-  if (
-    session.status === "ACTIVE" &&
-    now.getTime() >= session.playExpiresAt.getTime()
-  ) {
-    await db.gameSession.updateMany({
-      where: { id: session.id, status: "ACTIVE" },
-      data: { status: "EXPIRED" },
-    });
-    throwWheel("GAME_SESSION_EXPIRED", "Время игры истекло", 409);
-  }
-
-  const gifts = await loadSectorGifts(catalog.id, db);
-  const existingSnapshot = session.gamePlay?.giftSnapshot
-    ? (parseGiftSnapshot(
-        session.gamePlay.giftSnapshot,
-      ) as WheelAwareGiftSnapshot | null)
-    : null;
-
-  if (session.status === "CONSUMED" && session.gamePlay?.leadId) {
-    const booking = await db.bookingRequest.findUnique({
-      where: { id: session.gamePlay.leadId },
-      select: { id: true },
-    });
-    if (!booking) {
-      throwWheel("RESULT_UNAVAILABLE", "Заявка недоступна", 409);
-    }
-    const originalName =
-      existingSnapshot?.originalPrize?.name ||
-      existingSnapshot?.name ||
-      giftDisplayName(gifts, assignment.giftId);
-    const finalName =
-      existingSnapshot?.finalPrize?.name ||
-      existingSnapshot?.name ||
-      originalName;
-    const response: WheelPublicCompleteResponse = {
-      ok: true,
-      bookingRequestId: booking.id,
-      prizeDisplayName: finalName,
-      originalPrizeDisplayName: originalName,
-      replacementApplied: Boolean(existingSnapshot?.replacementApplied),
-      bookingSubmitted: true,
-    };
-    assertSafeWheelPublicPayload(response);
-    return { ...response, cookieOperations: visitor.cookieOperations };
-  }
-
-  const lockedInterest = existingSnapshot?.confirmedInterest ?? null;
-  const effectiveInterest = lockedInterest ?? interest;
-  const effectiveZone = lockedInterest
-    ? validateClaimZoneForInterest({
-        interest: lockedInterest,
-        confirmedZone: existingSnapshot?.confirmedZone ?? input.confirmedZone,
-      })
-    : zoneValidation;
-  if (!effectiveZone.ok) {
-    throwWheel("GAME_INVALID_REQUEST", effectiveZone.error);
-  }
-
-  const completeBase = completeWheelFromServerAssignment({
-    assignment,
-    gifts: gifts.map((gift) => ({
-      id: gift.id,
-      name: gift.name,
-      shortDescription: gift.shortDescription,
-      image: gift.image,
-      priority: gift.priority,
-      cardStyle: gift.cardStyle,
-      activationMode: gift.activationMode,
-      minCourseSessions: gift.minCourseSessions,
-      activationConditionText: gift.activationConditionText,
-      systemKey: gift.systemKey,
-      prizeType: gift.prizeType,
-      prizeRules: gift.prizeRules,
-    })),
-    existingGiftSnapshot: null,
-    clientBody: {},
-    now,
-  });
-  if (!completeBase.ok) {
-    throwWheel("RESULT_UNAVAILABLE", completeBase.error, 409);
-  }
-
-  let giftSnapshot = completeBase.giftSnapshot as WheelAwareGiftSnapshot;
-  const originalRules = parsePrizeRules(giftSnapshot.prizeRules);
-  if (!originalRules || !isGamePrizeType(giftSnapshot.prizeType)) {
-    throwWheel("RESULT_UNAVAILABLE", "Правила приза недоступны", 409);
-  }
-
-  const fallbackKey = originalRules.replacement?.fallbackSystemKey ?? null;
-  const fallbackGift = fallbackKey
-    ? (gifts.find((gift) => gift.systemKey === fallbackKey) ?? null)
-    : null;
-
-  const replacement = resolvePrizeReplacement({
-    original: {
-      systemKey: assignment.prizeSystemKey,
-      giftId: assignment.giftId,
-      name: giftDisplayName(gifts, assignment.giftId),
-    },
-    originalRules,
-    confirmedInterest: effectiveInterest,
-    confirmedZone: effectiveZone.confirmedZone,
-    fallbackPrize: fallbackGift
-      ? {
-          systemKey: fallbackGift.systemKey ?? fallbackGift.id,
-          giftId: fallbackGift.id,
-          name: fallbackGift.name,
-        }
-      : null,
-    now,
-  });
-
-  let selectedGiftId = assignment.giftId;
-  if (replacement.replaced) {
-    const finalGift = gifts.find((gift) => gift.id === replacement.final.giftId);
-    if (!finalGift) {
-      throwWheel("RESULT_UNAVAILABLE", "Приз замены недоступен", 409);
-    }
-    const finalRules = parsePrizeRules(finalGift.prizeRules);
-    const finalType = isGamePrizeType(finalGift.prizeType)
-      ? finalGift.prizeType
-      : null;
-    if (!finalRules || !finalType) {
-      throwWheel("RESULT_UNAVAILABLE", "Правила приза замены недоступны", 409);
-    }
-    giftSnapshot = applyReplacementToWheelGiftSnapshot(giftSnapshot, {
-      finalPrize: replacement.final,
-      finalPrizeType: finalType,
-      finalPrizeRules: finalRules,
-      confirmedInterest: replacement.confirmedInterest,
-      confirmedZone: replacement.confirmedZone,
-      replacementReason: replacement.replacementReason,
-      replacedAt: replacement.replacedAt,
-    });
-    selectedGiftId = replacement.final.giftId;
-  } else {
-    giftSnapshot = {
-      ...giftSnapshot,
-      confirmedInterest: effectiveInterest,
-      confirmedZone: effectiveZone.confirmedZone,
-      originalPrize: giftSnapshot.originalPrize ?? {
-        systemKey: assignment.prizeSystemKey,
-        giftId: assignment.giftId,
-        name: giftDisplayName(gifts, assignment.giftId),
-      },
-      finalPrize: giftSnapshot.finalPrize ?? {
-        systemKey: assignment.prizeSystemKey,
-        giftId: assignment.giftId,
-        name: giftDisplayName(gifts, assignment.giftId),
-      },
-    };
-  }
-
-  const rulesSnapshot = buildRulesSnapshot({
-    campaignKey: assignment.campaignKey,
-    rulesVersion: assignment.rulesVersion,
-    mechanicType: "WHEEL_OF_FORTUNE",
-    serverResultTier: 0,
-    catalogSlug: catalog.slug,
-    catalogTitle: catalog.title,
-    bookingWindowHours: BOOKING_WINDOW_HOURS,
-  });
-
-  const claimExpiresAt = new Date(now.getTime() + CLAIM_WINDOW_MS);
-
-  const gamePlayId = await db.$transaction(async (tx) => {
-    const locked = await tx.gameSession.findFirst({
-      where: { id: session.id },
+    const session = await tx.gameSession.findFirst({
+      where: { id: sessionLookup.id },
       select: {
         id: true,
+        gameCatalogId: true,
         status: true,
-        gamePlay: { select: { id: true, leadId: true } },
+        playExpiresAt: true,
+        claimExpiresAt: true,
+        browserVisitorHash: true,
+        participantPhoneHash: true,
+        campaignKeySnapshot: true,
+        serverAssignment: true,
+        gamePlay: {
+          select: {
+            id: true,
+            leadId: true,
+            giftSnapshot: true,
+            selectedGiftId: true,
+          },
+        },
       },
     });
-    if (!locked) {
+
+    if (!session) {
       throwWheel("GAME_SESSION_NOT_FOUND", "Игровая сессия не найдена", 404);
     }
-    if (locked.gamePlay?.leadId) {
-      return locked.gamePlay.id;
+    if (session.browserVisitorHash !== visitor.visitorTokenHash) {
+      throwWheel("GAME_SESSION_FORBIDDEN", "Сессия недоступна", 403);
     }
-    if (locked.gamePlay?.id) {
-      await tx.gamePlay.update({
-        where: { id: locked.gamePlay.id },
+
+    const phoneCheck = assertWheelSessionPhoneMatches({
+      participantPhoneHash: session.participantPhoneHash,
+      campaignKeySnapshot: session.campaignKeySnapshot,
+      gameCatalogId: session.gameCatalogId,
+      phone: input.phone,
+      env: input.env,
+    });
+    if (!phoneCheck.ok) {
+      const status = phoneCheck.code === "GAME_SESSION_FORBIDDEN" ? 403 : 400;
+      throwWheel(
+        phoneCheck.code,
+        phoneCheck.code === "GAME_SESSION_FORBIDDEN"
+          ? "Сессия недоступна"
+          : "Некорректный запрос",
+        status,
+      );
+    }
+
+    const assignment = parseWheelServerAssignment(session.serverAssignment);
+    if (!assignment) {
+      throwWheel("RESULT_UNAVAILABLE", "Результат игры временно недоступен", 409);
+    }
+
+    if (session.status === "EXPIRED") {
+      throwWheel("GAME_SESSION_EXPIRED", "Время игры истекло", 409);
+    }
+    if (
+      session.status === "ACTIVE" &&
+      now.getTime() >= session.playExpiresAt.getTime()
+    ) {
+      await tx.gameSession.updateMany({
+        where: { id: session.id, status: "ACTIVE" },
+        data: { status: "EXPIRED" },
+      });
+      throwWheel("GAME_SESSION_EXPIRED", "Время игры истекло", 409);
+    }
+
+    const existingSnapshot = session.gamePlay?.giftSnapshot
+      ? (parseGiftSnapshot(
+          session.gamePlay.giftSnapshot,
+        ) as WheelAwareGiftSnapshot | null)
+      : null;
+
+    if (session.status === "CONSUMED" && session.gamePlay?.leadId) {
+      const booking = await tx.bookingRequest.findUnique({
+        where: { id: session.gamePlay.leadId },
+        select: { id: true },
+      });
+      if (!booking) {
+        throwWheel("RESULT_UNAVAILABLE", "Заявка недоступна", 409);
+      }
+      return {
+        kind: "already_consumed" as const,
+        bookingRequestId: booking.id,
+        giftSnapshot:
+          existingSnapshot ??
+          ({
+            giftId: assignment.giftId,
+            name: prizeDisplayNameFromAssignment(assignment),
+            shortDescription: "",
+            image: null,
+            priority: "standard",
+            cardStyle: "default",
+            ruleType: "wheel_sector",
+            assignedValue: null,
+            assignedAt: now.toISOString(),
+            activationMode: "SINGLE_PAID_SERVICE",
+            minCourseSessions: null,
+            activationConditionText: "",
+            validityDays: 30,
+            originalPrize: {
+              name: prizeDisplayNameFromAssignment(assignment),
+              giftId: assignment.giftId,
+              systemKey: assignment.prizeSystemKey,
+            },
+            finalPrize: {
+              name: prizeDisplayNameFromAssignment(assignment),
+              giftId: assignment.giftId,
+              systemKey: assignment.prizeSystemKey,
+            },
+          } as unknown as WheelAwareGiftSnapshot),
+        assignment,
+      };
+    }
+
+    const effectiveInterest = resolveLockedInterest(
+      existingSnapshot,
+      requestedInterest,
+    );
+    const effectiveZone = validateClaimZoneForInterest({
+      interest: effectiveInterest,
+      confirmedZone:
+        existingSnapshot?.confirmedZone ?? input.confirmedZone,
+    });
+    if (!effectiveZone.ok) {
+      throwWheel("GAME_INVALID_REQUEST", effectiveZone.error);
+    }
+
+    let giftSnapshot: WheelAwareGiftSnapshot;
+    let selectedGiftId: string;
+
+    if (existingSnapshot?.confirmedInterest) {
+      giftSnapshot = existingSnapshot;
+      selectedGiftId =
+        session.gamePlay?.selectedGiftId ??
+        existingSnapshot.finalPrize?.giftId ??
+        assignment.giftId;
+    } else {
+      const built = buildWheelCompleteGiftSnapshot({
+        assignment,
+        confirmedInterest: effectiveInterest,
+        confirmedZone: effectiveZone.confirmedZone,
+        now,
+      });
+      if (!built.ok) {
+        throwWheel("RESULT_UNAVAILABLE", built.error, 409);
+      }
+      giftSnapshot = built.giftSnapshot;
+      selectedGiftId = built.selectedGiftId;
+    }
+
+    const rulesSnapshot = buildRulesSnapshot({
+      campaignKey: assignment.campaignKey,
+      rulesVersion: assignment.rulesVersion,
+      mechanicType: "WHEEL_OF_FORTUNE",
+      serverResultTier: 0,
+      catalogSlug: catalog.slug,
+      catalogTitle: catalog.title,
+      bookingWindowHours: BOOKING_WINDOW_HOURS,
+    });
+
+    const claimExpiresAt = new Date(now.getTime() + CLAIM_WINDOW_MS);
+
+    let gamePlayId = session.gamePlay?.id ?? null;
+    if (!gamePlayId) {
+      try {
+        const play = await tx.gamePlay.create({
+          data: {
+            gameDirection: "wheel",
+            skinNeed: "none",
+            resultType: "wheel",
+            premiumLevel: 0,
+            gameCatalogId: catalog.id,
+            gameSessionId: session.id,
+            selectedGiftId,
+            serverResultTier: 0,
+            campaignKey: assignment.campaignKey,
+            giftSnapshot: giftSnapshot as unknown as Prisma.InputJsonValue,
+            rulesSnapshot: rulesSnapshot as unknown as Prisma.InputJsonValue,
+          },
+          select: { id: true },
+        });
+        gamePlayId = play.id;
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === "P2002"
+        ) {
+          const existingPlay = await tx.gamePlay.findUnique({
+            where: { gameSessionId: session.id },
+            select: {
+              id: true,
+              leadId: true,
+              giftSnapshot: true,
+              selectedGiftId: true,
+            },
+          });
+          if (!existingPlay) {
+            throw error;
+          }
+          gamePlayId = existingPlay.id;
+          if (existingPlay.leadId) {
+            const booking = await tx.bookingRequest.findUnique({
+              where: { id: existingPlay.leadId },
+              select: { id: true },
+            });
+            if (!booking) {
+              throwWheel("RESULT_UNAVAILABLE", "Заявка недоступна", 409);
+            }
+            const racedSnapshot = existingPlay.giftSnapshot
+              ? (parseGiftSnapshot(
+                  existingPlay.giftSnapshot,
+                ) as WheelAwareGiftSnapshot | null)
+              : giftSnapshot;
+            return {
+              kind: "already_consumed" as const,
+              bookingRequestId: booking.id,
+              giftSnapshot: racedSnapshot ?? giftSnapshot,
+              assignment,
+            };
+          }
+          const racedSnapshot = existingPlay.giftSnapshot
+            ? (parseGiftSnapshot(
+                existingPlay.giftSnapshot,
+              ) as WheelAwareGiftSnapshot | null)
+            : null;
+          if (racedSnapshot?.confirmedInterest) {
+            giftSnapshot = racedSnapshot;
+            selectedGiftId =
+              existingPlay.selectedGiftId ??
+              racedSnapshot.finalPrize?.giftId ??
+              assignment.giftId;
+          }
+        } else {
+          throw error;
+        }
+      }
+    } else if (!session.gamePlay?.leadId && !existingSnapshot?.confirmedInterest) {
+      await tx.gamePlay.updateMany({
+        where: {
+          id: gamePlayId,
+          leadId: null,
+        },
         data: {
           giftSnapshot: giftSnapshot as unknown as Prisma.InputJsonValue,
           selectedGiftId,
           rulesSnapshot: rulesSnapshot as unknown as Prisma.InputJsonValue,
         },
       });
-      if (locked.status === "ACTIVE") {
-        await tx.gameSession.updateMany({
-          where: { id: locked.id, status: "ACTIVE" },
-          data: {
-            status: "COMPLETED",
-            completedAt: now,
-            claimExpiresAt,
-          },
-        });
-      }
-      return locked.gamePlay.id;
     }
 
-    const play = await tx.gamePlay.create({
-      data: {
-        gameDirection: "wheel",
-        skinNeed: "none",
-        resultType: "wheel",
-        premiumLevel: 0,
-        gameCatalogId: catalog.id,
-        gameSessionId: locked.id,
-        selectedGiftId,
-        serverResultTier: 0,
-        campaignKey: assignment.campaignKey,
-        giftSnapshot: giftSnapshot as unknown as Prisma.InputJsonValue,
-        rulesSnapshot: rulesSnapshot as unknown as Prisma.InputJsonValue,
-      },
-      select: { id: true },
-    });
-
     await tx.gameSession.updateMany({
-      where: { id: locked.id, status: { in: ["ACTIVE", "COMPLETED"] } },
+      where: {
+        id: session.id,
+        status: { in: ["ACTIVE", "COMPLETED"] },
+      },
       data: {
         status: "COMPLETED",
         completedAt: now,
         claimExpiresAt,
       },
     });
-    return play.id;
-  });
 
-  const publicInterest = wheelInterestToPublicKey(effectiveInterest);
-  const comment = buildWheelManagerComment({
-    catalogTitle: catalog.title,
-    interest: publicInterest,
-    zone: effectiveZone.confirmedZone,
-    originalName:
-      giftSnapshot.originalPrize?.name ||
-      giftDisplayName(gifts, assignment.giftId),
-    finalName: giftSnapshot.finalPrize?.name || giftSnapshot.name || "Приз",
-    replacementApplied: Boolean(giftSnapshot.replacementApplied),
+    const publicInterest = wheelInterestToPublicKey(effectiveInterest);
+    const names = snapshotDisplayNames(giftSnapshot);
+    const comment = buildWheelManagerComment({
+      catalogTitle: catalog.title,
+      interest: publicInterest,
+      zone: effectiveZone.confirmedZone,
+      originalName: names.originalName,
+      finalName: names.finalName,
+      replacementApplied: names.replacementApplied,
+    });
+
+    const bookingFn = input.createBookingRequestFn ?? createBookingRequest;
+    const booking = await bookingFn({
+      clientName: input.name.trim(),
+      clientPhone: phoneCheck.canonicalPhone,
+      comment,
+      type: "CONSULTATION_REQUEST",
+      personalDataConsent: true,
+      offerAcknowledgement: true,
+      gamePlayId: gamePlayId!,
+      idempotencyKey: input.idempotencyKey.trim(),
+      request: input.request,
+      db: tx,
+    });
+
+    return {
+      kind: "created" as const,
+      bookingRequestId: booking.id,
+      giftSnapshot,
+      assignment,
+      claimExpiresAt,
+    };
   });
 
   const cookieName = buildCatalogSessionCookieName(catalog.slug);
+  const claimExpiresAt =
+    txResult.kind === "created"
+      ? txResult.claimExpiresAt
+      : new Date(now.getTime() + CLAIM_WINDOW_MS);
   const cookieOperations: CookieOperation[] = [
     ...visitor.cookieOperations,
-    buildSessionSetOperation(cookieName, sessionToken, claimExpiresAt, now),
+    buildSessionSetOperation(
+      cookieName,
+      sessionToken,
+      claimExpiresAt,
+      now,
+    ),
   ];
 
-  const booking = await createBookingRequest({
-    clientName: input.name.trim(),
-    clientPhone: input.phone.trim(),
-    comment,
-    type: "CONSULTATION_REQUEST",
-    personalDataConsent: true,
-    offerAcknowledgement: true,
-    gamePlayId,
-    idempotencyKey: input.idempotencyKey.trim(),
-    request: input.request,
+  const response = buildCompleteResponse({
+    bookingRequestId: txResult.bookingRequestId,
+    giftSnapshot: txResult.giftSnapshot,
+    assignment: txResult.assignment,
   });
-
-  const response: WheelPublicCompleteResponse = {
-    ok: true,
-    bookingRequestId: booking.id,
-    prizeDisplayName:
-      giftSnapshot.finalPrize?.name || giftSnapshot.name || "Приз",
-    originalPrizeDisplayName:
-      giftSnapshot.originalPrize?.name ||
-      giftDisplayName(gifts, assignment.giftId),
-    replacementApplied: Boolean(giftSnapshot.replacementApplied),
-    bookingSubmitted: true,
-  };
-  assertSafeWheelPublicPayload(response);
   return { ...response, cookieOperations };
 }
