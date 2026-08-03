@@ -1,35 +1,203 @@
 import fs from "node:fs";
 import path from "node:path";
-
-/**
- * Must match `BOT_INTERNAL_API_WRAPPER_NAME` / export in
- * `src/lib/auth/bot-internal-api.ts` (kept as literal to avoid importing server-only).
- */
-const BOT_INTERNAL_API_WRAPPER_NAME = "withBotInternalApi";
+import ts from "typescript";
 
 /**
  * Mandatory coverage: every App Router handler under
  * src/app/api/internal/bot/v1/ (any nested route.ts) must export handlers via
- * withBotInternalApi(...).
+ * withBotInternalApi(...) imported from the approved server module.
  *
- * Comment-only mentions of the wrapper name do not satisfy the contract.
+ * Uses the TypeScript compiler API so comments, strings, dead imports, and
+ * dead calls cannot produce a false green.
  */
 
-const HANDLER_EXPORT_WITH_WRAPPER = new RegExp(
-  String.raw`export\s+const\s+(GET|POST|PUT|PATCH|DELETE)\s*=\s*${BOT_INTERNAL_API_WRAPPER_NAME}\s*\(`,
-  "g",
-);
+/** Must match `BOT_INTERNAL_API_WRAPPER_NAME` in src/lib/auth/bot-internal-api.ts */
+export const BOT_INTERNAL_API_WRAPPER_NAME = "withBotInternalApi";
 
-const BARE_HANDLER_EXPORT =
-  /export\s+(?:async\s+)?function\s+(GET|POST|PUT|PATCH|DELETE)\s*\(/g;
+const APPROVED_IMPORT_SPECIFIERS = new Set([
+  "@/lib/auth/bot-internal-api",
+  "src/lib/auth/bot-internal-api",
+]);
 
-const ANY_CONST_HANDLER =
-  /export\s+const\s+(GET|POST|PUT|PATCH|DELETE)\s*=/g;
+const HTTP_METHODS = new Set([
+  "GET",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "OPTIONS",
+  "HEAD",
+]);
 
 export type BotInternalRouteCoverageIssue = {
   file: string;
   reason: string;
 };
+
+function hasExportModifier(
+  node: ts.Node & { modifiers?: ts.NodeArray<ts.ModifierLike> },
+): boolean {
+  return (
+    node.modifiers?.some(
+      (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
+    ) === true
+  );
+}
+
+function normalizeImportSpecifier(specifier: string): string {
+  return specifier.replace(/\\/g, "/").replace(/\.ts$/, "");
+}
+
+function isApprovedImportSpecifier(specifier: string): boolean {
+  const normalized = normalizeImportSpecifier(specifier);
+  if (APPROVED_IMPORT_SPECIFIERS.has(normalized)) {
+    return true;
+  }
+  return (
+    normalized.endsWith("/lib/auth/bot-internal-api") ||
+    normalized === "lib/auth/bot-internal-api"
+  );
+}
+
+/**
+ * True when `withBotInternalApi` is imported by exact name (no alias) from the
+ * approved server-only module.
+ */
+export function findApprovedBotInternalWrapperImport(
+  sourceFile: ts.SourceFile,
+): boolean {
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement)) {
+      continue;
+    }
+    if (!ts.isStringLiteral(statement.moduleSpecifier)) {
+      continue;
+    }
+    if (!isApprovedImportSpecifier(statement.moduleSpecifier.text)) {
+      continue;
+    }
+
+    const bindings = statement.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings)) {
+      continue;
+    }
+
+    for (const element of bindings.elements) {
+      // Alias imports are rejected: propertyName present means renamed binding.
+      if (element.propertyName) {
+        continue;
+      }
+      if (element.name.text === BOT_INTERNAL_API_WRAPPER_NAME) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function isWithBotInternalApiCall(expression: ts.Expression): boolean {
+  if (!ts.isCallExpression(expression)) {
+    return false;
+  }
+  return (
+    ts.isIdentifier(expression.expression) &&
+    expression.expression.text === BOT_INTERNAL_API_WRAPPER_NAME
+  );
+}
+
+export type AnalyzedHttpExport = {
+  method: string;
+  wrapped: boolean;
+  kind: "variable" | "function";
+};
+
+/**
+ * Analyze a route TypeScript source for HTTP method exports and whether each
+ * is wrapped with the approved withBotInternalApi(...) call.
+ */
+export function analyzeBotInternalRouteSource(
+  source: string,
+  fileName = "route.ts",
+): {
+  hasApprovedImport: boolean;
+  exports: AnalyzedHttpExport[];
+} {
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.Latest,
+    /*setParentNodes*/ true,
+    ts.ScriptKind.TS,
+  );
+
+  const hasApprovedImport = findApprovedBotInternalWrapperImport(sourceFile);
+  const exports: AnalyzedHttpExport[] = [];
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(statement) && hasExportModifier(statement)) {
+      const name = statement.name?.text;
+      if (name && HTTP_METHODS.has(name)) {
+        exports.push({ method: name, wrapped: false, kind: "function" });
+      }
+      continue;
+    }
+
+    if (
+      ts.isVariableStatement(statement) &&
+      hasExportModifier(statement)
+    ) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (!ts.isIdentifier(declaration.name)) {
+          continue;
+        }
+        const method = declaration.name.text;
+        if (!HTTP_METHODS.has(method)) {
+          continue;
+        }
+
+        const wrapped =
+          declaration.initializer != null &&
+          isWithBotInternalApiCall(declaration.initializer);
+
+        exports.push({
+          method,
+          wrapped: wrapped && hasApprovedImport,
+          kind: "variable",
+        });
+      }
+    }
+  }
+
+  return { hasApprovedImport, exports };
+}
+
+export function assertRouteSourceUsesBotInternalApi(
+  source: string,
+  fileName = "route.ts",
+): void {
+  const analysis = analyzeBotInternalRouteSource(source, fileName);
+
+  if (analysis.exports.length === 0) {
+    throw new Error(
+      `no exported HTTP method handlers found (GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)`,
+    );
+  }
+
+  if (!analysis.hasApprovedImport) {
+    throw new Error(
+      `missing exact named import { ${BOT_INTERNAL_API_WRAPPER_NAME} } from approved @/lib/auth/bot-internal-api`,
+    );
+  }
+
+  for (const entry of analysis.exports) {
+    if (!entry.wrapped) {
+      throw new Error(
+        `exported ${entry.kind} ${entry.method} is not wrapped with ${BOT_INTERNAL_API_WRAPPER_NAME}(...)`,
+      );
+    }
+  }
+}
 
 function listRouteFiles(rootDir: string): string[] {
   const results: string[] = [];
@@ -54,44 +222,6 @@ function listRouteFiles(rootDir: string): string[] {
   return results.sort((a, b) => a.localeCompare(b));
 }
 
-export function assertRouteSourceUsesBotInternalApi(source: string): void {
-  const wrappedMethods = new Set(
-    [...source.matchAll(HANDLER_EXPORT_WITH_WRAPPER)].map((match) => match[1]),
-  );
-
-  if (wrappedMethods.size === 0) {
-    throw new Error(
-      `missing export const METHOD = ${BOT_INTERNAL_API_WRAPPER_NAME}(...)`,
-    );
-  }
-
-  const bareFn = [...source.matchAll(BARE_HANDLER_EXPORT)].map((m) => m[1]);
-  if (bareFn.length > 0) {
-    throw new Error(
-      `bare export function ${bareFn.join(",")} is not wrapped with ${BOT_INTERNAL_API_WRAPPER_NAME}`,
-    );
-  }
-
-  const allConstMethods = [
-    ...source.matchAll(ANY_CONST_HANDLER),
-  ].map((m) => m[1]);
-  for (const method of allConstMethods) {
-    if (!wrappedMethods.has(method)) {
-      throw new Error(
-        `bare export const ${method} is not wrapped with ${BOT_INTERNAL_API_WRAPPER_NAME}`,
-      );
-    }
-  }
-
-  const callCount = (
-    source.match(new RegExp(`${BOT_INTERNAL_API_WRAPPER_NAME}\\s*\\(`, "g")) ??
-    []
-  ).length;
-  if (callCount < wrappedMethods.size) {
-    throw new Error(`${BOT_INTERNAL_API_WRAPPER_NAME} call count mismatch`);
-  }
-}
-
 export function collectBotInternalRouteCoverageIssues(
   apiRoot = path.join("src", "app", "api", "internal", "bot", "v1"),
 ): BotInternalRouteCoverageIssue[] {
@@ -113,7 +243,7 @@ export function collectBotInternalRouteCoverageIssues(
     const relative = path.relative(process.cwd(), file).split(path.sep).join("/");
     const source = fs.readFileSync(file, "utf8");
     try {
-      assertRouteSourceUsesBotInternalApi(source);
+      assertRouteSourceUsesBotInternalApi(source, relative);
     } catch (error) {
       issues.push({
         file: relative,
@@ -146,7 +276,9 @@ export function assertBotInternalRouteCoverage(apiRoot?: string): string[] {
 }
 
 if (
-  process.argv[1]?.replace(/\\/g, "/").endsWith("security-bot-internal-route-coverage-check.ts")
+  process.argv[1]
+    ?.replace(/\\/g, "/")
+    .endsWith("security-bot-internal-route-coverage-check.ts")
 ) {
   const routes = assertBotInternalRouteCoverage();
   console.log(

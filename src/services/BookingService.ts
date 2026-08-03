@@ -793,24 +793,35 @@ export async function listServicesForMaster(
   masterId: string,
   runtime: BookingPolicyRuntime = DEFAULT_BOOKING_POLICY_RUNTIME,
 ): Promise<BookingCatalogService[]> {
-  const masterServices = await runtime.db.masterService.findMany({
-    where: onlinePublicMasterServiceWhere(masterId),
-    include: {
-      service: {
-        select: {
-          id: true,
-          publicName: true,
-          clientDescription: true,
-          durationMinutes: true,
-          breakAfterMinutes: true,
-          priceFrom: true,
-          priceTo: true,
-          category: { select: { name: true } },
+  // One studio-settings read per by-master services request (not per service).
+  const studioOnline =
+    (await (runtime.isStudioOnlineBookingEnabled ??
+      defaultIsStudioOnlineBookingEnabled)()) === true;
+
+  const [master, masterServices] = await Promise.all([
+    runtime.db.master.findUnique({
+      where: { id: masterId },
+      select: { id: true, publicName: true },
+    }),
+    runtime.db.masterService.findMany({
+      where: onlinePublicMasterServiceWhere(masterId),
+      include: {
+        service: {
+          select: {
+            id: true,
+            publicName: true,
+            clientDescription: true,
+            durationMinutes: true,
+            breakAfterMinutes: true,
+            priceFrom: true,
+            priceTo: true,
+            category: { select: { name: true } },
+          },
         },
       },
-    },
-    orderBy: [{ sortOrder: "asc" }, { service: { publicName: "asc" } }],
-  });
+      orderBy: [{ sortOrder: "asc" }, { service: { publicName: "asc" } }],
+    }),
+  ]);
 
   const services: BookingCatalogService[] = [];
 
@@ -825,6 +836,12 @@ export async function listServicesForMaster(
       entry.service.priceTo,
     );
 
+    // When studio self-booking is off, keep the service visible but hand off
+    // to manager-request with the selected master as preference.
+    const bookingMode: BookingServiceMode = studioOnline
+      ? "ONLINE"
+      : "MANAGER_ONLY";
+
     services.push({
       id: entry.service.id,
       publicName: entry.service.publicName,
@@ -834,9 +851,9 @@ export async function listServicesForMaster(
       priceLabel: price.priceLabel,
       basePrice: price.basePrice,
       categoryName: entry.service.category.name,
-      bookingMode: "ONLINE",
-      managerMasterId: null,
-      managerMasterName: null,
+      bookingMode,
+      managerMasterId: studioOnline ? null : masterId,
+      managerMasterName: studioOnline ? null : (master?.publicName ?? null),
     });
   }
 

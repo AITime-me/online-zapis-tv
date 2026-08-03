@@ -1,7 +1,7 @@
 # Bot internal API — PR A (auth + eligibility + studio kill-switch)
 
 Дата: 2026-08-03
-Статус: implemented locally (CURSOR-15 Stage 3A / 3A-R / 3C remediation)
+Статус: implemented locally (CURSOR-15 Stage 3A / 3A-R / 3C / 3F remediation)
 
 ## Scope
 
@@ -12,7 +12,7 @@
 3. Internal eligibility: `POST /api/internal/bot/v1/eligibility`
 4. Bounded JSON body reader: `src/lib/bot-api/bounded-json-body.ts` (hard 4096-byte stream limit)
 5. Серверное enforcement `StudioSettings.isOnlineBookingEnabled` в `assertOnlineBookable`
-6. Public catalog studio projection → `MANAGER_ONLY` when studio self-booking is off
+6. Public catalog studio projection (service-first + by-master) → `MANAGER_ONLY` when studio self-booking is off
 7. Отдельный rate-limit bucket `botInternal`
 8. CSRF exemption **только** для `/api/internal/bot/v1/*`
 9. Static namespace coverage: `scripts/security-bot-internal-route-coverage-check.ts`
@@ -36,6 +36,33 @@ bot-TV → Authorization: Bearer <BOT_INTERNAL_API_TOKEN>
 - Optional in global `env.ts`; fail-closed in auth helper
 - `.env.example`: `BOT_INTERNAL_API_TOKEN=` (name only)
 
+## Public catalog studio kill-switch
+
+`getBookingCatalog` (service-first) and `listServicesForMaster` (by-master)
+each read the studio flag **once** per request.
+
+```ts
+// service-first
+resolveServiceBookingModes(serviceIds, runtime, { selfBookingEnabled: studioOnline })
+
+// by-master
+bookingMode = studioOnline ? "ONLINE" : "MANAGER_ONLY"
+managerMasterId / managerMasterName = selected master when studio off
+```
+
+When `selfBookingEnabled` / studio flag is false:
+
+- ONLINE-capable services are projected as `MANAGER_ONLY`;
+- services remain visible;
+- selected master is preserved as manager preference metadata;
+- public DTO does **not** include internal reason codes;
+- wizard `selectService` and `selectServiceFromMaster` both route
+  `bookingMode === "MANAGER_ONLY"` into the existing manager-request flow
+  (no date/slots calls).
+
+Internal eligibility remains machine-readable (`SELF_BOOKING_ALLOWED` /
+`MANAGER_HANDOFF` + reasonCode) and is separate from catalog.
+
 ## CSRF + mandatory auth namespace
 
 Exemption: `pathname.startsWith("/api/internal/bot/v1/")` only.
@@ -43,32 +70,18 @@ Exemption: `pathname.startsWith("/api/internal/bot/v1/")` only.
 Every `src/app/api/internal/bot/v1/**/route.ts` must export handlers as:
 
 ```ts
+import { withBotInternalApi } from "@/lib/auth/bot-internal-api";
 export const POST = withBotInternalApi(async (request) => { ... });
 ```
 
-Coverage script fails if:
+Coverage script (`scripts/security-bot-internal-route-coverage-check.ts`)
+uses the TypeScript compiler API (AST). It fails if:
 
 - namespace has zero routes;
-- any route exports bare `POST`/`GET`/… without wrapper;
-- comment-only mention of the wrapper name.
-
-## Public catalog studio kill-switch
-
-`getBookingCatalog` reads studio flag **once**, then calls:
-
-```ts
-resolveServiceBookingModes(serviceIds, runtime, { selfBookingEnabled: studioOnline })
-```
-
-When `selfBookingEnabled=false`:
-
-- services with an ONLINE path are projected as `MANAGER_ONLY`;
-- `managerMasterId` / `managerMasterName` are preserved from existing manager-link selection;
-- services remain visible;
-- public DTO does **not** include internal reason codes;
-- wizard `bookingMode === "MANAGER_ONLY"` → existing manager-request branch.
-
-Internal eligibility remains machine-readable (`SELF_BOOKING_ALLOWED` / `MANAGER_HANDOFF` + reasonCode) and is separate from catalog.
+- any HTTP method export is a bare function/arrow;
+- wrapper appears only in comments, strings, or dead code;
+- import is missing, aliased, or from a non-approved module;
+- one method is wrapped while another is raw.
 
 ## Body limit
 

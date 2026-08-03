@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type { BookingPolicyRuntime } from "../src/services/BookingService";
 import { requiresAdminCsrfProtection } from "../src/lib/security/csrf-route-rules";
@@ -512,14 +513,22 @@ async function testMonthStudioMemoizationStatic(): Promise<void> {
 
 function createModesRuntime(options: {
   onlineMaster?: boolean;
+  studioEnabled?: boolean;
 } = {}): BookingPolicyRuntime {
   const onlineMaster = options.onlineMaster ?? true;
+  const studioEnabled = options.studioEnabled ?? true;
   const service = {
     id: S1,
+    publicName: "Service One",
+    clientDescription: null as string | null,
+    durationMinutes: 60,
+    breakAfterMinutes: 0,
+    priceFrom: null,
+    priceTo: null,
     isActive: true,
     isPublic: true,
     isOnlineBookingEnabled: true,
-    category: { isActive: true, isPublic: true },
+    category: { isActive: true, isPublic: true, name: "Cat" },
   };
   const master = {
     id: M1,
@@ -567,6 +576,7 @@ function createModesRuntime(options: {
               isPublic: true,
               isOnlineBookingEnabled: true,
               master,
+              service,
             },
           ];
         },
@@ -581,7 +591,7 @@ function createModesRuntime(options: {
       };
     },
     async isStudioOnlineBookingEnabled() {
-      return true;
+      return studioEnabled;
     },
   };
 }
@@ -610,6 +620,55 @@ async function testCatalogStudioProjection(): Promise<void> {
   );
   assert.equal(alreadyManager.get(S1)?.bookingMode, "MANAGER_ONLY");
   assert.equal(alreadyManager.get(S1)?.managerMasterId, M1);
+}
+
+async function testByMasterStudioProjection(): Promise<void> {
+  const booking = await loadBooking();
+
+  const online = await booking.listServicesForMaster(
+    M1,
+    createModesRuntime({ studioEnabled: true }),
+  );
+  assert.equal(online.length, 1);
+  assert.equal(online[0]?.bookingMode, "ONLINE");
+  assert.equal(online[0]?.managerMasterId, null);
+  assert.equal(online[0]?.managerMasterName, null);
+  assert.doesNotMatch(JSON.stringify(online[0]), /STUDIO_ONLINE_DISABLED|reasonCode/);
+
+  const studioOff = await booking.listServicesForMaster(
+    M1,
+    createModesRuntime({ studioEnabled: false }),
+  );
+  assert.equal(studioOff.length, 1);
+  assert.equal(studioOff[0]?.id, S1);
+  assert.equal(studioOff[0]?.bookingMode, "MANAGER_ONLY");
+  assert.equal(studioOff[0]?.managerMasterId, M1);
+  assert.equal(studioOff[0]?.managerMasterName, "Master One");
+  assert.doesNotMatch(
+    JSON.stringify(studioOff[0]),
+    /STUDIO_ONLINE_DISABLED|reasonCode/,
+  );
+
+  // Missing settings row uses existing helper default enabled=true via DI.
+  const legacyDefault = await booking.listServicesForMaster(
+    M1,
+    createModesRuntime({ studioEnabled: true }),
+  );
+  assert.equal(legacyDefault[0]?.bookingMode, "ONLINE");
+
+  const bookingSource = read("src/services/BookingService.ts");
+  assert.match(
+    bookingSource,
+    /export async function listServicesForMaster[\s\S]*isStudioOnlineBookingEnabled/,
+  );
+  assert.match(
+    bookingSource,
+    /listServicesForMaster[\s\S]*bookingMode[\s\S]*MANAGER_ONLY/,
+  );
+  assert.doesNotMatch(
+    bookingSource,
+    /listServicesForMaster[\s\S]*bookingMode:\s*"ONLINE",\s*\n\s*managerMasterId:\s*null/,
+  );
 }
 
 async function testBoundedJsonBody(): Promise<void> {
@@ -708,22 +767,131 @@ async function testNamespaceGuardCoverageAsync(): Promise<void> {
     ),
   );
 
-  assert.throws(() =>
-    coverage.assertRouteSourceUsesBotInternalApi(`
-      // withBotInternalApi(
-      export async function POST() { return null; }
-    `),
-  );
-  assert.throws(() =>
-    coverage.assertRouteSourceUsesBotInternalApi(`
-      export const POST = async () => null;
-    `),
-  );
+  const approvedImport =
+    'import { withBotInternalApi } from "@/lib/auth/bot-internal-api";\n';
+
   assert.doesNotThrow(() =>
-    coverage.assertRouteSourceUsesBotInternalApi(`
-      export const POST = withBotInternalApi(async () => null);
-    `),
+    coverage.assertRouteSourceUsesBotInternalApi(
+      `${approvedImport}export const POST = withBotInternalApi(async () => null);\n`,
+    ),
   );
+
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(
+      `${approvedImport}export const POST = async () => null;\n`,
+    ),
+  );
+
+  // Line-comment spoof with full export text + raw handler
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+${approvedImport}
+// export const POST = withBotInternalApi(
+export const POST = async () => null;
+`),
+  );
+
+  // Block-comment spoof
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+${approvedImport}
+/*
+export const POST = withBotInternalApi(
+*/
+export const POST = async () => null;
+`),
+  );
+
+  // String literal spoof
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+${approvedImport}
+const decoy = "export const POST = withBotInternalApi(";
+export const POST = async () => null;
+`),
+  );
+
+  // Template literal spoof
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+${approvedImport}
+const decoy = \`export const POST = withBotInternalApi(\`;
+export const POST = async () => null;
+`),
+  );
+
+  // Dead import, raw POST
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+${approvedImport}
+export const POST = async () => null;
+`),
+  );
+
+  // Dead call in helper, raw exported POST
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+${approvedImport}
+function helper() {
+  return withBotInternalApi(async () => null);
+}
+export const POST = async () => null;
+`),
+  );
+
+  // Wrapper around non-exported handler; raw exported POST
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+${approvedImport}
+const inner = withBotInternalApi(async () => null);
+export const POST = async () => null;
+`),
+  );
+
+  // Exported GET without wrapper
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+${approvedImport}
+export const POST = withBotInternalApi(async () => null);
+export const GET = async () => null;
+`),
+  );
+
+  // Multi-method: one wrapped, one raw
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+${approvedImport}
+export const POST = withBotInternalApi(async () => null);
+export async function DELETE() { return null; }
+`),
+  );
+
+  // Alias import rejected
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+import { withBotInternalApi as wrap } from "@/lib/auth/bot-internal-api";
+export const POST = wrap(async () => null);
+`),
+  );
+
+  // Empty exports
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+${approvedImport}
+const POST = withBotInternalApi(async () => null);
+`),
+  );
+
+  // Empty namespace directory
+  const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), "bot-v1-empty-"));
+  try {
+    assert.throws(() => coverage.assertBotInternalRouteCoverage(emptyDir));
+  } finally {
+    fs.rmSync(emptyDir, { recursive: true, force: true });
+  }
+
+  // Windows path normalization for production route listing
+  assert.ok(routes.every((route) => !route.includes("\\")));
 }
 
 function testStaticContracts(): void {
@@ -779,6 +947,14 @@ function testStaticContracts(): void {
   assert.match(
     wizard,
     /bookingMode\s*===\s*["']MANAGER_ONLY["'][\s\S]*openManagerOnlyServiceRequest/,
+  );
+  assert.match(
+    wizard,
+    /const selectServiceFromMaster[\s\S]*bookingMode\s*===\s*["']MANAGER_ONLY["'][\s\S]*openManagerOnlyServiceRequest/,
+  );
+  assert.match(
+    wizard,
+    /const selectServiceFromMaster[\s\S]*bookingMode\s*===\s*["']MANAGER_ONLY["'][\s\S]*return;[\s\S]*loadAvailableDays/,
   );
   assert.doesNotMatch(wizard, /STUDIO_ONLINE_DISABLED/);
 
@@ -866,6 +1042,7 @@ async function main(): Promise<void> {
   await testStudioKillSwitch();
   await testMonthStudioMemoizationStatic();
   await testCatalogStudioProjection();
+  await testByMasterStudioProjection();
   await testBoundedJsonBody();
   await testNamespaceGuardCoverageAsync();
   console.log("security-bot-internal-api-pr-a-check: OK");
