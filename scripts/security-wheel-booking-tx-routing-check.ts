@@ -43,6 +43,22 @@ function assertBookingRequestPassesDbThroughCompleteFlow(): void {
   assert.doesNotMatch(wheel, /clientPhone: phoneCheck\.canonicalPhone/);
 }
 
+function assertPgProofLegalAcceptanceInvariant(): void {
+  const acceptance = read("src/services/LegalAcceptanceService.ts");
+  assert.match(acceptance, /PERSONAL_DATA_CONSENT/);
+  assert.match(acceptance, /OFFER_ACKNOWLEDGEMENT/);
+  assert.match(acceptance, /legalAcceptanceRecord\.createMany/);
+
+  const proof = read("scripts/security-wheel-public-complete-db-check.ts");
+  assert.match(proof, /legalAcceptanceRecord/);
+  assert.doesNotMatch(proof, /legalAcceptance\.count/);
+  assert.match(proof, /assertGameClaimLegalAcceptances/);
+  assert.match(proof, /PERSONAL_DATA_CONSENT/);
+  assert.match(proof, /OFFER_ACKNOWLEDGEMENT/);
+  assert.match(proof, /documentSlug/);
+  assert.match(proof, /GAME_CLAIM/);
+}
+
 function assertPgProofUsesSessionCookie(): void {
   const proof = read("scripts/security-wheel-public-complete-db-check.ts");
   assert.match(proof, /buildCatalogSessionCookieName/);
@@ -89,6 +105,7 @@ function main(): void {
   assertLegalReadinessUsesInjectableDb();
   assertClientLinkUsesInjectableDb();
   assertBookingRequestPassesDbThroughCompleteFlow();
+  assertPgProofLegalAcceptanceInvariant();
   assertPgProofUsesSessionCookie();
   assertWheelPhoneBookingFormat();
   console.log("security-wheel-booking-tx-routing-check: OK");

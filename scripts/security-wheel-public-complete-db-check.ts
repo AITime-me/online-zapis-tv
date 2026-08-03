@@ -18,7 +18,7 @@ import {
 import { REQUIRED_PUBLISHED_LEGAL_SLUGS, LEGAL_DOCUMENT_SEED_METADATA } from "../src/lib/legal-document/defaults";
 import { hashLegalDocumentContent } from "../src/lib/legal-document/content-hash";
 import { buildCatalogSessionCookieName } from "../src/lib/game/session/game-session-cookie";
-import { LegalDocumentVersionStatus } from "@prisma/client";
+import { LegalDocumentVersionStatus, type LegalAcceptanceType } from "@prisma/client";
 
 const TEST_ENV = {
   NODE_ENV: "test",
@@ -149,6 +149,90 @@ async function publishRequiredLegalDocuments(prisma: PrismaClient): Promise<void
       },
     });
   }
+}
+
+const REQUIRED_GAME_CLAIM_ACCEPTANCE_TYPES: LegalAcceptanceType[] = [
+  "PERSONAL_DATA_CONSENT",
+  "OFFER_ACKNOWLEDGEMENT",
+];
+
+async function loadGamePlayIdForSession(
+  prisma: PrismaClient,
+  sessionToken: string,
+): Promise<string> {
+  const play = await prisma.gamePlay.findFirst({
+    where: { gameSession: { tokenHash: hashOpaqueToken(sessionToken) } },
+    select: { id: true },
+  });
+  assert.ok(play?.id, "game play must exist after complete");
+  return play.id;
+}
+
+async function assertGameClaimLegalAcceptances(
+  prisma: PrismaClient,
+  input: {
+    bookingRequestId: string;
+    gamePlayId: string;
+    idempotencyKey: string;
+  },
+): Promise<void> {
+  const records = await prisma.legalAcceptanceRecord.findMany({
+    where: {
+      gamePlayId: input.gamePlayId,
+      bookingRequestId: input.bookingRequestId,
+    },
+    orderBy: [{ acceptanceType: "asc" }, { documentSlug: "asc" }],
+  });
+
+  assert.equal(
+    records.length,
+    REQUIRED_GAME_CLAIM_ACCEPTANCE_TYPES.length,
+    "game claim must record personal-data consent and offer acknowledgement",
+  );
+
+  const types = records.map((record) => record.acceptanceType).sort();
+  assert.deepEqual(types, [...REQUIRED_GAME_CLAIM_ACCEPTANCE_TYPES].sort());
+
+  const slugs = records.map((record) => record.documentSlug).sort();
+  assert.deepEqual(slugs, ["consent", "terms"]);
+
+  for (const record of records) {
+    assert.equal(record.source, "GAME_CLAIM");
+    assert.equal(record.bookingRequestId, input.bookingRequestId);
+    assert.equal(record.gamePlayId, input.gamePlayId);
+    assert.equal(record.requestReference, input.idempotencyKey);
+    assert.ok(record.documentVersionId.trim().length > 0);
+    assert.ok(record.contentHash.trim().length > 0);
+    assert.equal(record.appointmentId, null);
+  }
+
+  const duplicateType = await prisma.legalAcceptanceRecord.groupBy({
+    by: ["acceptanceType"],
+    where: { gamePlayId: input.gamePlayId },
+    _count: { _all: true },
+  });
+  for (const row of duplicateType) {
+    assert.equal(
+      row._count._all,
+      1,
+      `duplicate legal acceptance for ${row.acceptanceType}`,
+    );
+  }
+}
+
+async function assertGameClaimLegalAcceptanceCount(
+  prisma: PrismaClient,
+  gamePlayId: string,
+  expectedTotal: number,
+): Promise<void> {
+  const total = await prisma.legalAcceptanceRecord.count({
+    where: { gamePlayId },
+  });
+  assert.equal(
+    total,
+    expectedTotal,
+    `expected ${expectedTotal} legal acceptance records for game play`,
+  );
 }
 
 function wheelCompleteRequest(sessionToken: string): Request {
@@ -326,11 +410,19 @@ async function assertPostgresCompleteProof(): Promise<void> {
     });
 
     const bookingsAfterFirst = await prisma.bookingRequest.count();
-    const legalAfterFirst = await prisma.legalAcceptance.count({
-      where: { gamePlayId: { not: null } },
-    });
     assert.equal(bookingsAfterFirst, 1);
-    assert.equal(legalAfterFirst, 1);
+
+    const gamePlayId = await loadGamePlayIdForSession(prisma, started.sessionToken);
+    await assertGameClaimLegalAcceptances(prisma, {
+      bookingRequestId: first.bookingRequestId,
+      gamePlayId,
+      idempotencyKey: "pg-complete-1",
+    });
+    await assertGameClaimLegalAcceptanceCount(
+      prisma,
+      gamePlayId,
+      REQUIRED_GAME_CLAIM_ACCEPTANCE_TYPES.length,
+    );
 
     const concurrent = await Promise.all([
       completeWheelPublicGame({
@@ -370,6 +462,16 @@ async function assertPostgresCompleteProof(): Promise<void> {
     ]);
     assert.equal(concurrent[0]!.bookingRequestId, concurrent[1]!.bookingRequestId);
     assert.equal(await prisma.bookingRequest.count(), 1);
+    await assertGameClaimLegalAcceptances(prisma, {
+      bookingRequestId: first.bookingRequestId,
+      gamePlayId,
+      idempotencyKey: "pg-complete-1",
+    });
+    await assertGameClaimLegalAcceptanceCount(
+      prisma,
+      gamePlayId,
+      REQUIRED_GAME_CLAIM_ACCEPTANCE_TYPES.length,
+    );
 
     const conflictingInterest = await completeWheelPublicGame({
       catalogSlug: CATALOG_SLUG,
@@ -390,6 +492,11 @@ async function assertPostgresCompleteProof(): Promise<void> {
     });
     assert.equal(conflictingInterest.bookingRequestId, first.bookingRequestId);
     assert.equal(await prisma.bookingRequest.count(), 1);
+    await assertGameClaimLegalAcceptanceCount(
+      prisma,
+      gamePlayId,
+      REQUIRED_GAME_CLAIM_ACCEPTANCE_TYPES.length,
+    );
 
     const play = await prisma.gamePlay.findFirst({
       where: { gameSession: { tokenHash: hashOpaqueToken(started.sessionToken) } },
@@ -426,6 +533,16 @@ async function assertPostgresCompleteProof(): Promise<void> {
     });
     assert.equal(retry.bookingRequestId, first.bookingRequestId);
     assert.equal(retry.originalPrizeDisplayName, prizeName);
+    await assertGameClaimLegalAcceptances(prisma, {
+      bookingRequestId: first.bookingRequestId,
+      gamePlayId,
+      idempotencyKey: "pg-complete-1",
+    });
+    await assertGameClaimLegalAcceptanceCount(
+      prisma,
+      gamePlayId,
+      REQUIRED_GAME_CLAIM_ACCEPTANCE_TYPES.length,
+    );
 
     const session = await prisma.gameSession.findFirst({
       where: { tokenHash: hashOpaqueToken(started.sessionToken) },
