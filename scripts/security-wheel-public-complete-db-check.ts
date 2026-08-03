@@ -17,6 +17,7 @@ import {
 } from "../src/services/WheelPublicGameService";
 import { REQUIRED_PUBLISHED_LEGAL_SLUGS, LEGAL_DOCUMENT_SEED_METADATA } from "../src/lib/legal-document/defaults";
 import { hashLegalDocumentContent } from "../src/lib/legal-document/content-hash";
+import { buildCatalogSessionCookieName } from "../src/lib/game/session/game-session-cookie";
 import { LegalDocumentVersionStatus } from "@prisma/client";
 
 const TEST_ENV = {
@@ -121,13 +122,20 @@ async function publishRequiredLegalDocuments(prisma: PrismaClient): Promise<void
         isPublished: false,
       },
     });
+    const latest = await prisma.legalDocumentVersion.findFirst({
+      where: { documentId: created.id },
+      orderBy: { versionNumber: "desc" },
+      select: { versionNumber: true },
+    });
+    const nextVersionNumber = (latest?.versionNumber ?? 0) + 1;
+    const content = `Published content for ${document.slug}`;
     const version = await prisma.legalDocumentVersion.create({
       data: {
         documentId: created.id,
-        versionNumber: 1,
+        versionNumber: nextVersionNumber,
         title: document.title,
-        content: `Published content for ${document.slug}`,
-        contentHash: hashLegalDocumentContent(`Published content for ${document.slug}`),
+        content,
+        contentHash: hashLegalDocumentContent(content),
         status: LegalDocumentVersionStatus.PUBLISHED,
         publishedAt: new Date(),
       },
@@ -143,6 +151,16 @@ async function publishRequiredLegalDocuments(prisma: PrismaClient): Promise<void
   }
 }
 
+function wheelCompleteRequest(sessionToken: string): Request {
+  const cookieName = buildCatalogSessionCookieName(CATALOG_SLUG);
+  return new Request("http://localhost/api/game/wheel/complete", {
+    method: "POST",
+    headers: {
+      Cookie: `${cookieName}=${sessionToken}`,
+    },
+  });
+}
+
 async function seedWheelCatalog(prisma: PrismaClient): Promise<void> {
   await prisma.studioSettings.upsert({
     where: { id: "default" },
@@ -150,9 +168,6 @@ async function seedWheelCatalog(prisma: PrismaClient): Promise<void> {
     create: {
       id: "default",
       isGameEnabled: true,
-      vkUrl: null,
-      maxUrl: null,
-      gameSuccessMessage: "OK",
     },
   });
 
@@ -213,10 +228,9 @@ async function seedWheelCatalog(prisma: PrismaClient): Promise<void> {
 async function assertPostgresCompleteProof(): Promise<void> {
   const ephemeral = await resolveEphemeralPostgresUrl();
   if (!ephemeral) {
-    console.log(
-      "wheel-public-complete-db: PG proof SKIP (docker postgres unavailable)",
+    throw new Error(
+      "wheel-public-complete-db: docker postgres unavailable — PG proof required",
     );
-    return;
   }
 
   const previousDatabaseUrl = process.env.DATABASE_URL;
@@ -280,9 +294,7 @@ async function assertPostgresCompleteProof(): Promise<void> {
             visitorToken: VISITOR_TOKEN,
             sessionToken: started.sessionToken,
           },
-          request: new Request("http://localhost/api/game/wheel/complete", {
-            method: "POST",
-          }),
+          request: wheelCompleteRequest(started.sessionToken),
           idempotencyKey: "pg-phone-mismatch",
           now,
           db: prisma,
@@ -293,9 +305,7 @@ async function assertPostgresCompleteProof(): Promise<void> {
         error.code === "GAME_SESSION_FORBIDDEN",
     );
 
-    const request = new Request("http://localhost/api/game/wheel/complete", {
-      method: "POST",
-    });
+    const request = wheelCompleteRequest(started.sessionToken);
 
     const first = await completeWheelPublicGame({
       catalogSlug: CATALOG_SLUG,

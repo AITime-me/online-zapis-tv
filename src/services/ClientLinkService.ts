@@ -1,4 +1,4 @@
-import type { Client, ClientStatus, Prisma } from "@prisma/client";
+import type { Client, ClientStatus, Prisma, PrismaClient } from "@prisma/client";
 import {
   getPhoneMatchSuffix,
   normalizePhone,
@@ -6,6 +6,12 @@ import {
 import { mergeClientTags } from "@/lib/clients/tags";
 import { normalizeClientFullName } from "@/lib/clients/normalize-full-name";
 import { prisma } from "@/lib/db";
+
+type DbClient = PrismaClient | Prisma.TransactionClient;
+
+function resolveDb(db?: DbClient): DbClient {
+  return db ?? prisma;
+}
 
 export type ClientLeadSource =
   | "online_booking"
@@ -37,6 +43,8 @@ export type ResolveClientForLeadInput = {
   source: ClientLeadSource;
   tags?: string[];
   serviceName?: string | null;
+  /** When set, all client lookups/writes use this client (e.g. wheel complete tx). */
+  db?: DbClient;
 };
 
 export type ClientLinkResult = {
@@ -166,7 +174,10 @@ export function appendDuplicateNote(
   return `${base}\n\n${duplicateNote}`;
 }
 
-async function findClientsByPhone(phone: string): Promise<Client[]> {
+async function findClientsByPhone(
+  phone: string,
+  db: DbClient = prisma,
+): Promise<Client[]> {
   const normalized = normalizePhone(phone);
   const suffix = getPhoneMatchSuffix(phone);
 
@@ -186,7 +197,7 @@ async function findClientsByPhone(phone: string): Promise<Client[]> {
     return [];
   }
 
-  const matches = await prisma.client.findMany({
+  const matches = await resolveDb(db).client.findMany({
     where: {
       isArchived: false,
       mergedIntoClientId: null,
@@ -203,13 +214,16 @@ async function findClientsByPhone(phone: string): Promise<Client[]> {
   return [...unique.values()];
 }
 
-async function findClientsByEmail(email: string): Promise<Client[]> {
+async function findClientsByEmail(
+  email: string,
+  db: DbClient = prisma,
+): Promise<Client[]> {
   const normalized = normalizeEmail(email);
   if (!normalized) {
     return [];
   }
 
-  return prisma.client.findMany({
+  return resolveDb(db).client.findMany({
     where: {
       isArchived: false,
       mergedIntoClientId: null,
@@ -251,7 +265,7 @@ function mapPossibleDuplicateClient(
 
 export async function findClientsByNormalizedFullName(
   fullName: string,
-  options?: { excludeClientIds?: string[]; limit?: number },
+  options?: { excludeClientIds?: string[]; limit?: number; db?: DbClient },
 ): Promise<PossibleDuplicateClient[]> {
   const normalized = normalizeClientFullName(fullName);
   if (!normalized) {
@@ -261,7 +275,7 @@ export async function findClientsByNormalizedFullName(
   const exclude = new Set(options?.excludeClientIds ?? []);
   const limit = options?.limit ?? FIO_CANDIDATE_LIMIT;
 
-  const clients = await prisma.client.findMany({
+  const clients = await resolveDb(options?.db).client.findMany({
     select: possibleDuplicateClientSelect,
     where: { mergedIntoClientId: null },
     orderBy: [{ isArchived: "asc" }, { updatedAt: "desc" }],
@@ -277,9 +291,10 @@ export async function findClientsByNormalizedFullName(
 async function findMatchingClients(
   phone: string | null | undefined,
   email: string | null | undefined,
+  db: DbClient = prisma,
 ): Promise<Client[]> {
-  const byPhone = phone?.trim() ? await findClientsByPhone(phone) : [];
-  const byEmail = email?.trim() ? await findClientsByEmail(email) : [];
+  const byPhone = phone?.trim() ? await findClientsByPhone(phone, db) : [];
+  const byEmail = email?.trim() ? await findClientsByEmail(email, db) : [];
 
   const unique = new Map<string, Client>();
   for (const client of [...byPhone, ...byEmail]) {
@@ -292,13 +307,15 @@ async function findMatchingClients(
 export async function findExactClientsByContact(
   phone: string | null | undefined,
   email: string | null | undefined,
+  db: DbClient = prisma,
 ): Promise<Client[]> {
-  return findMatchingClients(phone, email);
+  return findMatchingClients(phone, email, db);
 }
 
 export async function enrichExistingClient(
   client: Client,
   input: ResolveClientForLeadInput,
+  db: DbClient = prisma,
 ): Promise<Client> {
   const now = new Date();
   const incomingPhone = input.phone?.trim() || null;
@@ -332,7 +349,7 @@ export async function enrichExistingClient(
     data.status = "ACTIVE";
   }
 
-  return prisma.client.update({
+  return resolveDb(db).client.update({
     where: { id: client.id },
     data,
   });
@@ -340,12 +357,13 @@ export async function enrichExistingClient(
 
 export async function createClientFromLead(
   input: ResolveClientForLeadInput,
+  db: DbClient = prisma,
 ): Promise<Client> {
   const phone = input.phone?.trim() || null;
   const email = normalizeEmail(input.email);
   const now = new Date();
 
-  return prisma.client.create({
+  return resolveDb(db).client.create({
     data: {
       fullName: input.fullName.trim(),
       phone,
@@ -366,6 +384,8 @@ export async function resolveClientForLead(
     possibleDuplicateClients: [] as PossibleDuplicateClient[],
     duplicateReason: null,
   };
+
+  const db = resolveDb(input.db);
 
   const fullName = input.fullName.trim();
   if (!fullName) {
@@ -391,7 +411,7 @@ export async function resolveClientForLead(
     };
   }
 
-  const matches = await findMatchingClients(phone, email);
+  const matches = await findMatchingClients(phone, email, db);
 
   if (matches.length > 1) {
     const possibleDuplicateClients = matches.map((client) => ({
@@ -416,7 +436,7 @@ export async function resolveClientForLead(
   }
 
   if (matches.length === 1) {
-    const updated = await enrichExistingClient(matches[0], input);
+    const updated = await enrichExistingClient(matches[0], input, db);
     return {
       clientId: updated.id,
       linkStatus: "found",
@@ -426,7 +446,7 @@ export async function resolveClientForLead(
     };
   }
 
-  const nameMatches = await findClientsByNormalizedFullName(fullName);
+  const nameMatches = await findClientsByNormalizedFullName(fullName, { db });
   if (nameMatches.length > 0) {
     return {
       clientId: null,

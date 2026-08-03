@@ -6,13 +6,25 @@ import {
   participantPhoneHashesEqual,
 } from "@/lib/game/wheel/participant-phone-hash";
 
+export function formatBookingClientPhoneFromNormalizedKey(
+  normalizedKey: string,
+): string {
+  const digits = normalizedKey.replace(/\D/g, "");
+  if (!digits) {
+    return "";
+  }
+  return `+${digits}`;
+}
+
 export function assertWheelSessionPhoneMatches(input: {
   participantPhoneHash: string | null;
   campaignKeySnapshot: string | null;
   gameCatalogId: string;
   phone: string;
   env?: NodeJS.ProcessEnv;
-}): { ok: true; canonicalPhone: string } | { ok: false; code: string } {
+}):
+  | { ok: true; canonicalPhone: string; bookingPhone: string }
+  | { ok: false; code: string } {
   const canonicalPhone = normalizeGameBookingPhoneKey(input.phone);
   if (!canonicalPhone) {
     return { ok: false, code: "GAME_INVALID_REQUEST" };
@@ -40,5 +52,9 @@ export function assertWheelSessionPhoneMatches(input: {
     return { ok: false, code: "GAME_SESSION_FORBIDDEN" };
   }
 
-  return { ok: true, canonicalPhone };
+  return {
+    ok: true,
+    canonicalPhone,
+    bookingPhone: formatBookingClientPhoneFromNormalizedKey(canonicalPhone),
+  };
 }

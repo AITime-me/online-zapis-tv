@@ -421,11 +421,14 @@ async function assertNoOpenGameBookingForPhoneCatalog(
   }
 }
 
-async function findOpenGameBookingIdForPhoneCatalog(input: {
-  phoneKey: string;
-  gameCatalogId: string;
-}): Promise<string | null> {
-  const existing = await prisma.bookingRequest.findFirst({
+async function findOpenGameBookingIdForPhoneCatalog(
+  input: {
+    phoneKey: string;
+    gameCatalogId: string;
+  },
+  db: PrismaClient | Prisma.TransactionClient = prisma,
+): Promise<string | null> {
+  const existing = await db.bookingRequest.findFirst({
     where: {
       clientPhoneNormalized: input.phoneKey,
       gameCatalogId: input.gameCatalogId,
@@ -454,7 +457,9 @@ async function handleGameBookingCreateUniqueViolation(input: {
   gameCatalogId: string;
   gamePlayId: string;
   request: Request;
+  db?: PrismaClient | Prisma.TransactionClient;
 }): Promise<BookingRequestDto> {
+  const dbClient = input.db ?? prisma;
   const plan = resolveGameBookingCreateP2002Plan(input.error.meta?.target);
 
   if (plan.action === "open_game_exists") {
@@ -465,7 +470,10 @@ async function handleGameBookingCreateUniqueViolation(input: {
     plan.action === "try_idempotent_retry" ||
     plan.action === "requery_open_then_maybe_open_or_rethrow"
   ) {
-    const existing = await findIdempotentBookingRequest(input.idempotencyKey);
+    const existing = await findIdempotentBookingRequest(
+      input.idempotencyKey,
+      dbClient,
+    );
     if (existing) {
       if (
         !idempotencyPayloadHashesEqual(
@@ -483,6 +491,7 @@ async function handleGameBookingCreateUniqueViolation(input: {
         request: input.request,
         gamePlayId: input.gamePlayId,
         bookingRequestId: existing.id,
+        db: dbClient,
       });
       return mapBookingRequest(existing);
     }
@@ -494,10 +503,13 @@ async function handleGameBookingCreateUniqueViolation(input: {
   }
 
   if (plan.action === "requery_open_then_maybe_open_or_rethrow") {
-    const openId = await findOpenGameBookingIdForPhoneCatalog({
-      phoneKey: input.phoneKey,
-      gameCatalogId: input.gameCatalogId,
-    });
+    const openId = await findOpenGameBookingIdForPhoneCatalog(
+      {
+        phoneKey: input.phoneKey,
+        gameCatalogId: input.gameCatalogId,
+      },
+      dbClient,
+    );
     if (openId) {
       throwOpenGameRequestExists();
     }
@@ -512,8 +524,9 @@ async function assertIdempotentGameRetryAllowed(input: {
   request: Request;
   gamePlayId: string;
   bookingRequestId: string;
+  db?: PrismaClient | Prisma.TransactionClient;
 }): Promise<void> {
-  const play = await loadGamePlayForBooking(input.gamePlayId);
+  const play = await loadGamePlayForBooking(input.gamePlayId, input.db);
   const catalogSlug = play?.gameCatalog?.slug ?? "";
   const sessionToken = readGameSessionTokenFromRequest(input.request, catalogSlug);
   const retry = validateGameBookingForIdempotentRetry({
@@ -571,22 +584,23 @@ async function createGameBookingRequest(
     userMessage,
   });
 
-  const clientLink = await resolveClientForLead({
-    fullName: clientName,
-    phone: clientPhone,
-    source: "procedure_gift_game",
-    serviceName: context.gift.giftName,
-  });
-
-  const requestComment = clientLink.duplicateNote
-    ? appendDuplicateNote(managerComment, clientLink.duplicateNote)
-    : managerComment;
-
   const gameSessionId = context.session.id;
 
   const runBookingTx = async (
     tx: Prisma.TransactionClient,
   ): Promise<BookingRequestRow> => {
+    const clientLink = await resolveClientForLead({
+      fullName: clientName,
+      phone: clientPhone,
+      source: "procedure_gift_game",
+      serviceName: context.gift.giftName,
+      db: tx,
+    });
+
+    const requestComment = clientLink.duplicateNote
+      ? appendDuplicateNote(managerComment, clientLink.duplicateNote)
+      : managerComment;
+
     const duplicate = await tx.bookingRequest.findUnique({
       where: { idempotencyKey: input.idempotencyKey },
       include: bookingRequestInclude,
@@ -745,6 +759,7 @@ async function createGameBookingRequest(
         gameCatalogId,
         gamePlayId: resolvedGamePlayId,
         request: httpRequest,
+        db: input.db,
       });
     }
     throw error;
@@ -863,7 +878,7 @@ export async function createBookingRequest(
   const resolvedGamePlayId = resolvePublicGamePlayId(input.gamePlayId);
   const now = new Date();
 
-  await assertRequiredLegalDocumentsPublished();
+  await assertRequiredLegalDocumentsPublished(input.db);
 
   const fieldErrors = validateClientData({
     clientName,

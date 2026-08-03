@@ -851,7 +851,7 @@ export async function completeWheelPublicGame(input: {
     const bookingFn = input.createBookingRequestFn ?? createBookingRequest;
     const booking = await bookingFn({
       clientName: input.name.trim(),
-      clientPhone: phoneCheck.canonicalPhone,
+      clientPhone: phoneCheck.bookingPhone,
       comment,
       type: "CONSULTATION_REQUEST",
       personalDataConsent: true,

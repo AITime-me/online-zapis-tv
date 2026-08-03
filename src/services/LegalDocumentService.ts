@@ -4,6 +4,7 @@ import {
   LegalDocumentVersionStatus,
   type LegalDocumentVersion,
   type Prisma,
+  type PrismaClient,
 } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { hashLegalDocumentContent } from "@/lib/legal-document/content-hash";
@@ -40,6 +41,7 @@ export class LegalDocumentsNotReadyError extends Error {
 }
 
 type Tx = Prisma.TransactionClient;
+type DbClient = PrismaClient | Tx;
 
 function mapVersion(row: LegalDocumentVersion): LegalDocumentVersionDto {
   return {
@@ -408,10 +410,12 @@ export async function publishLegalDocumentDraft(
   return updated;
 }
 
-export async function getLegalDocumentsReadiness(): Promise<LegalReadinessDto> {
-  await ensureSystemDocumentsExist();
+export async function getLegalDocumentsReadiness(
+  db: DbClient = prisma,
+): Promise<LegalReadinessDto> {
+  await ensureSystemDocumentsExist(db);
 
-  const rows = await prisma.legalDocument.findMany({
+  const rows = await db.legalDocument.findMany({
     where: {
       slug: { in: [...REQUIRED_PUBLISHED_LEGAL_SLUGS, "marketing-consent"] },
     },
@@ -479,8 +483,10 @@ const SYSTEM_ORDERED_FOR_READINESS: SystemLegalDocumentSlug[] = [
   "marketing-consent",
 ];
 
-export async function assertRequiredLegalDocumentsPublished(): Promise<void> {
-  const readiness = await getLegalDocumentsReadiness();
+export async function assertRequiredLegalDocumentsPublished(
+  db: DbClient = prisma,
+): Promise<void> {
+  const readiness = await getLegalDocumentsReadiness(db);
   if (!readiness.ready) {
     throw new LegalDocumentsNotReadyError(readiness.missingRequiredSlugs);
   }
