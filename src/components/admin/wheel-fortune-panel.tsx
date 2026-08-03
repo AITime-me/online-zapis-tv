@@ -1,7 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { GameGiftDto, WheelCatalogConfigDto } from "@/types/game-admin";
+import {
+  GAME_CATALOG_STATUS_LABELS,
+  type GameCatalogStatusDto,
+} from "@/types/game-catalog";
 import { GAME_PRIZE_TYPE_LABELS } from "@/lib/game/wheel/prize-types";
 import type { GamePrizeType } from "@/lib/game/wheel/prize-types";
 
@@ -9,11 +13,31 @@ const fieldClass =
   "w-full rounded border border-zinc-300 px-2 py-1.5 text-sm text-zinc-900";
 const labelClass = "text-xs font-medium text-zinc-700";
 
+type UiStatus =
+  | "idle"
+  | "saving"
+  | "activating"
+  | "disabling"
+  | "saved"
+  | "error";
+
 function prizeTypeLabel(type: GameGiftDto["prizeType"]): string {
   if (!type) {
     return "—";
   }
   return GAME_PRIZE_TYPE_LABELS[type as GamePrizeType] ?? type;
+}
+
+function parseCatalogStatus(value: unknown): GameCatalogStatusDto {
+  if (
+    value === "draft" ||
+    value === "active" ||
+    value === "disabled" ||
+    value === "archived"
+  ) {
+    return value;
+  }
+  return "draft";
 }
 
 export function WheelFortunePanel({
@@ -23,6 +47,7 @@ export function WheelFortunePanel({
   initialTitle,
   initialSlug,
   initialDescription,
+  initialStatus,
 }: {
   gameCatalogId: string;
   initialGifts: GameGiftDto[];
@@ -30,33 +55,122 @@ export function WheelFortunePanel({
   initialTitle: string;
   initialSlug: string;
   initialDescription: string | null;
+  initialStatus: GameCatalogStatusDto;
 }) {
   const [gifts, setGifts] = useState(initialGifts);
   const [wheelConfig, setWheelConfig] = useState(initialWheelConfig);
   const [title, setTitle] = useState(initialTitle);
   const [slug, setSlug] = useState(initialSlug);
   const [description, setDescription] = useState(initialDescription ?? "");
-  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">(
-    "idle",
-  );
+  const [catalogStatus, setCatalogStatus] =
+    useState<GameCatalogStatusDto>(initialStatus);
+  const [status, setStatus] = useState<UiStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [editingGiftId, setEditingGiftId] = useState<string | null>(null);
   const [sectorDraft, setSectorDraft] = useState(0);
   const [activeDraft, setActiveDraft] = useState(true);
+  const inFlightRef = useRef(false);
+  const requestGenerationRef = useRef(0);
+  const successResetTimeoutRef = useRef<number | null>(null);
 
   const editingGift = useMemo(
     () => gifts.find((gift) => gift.id === editingGiftId) ?? null,
     [editingGiftId, gifts],
   );
 
+  const busy =
+    status === "saving" || status === "activating" || status === "disabling";
+
+  const clearSuccessReset = () => {
+    if (successResetTimeoutRef.current !== null) {
+      window.clearTimeout(successResetTimeoutRef.current);
+      successResetTimeoutRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      clearSuccessReset();
+    };
+  }, []);
+
+  const beginRequest = (): number | null => {
+    if (inFlightRef.current || busy) {
+      return null;
+    }
+    clearSuccessReset();
+    inFlightRef.current = true;
+    requestGenerationRef.current += 1;
+    return requestGenerationRef.current;
+  };
+
+  const endRequest = () => {
+    inFlightRef.current = false;
+  };
+
+  const markSaved = (generation: number, notice?: string | null) => {
+    if (generation !== requestGenerationRef.current) {
+      return;
+    }
+    setMessage(notice ?? null);
+    setStatus("saved");
+    clearSuccessReset();
+    successResetTimeoutRef.current = window.setTimeout(() => {
+      successResetTimeoutRef.current = null;
+      if (generation !== requestGenerationRef.current) {
+        return;
+      }
+      setStatus((current) => (current === "saved" ? "idle" : current));
+    }, 1500);
+  };
+
+  const applyGameSnapshot = (game: unknown) => {
+    if (!game || typeof game !== "object") {
+      return;
+    }
+    const snapshot = game as {
+      status?: unknown;
+      title?: unknown;
+      slug?: unknown;
+      description?: unknown;
+    };
+    if ("status" in snapshot) {
+      setCatalogStatus(parseCatalogStatus(snapshot.status));
+    }
+    if (typeof snapshot.title === "string") {
+      setTitle(snapshot.title);
+    }
+    if (typeof snapshot.slug === "string") {
+      setSlug(snapshot.slug);
+    }
+    if (
+      snapshot.description === null ||
+      typeof snapshot.description === "string"
+    ) {
+      setDescription(snapshot.description ?? "");
+    }
+  };
+
   const statusLabel =
     status === "saving"
-      ? "Сохраняю..."
-      : status === "saved"
-        ? "Сохранено"
-        : status === "error"
-          ? `Ошибка${message ? `: ${message}` : ""}`
-          : null;
+      ? "Сохраняется…"
+      : status === "activating"
+        ? "Активируется…"
+        : status === "disabling"
+          ? "Выключается…"
+          : status === "saved"
+            ? message ?? "Сохранено"
+            : status === "error"
+              ? `Ошибка${message ? `: ${message}` : ""}`
+              : null;
+
+  const canActivate =
+    (catalogStatus === "draft" || catalogStatus === "disabled") &&
+    wheelConfig.sectorConfigOk;
+  const showActivateButton =
+    catalogStatus === "draft" || catalogStatus === "disabled";
+  const showDisableButton = catalogStatus === "active";
+  const publicPath = `/promo/${encodeURIComponent(slug)}`;
 
   const refresh = async () => {
     const response = await fetch(
@@ -72,9 +186,14 @@ export function WheelFortunePanel({
     setTitle(payload.title);
     setSlug(payload.slug);
     setDescription(payload.description ?? "");
+    setCatalogStatus(parseCatalogStatus(payload.status));
   };
 
   const saveCatalogMeta = async () => {
+    const generation = beginRequest();
+    if (generation === null) {
+      return;
+    }
     setStatus("saving");
     setMessage(null);
     try {
@@ -87,7 +206,6 @@ export function WheelFortunePanel({
             title: title.trim(),
             slug: slug.trim(),
             description: description.trim() || null,
-            status: "draft",
           }),
         },
       );
@@ -95,16 +213,108 @@ export function WheelFortunePanel({
       if (!response.ok || !payload.ok) {
         throw new Error(payload.error ?? "Ошибка сохранения");
       }
-      await refresh();
-      setStatus("saved");
-      window.setTimeout(() => setStatus("idle"), 1500);
+      applyGameSnapshot(payload.game);
+      try {
+        await refresh();
+        markSaved(generation);
+      } catch {
+        markSaved(
+          generation,
+          "Настройки сохранены, но не удалось обновить данные страницы. Обновите страницу.",
+        );
+      }
     } catch (error) {
-      setStatus("error");
-      setMessage(error instanceof Error ? error.message : "Ошибка сохранения");
+      if (generation === requestGenerationRef.current) {
+        setStatus("error");
+        setMessage(error instanceof Error ? error.message : "Ошибка сохранения");
+      }
+    } finally {
+      endRequest();
     }
   };
 
+  const patchCatalogStatus = async (
+    nextStatus: "active" | "disabled",
+    uiStatus: "activating" | "disabling",
+  ) => {
+    const generation = beginRequest();
+    if (generation === null) {
+      return;
+    }
+    setStatus(uiStatus);
+    setMessage(null);
+    try {
+      const response = await fetch(
+        `/api/admin/games/${encodeURIComponent(gameCatalogId)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: nextStatus }),
+        },
+      );
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(
+          payload.error ??
+            (nextStatus === "active"
+              ? "Не удалось активировать игру"
+              : "Не удалось выключить игру"),
+        );
+      }
+      applyGameSnapshot(payload.game);
+      if (payload.game?.status === undefined) {
+        setCatalogStatus(nextStatus);
+      }
+      try {
+        await refresh();
+        markSaved(generation);
+      } catch {
+        markSaved(
+          generation,
+          "Статус изменён, но не удалось обновить данные страницы. Обновите страницу.",
+        );
+      }
+    } catch (error) {
+      if (generation === requestGenerationRef.current) {
+        setStatus("error");
+        setMessage(
+          error instanceof Error
+            ? error.message
+            : nextStatus === "active"
+              ? "Ошибка активации"
+              : "Ошибка выключения",
+        );
+      }
+    } finally {
+      endRequest();
+    }
+  };
+
+  const activateGame = async () => {
+    if (!canActivate) {
+      return;
+    }
+    await patchCatalogStatus("active", "activating");
+  };
+
+  const disableGame = async () => {
+    if (!showDisableButton) {
+      return;
+    }
+    const confirmed = window.confirm(
+      "Выключить игру? Публичная ссылка станет недоступна для посетителей.",
+    );
+    if (!confirmed) {
+      return;
+    }
+    await patchCatalogStatus("disabled", "disabling");
+  };
+
   const seedDefaults = async () => {
+    const generation = beginRequest();
+    if (generation === null) {
+      return;
+    }
     setStatus("saving");
     setMessage(null);
     try {
@@ -118,11 +328,16 @@ export function WheelFortunePanel({
       }
       setGifts(payload.gifts);
       setWheelConfig(payload.wheelConfig);
-      setStatus("saved");
-      window.setTimeout(() => setStatus("idle"), 1500);
+      markSaved(generation);
     } catch (error) {
-      setStatus("error");
-      setMessage(error instanceof Error ? error.message : "Ошибка загрузки призов");
+      if (generation === requestGenerationRef.current) {
+        setStatus("error");
+        setMessage(
+          error instanceof Error ? error.message : "Ошибка загрузки призов",
+        );
+      }
+    } finally {
+      endRequest();
     }
   };
 
@@ -134,6 +349,10 @@ export function WheelFortunePanel({
 
   const saveGift = async () => {
     if (!editingGiftId) {
+      return;
+    }
+    const generation = beginRequest();
+    if (generation === null) {
       return;
     }
     setStatus("saving");
@@ -168,11 +387,14 @@ export function WheelFortunePanel({
       }
       await refresh();
       setEditingGiftId(null);
-      setStatus("saved");
-      window.setTimeout(() => setStatus("idle"), 1500);
+      markSaved(generation);
     } catch (error) {
-      setStatus("error");
-      setMessage(error instanceof Error ? error.message : "Ошибка сохранения");
+      if (generation === requestGenerationRef.current) {
+        setStatus("error");
+        setMessage(error instanceof Error ? error.message : "Ошибка сохранения");
+      }
+    } finally {
+      endRequest();
     }
   };
 
@@ -180,11 +402,39 @@ export function WheelFortunePanel({
     <div className="space-y-6">
       <section className="rounded border border-zinc-200 bg-white p-4">
         <h2 className="text-base font-semibold text-zinc-900">
-          Черновик «Колесо фортуны»
+          Колесо фортуны
         </h2>
         <p className="mt-1 text-sm text-zinc-600">
-          Публичная активация на этом этапе недоступна. Настройте название, slug и
-          призы (сумма активных секторов = {wheelConfig.expectedSectorCount}).
+          {catalogStatus === "active"
+            ? "Игра активна и доступна по публичной ссылке."
+            : `Настройте название, ссылку и призы. Для активации сумма активных секторов должна быть равна ${wheelConfig.expectedSectorCount}.`}
+        </p>
+        <p className="mt-2 text-sm text-zinc-800">
+          Статус:{" "}
+          <span className="font-medium">
+            {GAME_CATALOG_STATUS_LABELS[catalogStatus]}
+          </span>
+        </p>
+        <p className="mt-2 text-sm text-zinc-700">
+          Публичная ссылка:{" "}
+          <code className="rounded bg-zinc-100 px-2 py-1 text-xs">{publicPath}</code>
+          {catalogStatus === "active" ? (
+            <>
+              {" "}
+              <a
+                href={publicPath}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[#1a73e8] hover:underline"
+              >
+                Открыть игру
+              </a>
+            </>
+          ) : (
+            <span className="ml-2 text-zinc-500">
+              (публично недоступна)
+            </span>
+          )}
         </p>
 
         <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -194,6 +444,7 @@ export function WheelFortunePanel({
               className={fieldClass}
               value={title}
               onChange={(event) => setTitle(event.target.value)}
+              disabled={busy}
             />
           </label>
           <label className="space-y-1">
@@ -202,6 +453,7 @@ export function WheelFortunePanel({
               className={fieldClass}
               value={slug}
               onChange={(event) => setSlug(event.target.value)}
+              disabled={busy}
             />
           </label>
           <label className="space-y-1 md:col-span-2">
@@ -211,6 +463,7 @@ export function WheelFortunePanel({
               rows={3}
               value={description}
               onChange={(event) => setDescription(event.target.value)}
+              disabled={busy}
             />
           </label>
         </div>
@@ -219,21 +472,61 @@ export function WheelFortunePanel({
           <button
             type="button"
             onClick={() => void saveCatalogMeta()}
-            className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+            disabled={busy}
+            className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Сохранить черновик
+            Сохранить настройки
           </button>
+          {showActivateButton ? (
+            <button
+              type="button"
+              onClick={() => void activateGame()}
+              disabled={busy || !canActivate}
+              className="rounded bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Активировать игру
+            </button>
+          ) : null}
+          {showDisableButton ? (
+            <button
+              type="button"
+              onClick={() => void disableGame()}
+              disabled={busy}
+              className="rounded border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-800 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Выключить игру
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => void seedDefaults()}
-            className="rounded border border-zinc-300 px-4 py-2 text-sm text-zinc-800 hover:bg-zinc-50"
+            disabled={busy}
+            className="rounded border border-zinc-300 px-4 py-2 text-sm text-zinc-800 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60"
           >
             Загрузить призы по умолчанию
           </button>
           {statusLabel ? (
-            <span className="text-sm text-zinc-600">{statusLabel}</span>
+            <span
+              className={`text-sm ${
+                status === "error" ? "text-red-700" : "text-zinc-600"
+              }`}
+            >
+              {statusLabel}
+            </span>
           ) : null}
         </div>
+        {showActivateButton && !wheelConfig.sectorConfigOk ? (
+          <p className="mt-3 text-sm text-amber-900">
+            Активация недоступна: исправьте конфигурацию секторов (сумма активных
+            должна быть {wheelConfig.expectedSectorCount}).
+          </p>
+        ) : null}
+        {catalogStatus === "archived" ? (
+          <p className="mt-3 text-sm text-zinc-600">
+            Архивная игра не активируется из этой панели. Сначала восстановите её
+            из архива отдельным процессом.
+          </p>
+        ) : null}
       </section>
 
       <section className="rounded border border-zinc-200 bg-white p-4">
@@ -290,8 +583,9 @@ export function WheelFortunePanel({
                   <td className="px-3 py-2">
                     <button
                       type="button"
-                      className="text-[#1a73e8] hover:underline"
+                      className="text-[#1a73e8] hover:underline disabled:opacity-50"
                       onClick={() => startEditGift(gift)}
+                      disabled={busy}
                     >
                       Изменить
                     </button>
@@ -316,6 +610,7 @@ export function WheelFortunePanel({
                   className={fieldClass}
                   value={sectorDraft}
                   onChange={(event) => setSectorDraft(Number(event.target.value))}
+                  disabled={busy}
                 />
               </label>
               <label className="flex items-center gap-2 pt-6 text-sm text-zinc-800">
@@ -323,6 +618,7 @@ export function WheelFortunePanel({
                   type="checkbox"
                   checked={activeDraft}
                   onChange={(event) => setActiveDraft(event.target.checked)}
+                  disabled={busy}
                 />
                 Приз активен
               </label>
@@ -335,14 +631,16 @@ export function WheelFortunePanel({
               <button
                 type="button"
                 onClick={() => void saveGift()}
-                className="rounded bg-zinc-900 px-3 py-1.5 text-sm text-white"
+                disabled={busy}
+                className="rounded bg-zinc-900 px-3 py-1.5 text-sm text-white disabled:opacity-60"
               >
                 Сохранить приз
               </button>
               <button
                 type="button"
                 onClick={() => setEditingGiftId(null)}
-                className="rounded border border-zinc-300 px-3 py-1.5 text-sm"
+                disabled={busy}
+                className="rounded border border-zinc-300 px-3 py-1.5 text-sm disabled:opacity-60"
               >
                 Отмена
               </button>
