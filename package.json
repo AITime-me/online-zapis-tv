@@ -103,6 +103,8 @@
     "test:security:mail": "tsx scripts/security-mail-check.ts",
     "test:security:mail-standalone": "tsx scripts/security-mail-standalone-check.ts",
     "test:e2e:wheel": "playwright test tests/wheel-fortune-public.spec.ts",
+    "test:e2e:wheel:isolated": "tsx scripts/run-wheel-e2e-isolated.ts",
+    "test:security:wheel-e2e-harness": "tsx scripts/security-wheel-e2e-harness-check.ts",
     "test:e2e:catch-time-regression": "playwright test tests/wheel-fortune-public.spec.ts --grep \"procedure-gift\"",
     "test:e2e": "playwright test"
   },
