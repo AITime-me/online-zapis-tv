@@ -12,6 +12,7 @@ import {
   buildIsolatedRuntimeEnv,
 } from "./lib/wheel-isolated-env";
 import {
+  assertPlaywrightBrowsersPreflight,
   assertPlaywrightPassReport,
   assertPlaywrightPreflight,
   EXPECTED_PLAYWRIGHT_VERSION,
@@ -153,6 +154,9 @@ async function stopChildProcess(child: ChildProcess | null): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  // Fail before postgres/build if the official image browsers path is missing.
+  assertPlaywrightBrowsersPreflight();
+
   const pg = await startEphemeralPostgres({
     namePrefix: "wheel-e2e-pg",
     databaseName: "wheel_e2e",

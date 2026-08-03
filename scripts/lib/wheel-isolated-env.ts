@@ -109,6 +109,12 @@ const PLAYWRIGHT_ENV_KEYS = [
   "WHEEL_E2E_INVALID_SLUG",
 ] as const;
 
+/**
+ * Playwright-only system allowlist. Not copied into migrate/build/runtime.
+ * Official image sets PLAYWRIGHT_BROWSERS_PATH=/ms-playwright.
+ */
+const PLAYWRIGHT_SYSTEM_ENV_KEYS = ["PLAYWRIGHT_BROWSERS_PATH"] as const;
+
 /** Minimal env passed to Playwright in the current process/container. No DATABASE_URL. */
 export function buildIsolatedPlaywrightEnv(
   runtimeEnv: NodeJS.ProcessEnv,
@@ -116,6 +122,12 @@ export function buildIsolatedPlaywrightEnv(
   const out: NodeJS.ProcessEnv = { ...isolatedProcessPathEnv() };
   for (const key of PLAYWRIGHT_ENV_KEYS) {
     const value = runtimeEnv[key];
+    if (value) {
+      out[key] = value;
+    }
+  }
+  for (const key of PLAYWRIGHT_SYSTEM_ENV_KEYS) {
+    const value = process.env[key]?.trim();
     if (value) {
       out[key] = value;
     }

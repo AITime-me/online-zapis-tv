@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { chromium } from "@playwright/test";
 
 /** Locked Playwright version: package-lock + preferred outer Docker image must match. */
 export const EXPECTED_PLAYWRIGHT_VERSION = "1.61.1";
@@ -45,6 +46,44 @@ export function readInstalledPlaywrightVersion(root = ROOT): string {
 }
 
 /**
+ * Fail-fast: official Playwright image browsers must be visible to the locked CLI.
+ * Resolves the executable via chromium.executablePath() under PLAYWRIGHT_BROWSERS_PATH.
+ * Never downloads browsers and never falls back to network browser install.
+ */
+export function assertPlaywrightBrowsersPreflight(): void {
+  const browsersPath = process.env.PLAYWRIGHT_BROWSERS_PATH?.trim();
+  if (!browsersPath) {
+    throw new Error(
+      "wheel-e2e-isolated: PLAYWRIGHT_BROWSERS_PATH is required (official image sets /ms-playwright)",
+    );
+  }
+  if (!fs.existsSync(browsersPath)) {
+    throw new Error(
+      `wheel-e2e-isolated: PLAYWRIGHT_BROWSERS_PATH does not exist: ${browsersPath}`,
+    );
+  }
+
+  const previous = process.env.PLAYWRIGHT_BROWSERS_PATH;
+  process.env.PLAYWRIGHT_BROWSERS_PATH = browsersPath;
+  let executablePath: string;
+  try {
+    executablePath = chromium.executablePath();
+  } finally {
+    if (previous === undefined) {
+      delete process.env.PLAYWRIGHT_BROWSERS_PATH;
+    } else {
+      process.env.PLAYWRIGHT_BROWSERS_PATH = previous;
+    }
+  }
+
+  if (!executablePath || !fs.existsSync(executablePath)) {
+    throw new Error(
+      `wheel-e2e-isolated: Chromium executable not found under PLAYWRIGHT_BROWSERS_PATH=${browsersPath}`,
+    );
+  }
+}
+
+/**
  * Fail-fast before spawning Playwright. Checks the current project filesystem
  * (the outer Playwright container mount), never a nested container path.
  * Never falls back to network install.
@@ -53,6 +92,7 @@ export function assertPlaywrightPreflight(options: {
   root?: string;
   baseUrl: string | undefined;
   requireStandalone?: boolean;
+  requireBrowsers?: boolean;
 }): void {
   const root = options.root ?? ROOT;
   const spec = path.join(root, WHEEL_E2E_SPEC_REL);
@@ -100,6 +140,10 @@ export function assertPlaywrightPreflight(options: {
 
   if (options.requireStandalone !== false) {
     assertStandalonePrepared(root);
+  }
+
+  if (options.requireBrowsers !== false) {
+    assertPlaywrightBrowsersPreflight();
   }
 }
 

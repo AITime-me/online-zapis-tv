@@ -23,6 +23,7 @@ import {
   EXPECTED_WHEEL_E2E_TEST_COUNT,
   WHEEL_E2E_CONFIG_REL,
   WHEEL_E2E_SPEC_REL,
+  assertPlaywrightBrowsersPreflight,
   assertPlaywrightPassReport,
   assertPlaywrightPreflight,
   prepareStandaloneRuntime,
@@ -131,6 +132,8 @@ function assertIsolatedEnvModule(): void {
   assert.match(envModule, /WHEEL_E2E_INVALID_SLUG/);
   assert.match(envModule, /PLAYWRIGHT_BASE_URL/);
   assert.match(envModule, /buildIsolatedPlaywrightEnv/);
+  assert.match(envModule, /PLAYWRIGHT_SYSTEM_ENV_KEYS/);
+  assert.match(envModule, /PLAYWRIGHT_BROWSERS_PATH/);
   assert.match(envModule, /HOSTNAME:\s*"127\.0\.0\.1"/);
   assert.match(envModule, /PORT:\s*String\(port\)/);
   assert.doesNotMatch(
@@ -152,6 +155,20 @@ function assertIsolatedEnvModule(): void {
     envModule,
     /\.\.\.process\.env/,
     "isolated env builders must not spread caller process.env",
+  );
+  assert.match(
+    envModule,
+    /PLAYWRIGHT_SYSTEM_ENV_KEYS\s*=\s*\[[\s\S]*?PLAYWRIGHT_BROWSERS_PATH/,
+    "PLAYWRIGHT_BROWSERS_PATH must be in Playwright-only system allowlist",
+  );
+  const pathKeysMatch = envModule.match(
+    /function isolatedProcessPathEnv\([\s\S]*?const keys = \[([\s\S]*?)\] as const/,
+  );
+  assert.ok(pathKeysMatch, "isolatedProcessPathEnv keys allowlist must exist");
+  assert.doesNotMatch(
+    pathKeysMatch[1],
+    /PLAYWRIGHT_BROWSERS_PATH/,
+    "PLAYWRIGHT_BROWSERS_PATH must not be in shared process path allowlist",
   );
 
   const buildEnv = buildIsolatedBuildEnv();
@@ -186,6 +203,7 @@ function assertIsolatedEnvModule(): void {
   );
   assert.equal(migrateEnv.MAIL_PROVIDER, "disabled");
   assert.equal(migrateEnv.PLAYWRIGHT_BASE_URL, undefined);
+  assert.equal(migrateEnv.PLAYWRIGHT_BROWSERS_PATH, undefined);
   assert.notEqual(migrateEnv.DATABASE_URL, ISOLATED_BUILD_DATABASE_URL);
   assert.equal(
     Object.prototype.hasOwnProperty.call(migrateEnv, "DATABASE_URL"),
@@ -219,6 +237,7 @@ function assertIsolatedEnvModule(): void {
   assert.equal(runtimeEnv.PORT, "38123");
   assert.equal(runtimeEnv.HOSTNAME, "127.0.0.1");
   assert.equal(runtimeEnv.PLAYWRIGHT_BASE_URL, "http://127.0.0.1:38123");
+  assert.equal(runtimeEnv.PLAYWRIGHT_BROWSERS_PATH, undefined);
   assert.notEqual(
     runtimeEnv.DATABASE_URL,
     buildEnv.DATABASE_URL,
@@ -229,10 +248,23 @@ function assertIsolatedEnvModule(): void {
     runtimeEnv.NODE_ENV,
     "migrate and runtime NODE_ENV must remain separated",
   );
+  assert.equal(buildEnv.PLAYWRIGHT_BROWSERS_PATH, undefined);
 
-  const playwrightEnv = buildIsolatedPlaywrightEnv(runtimeEnv);
+  const previousBrowsersPath = process.env.PLAYWRIGHT_BROWSERS_PATH;
+  process.env.PLAYWRIGHT_BROWSERS_PATH = "/ms-playwright";
+  let playwrightEnv: NodeJS.ProcessEnv;
+  try {
+    playwrightEnv = buildIsolatedPlaywrightEnv(runtimeEnv);
+  } finally {
+    if (previousBrowsersPath === undefined) {
+      delete process.env.PLAYWRIGHT_BROWSERS_PATH;
+    } else {
+      process.env.PLAYWRIGHT_BROWSERS_PATH = previousBrowsersPath;
+    }
+  }
   assert.equal(playwrightEnv.DATABASE_URL, undefined);
   assert.equal(playwrightEnv.PLAYWRIGHT_BASE_URL, "http://127.0.0.1:38123");
+  assert.equal(playwrightEnv.PLAYWRIGHT_BROWSERS_PATH, "/ms-playwright");
   assert.equal(playwrightEnv.PORT, undefined);
   assert.equal(playwrightEnv.HOSTNAME, undefined);
   assert.equal(playwrightEnv.AUTH_SECRET, undefined);
@@ -249,7 +281,18 @@ function assertIsolatedRuntimeHelpers(): void {
   assert.match(runtime, /prepareStandaloneRuntime/);
   assert.match(runtime, /assertStandalonePrepared/);
   assert.match(runtime, /assertPlaywrightPreflight/);
+  assert.match(runtime, /assertPlaywrightBrowsersPreflight/);
   assert.match(runtime, /assertPlaywrightPassReport/);
+  assert.match(runtime, /chromium\.executablePath/);
+  assert.match(runtime, /PLAYWRIGHT_BROWSERS_PATH/);
+  assert.match(runtime, /Chromium executable not found under PLAYWRIGHT_BROWSERS_PATH/);
+  assert.match(runtime, /from "@playwright\/test"/);
+  assert.doesNotMatch(runtime, /["']npx["'][\s\S]{0,40}playwright[\s\S]{0,20}install/);
+  assert.doesNotMatch(runtime, /spawnSync\(\s*["']npx["']/);
+  assert.doesNotMatch(
+    runtime,
+    /PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD/,
+  );
   assert.match(runtime, /\.next["'],\s*["']standalone/);
   assert.match(runtime, /\.next["'],\s*["']static/);
   assert.match(runtime, /["']public["']/);
@@ -288,6 +331,7 @@ function assertIsolatedRuntimeHelpers(): void {
       assertPlaywrightPreflight({
         baseUrl: "http://localhost:3000",
         requireStandalone: false,
+        requireBrowsers: false,
       }),
     /localhost:3000|127\.0\.0\.1/,
   );
@@ -296,6 +340,7 @@ function assertIsolatedRuntimeHelpers(): void {
       assertPlaywrightPreflight({
         baseUrl: "https://staging.example.com",
         requireStandalone: false,
+        requireBrowsers: false,
       }),
     /non-isolated|127\.0\.0\.1/,
   );
@@ -303,8 +348,42 @@ function assertIsolatedRuntimeHelpers(): void {
     assertPlaywrightPreflight({
       baseUrl: "http://127.0.0.1:38123",
       requireStandalone: false,
+      requireBrowsers: false,
     }),
   );
+
+  const previousBrowsersPath = process.env.PLAYWRIGHT_BROWSERS_PATH;
+  delete process.env.PLAYWRIGHT_BROWSERS_PATH;
+  try {
+    assert.throws(
+      () => assertPlaywrightBrowsersPreflight(),
+      /PLAYWRIGHT_BROWSERS_PATH is required/,
+    );
+  } finally {
+    if (previousBrowsersPath === undefined) {
+      delete process.env.PLAYWRIGHT_BROWSERS_PATH;
+    } else {
+      process.env.PLAYWRIGHT_BROWSERS_PATH = previousBrowsersPath;
+    }
+  }
+
+  process.env.PLAYWRIGHT_BROWSERS_PATH = path.join(
+    ROOT,
+    "test-results",
+    "missing-ms-playwright-dir",
+  );
+  try {
+    assert.throws(
+      () => assertPlaywrightBrowsersPreflight(),
+      /PLAYWRIGHT_BROWSERS_PATH does not exist|Chromium executable not found/,
+    );
+  } finally {
+    if (previousBrowsersPath === undefined) {
+      delete process.env.PLAYWRIGHT_BROWSERS_PATH;
+    } else {
+      process.env.PLAYWRIGHT_BROWSERS_PATH = previousBrowsersPath;
+    }
+  }
 
   const tmpReport = path.join(ROOT, "test-results", "wheel-e2e-harness-check-tmp.json");
   fs.mkdirSync(path.dirname(tmpReport), { recursive: true });
@@ -356,9 +435,12 @@ function assertIsolatedRunner(): void {
   assert.match(runner, /buildIsolatedPlaywrightEnv/);
   assert.match(runner, /pickAppPort/);
   assert.match(runner, /prepareStandaloneRuntime/);
+  assert.match(runner, /assertPlaywrightBrowsersPreflight/);
   assert.match(runner, /assertPlaywrightPreflight/);
   assert.match(runner, /assertPlaywrightPassReport/);
   assert.match(runner, /playwrightCliJs/);
+  assert.doesNotMatch(runner, /npx playwright install/);
+  assert.doesNotMatch(runner, /playwright install/);
   assert.match(
     runner,
     /spawn\(process\.execPath,\s*playwrightNodeArgs\(\)/,
