@@ -1,51 +1,84 @@
 # Bot internal API — PR A (auth + eligibility + studio kill-switch)
 
 Дата: 2026-08-03
-Статус: implemented locally (CURSOR-15 Stage 3A / PR A + Stage 3A-R remediation)
+Статус: implemented locally (CURSOR-15 Stage 3A / 3A-R / 3C remediation)
 
 ## Scope
 
 Добавлено:
 
 1. S2S Bearer-auth helper: `src/lib/auth/bot-internal-auth.ts`
-2. Internal eligibility: `POST /api/internal/bot/v1/eligibility`
-3. Серверное enforcement `StudioSettings.isOnlineBookingEnabled` в `assertOnlineBookable`
-4. Отдельный rate-limit bucket `botInternal`
-5. CSRF exemption **только** для `/api/internal/bot/v1/*` (Bearer enforced in-route)
+2. Mandatory bot v1 wrapper: `src/lib/auth/bot-internal-api.ts` (`withBotInternalApi`)
+3. Internal eligibility: `POST /api/internal/bot/v1/eligibility`
+4. Bounded JSON body reader: `src/lib/bot-api/bounded-json-body.ts` (hard 4096-byte stream limit)
+5. Серверное enforcement `StudioSettings.isOnlineBookingEnabled` в `assertOnlineBookable`
+6. Public catalog studio projection → `MANAGER_ONLY` when studio self-booking is off
+7. Отдельный rate-limit bucket `botInternal`
+8. CSRF exemption **только** для `/api/internal/bot/v1/*`
+9. Static namespace coverage: `scripts/security-bot-internal-route-coverage-check.ts`
 
-Вне scope PR A: available-days/slots/bookings/manager-requests internal routes, `source: BOT` writes, idempotency store, Prisma migration, bot-TV.
+Вне scope PR A: available-days/slots/bookings/manager-requests internal routes, `source: BOT` writes, idempotency store, Prisma migration, bot-TV, rebase onto advanced main.
 
 ## Architecture
 
 ```text
 bot-TV → Authorization: Bearer <BOT_INTERNAL_API_TOKEN>
+      → withBotInternalApi (auth + botInternal RL)
       → /api/internal/bot/v1/eligibility
-      → evaluateBotEligibility / BookingService helpers
+      → readBoundedJsonBody → evaluateBotEligibility
       → PostgreSQL
 ```
-
-Thin route only. Policy живёт в service/helpers, не дублируется в handler.
 
 ## Env: `BOT_INTERNAL_API_TOKEN`
 
 - Header: `Authorization: Bearer <token>`
 - Min length: 32
-- No default / no test secret in production code
-- `.env.example` содержит только имя: `BOT_INTERNAL_API_TOKEN=`
+- Optional in global `env.ts`; fail-closed in auth helper
+- `.env.example`: `BOT_INTERNAL_API_TOKEN=` (name only)
 
-### Почему optional в global `env.ts`
+## CSRF + mandatory auth namespace
 
-Глобальная zod-схема (`src/lib/env.ts`) **не требует** токен на старте public/CI runtime:
+Exemption: `pathname.startsWith("/api/internal/bot/v1/")` only.
 
-- иначе local/CI/public build до staging provisioning падал бы при импорте `env`;
-- AUTH_SECRET / SCHEDULE_VIEW_TOKEN уже production-required; bot token пока не provisioned.
+Every `src/app/api/internal/bot/v1/**/route.ts` must export handlers as:
 
-Fail-closed обеспечивается auth helper:
+```ts
+export const POST = withBotInternalApi(async (request) => { ... });
+```
 
-- missing / short token → `getBotInternalApiToken() === null`
-- `enforceBotInternalAuth` всегда отвечает generic `401 UNAUTHORIZED`
+Coverage script fails if:
 
-Staging/production provisioning — отдельный ops gate перед bot traffic (не часть PR A).
+- namespace has zero routes;
+- any route exports bare `POST`/`GET`/… without wrapper;
+- comment-only mention of the wrapper name.
+
+## Public catalog studio kill-switch
+
+`getBookingCatalog` reads studio flag **once**, then calls:
+
+```ts
+resolveServiceBookingModes(serviceIds, runtime, { selfBookingEnabled: studioOnline })
+```
+
+When `selfBookingEnabled=false`:
+
+- services with an ONLINE path are projected as `MANAGER_ONLY`;
+- `managerMasterId` / `managerMasterName` are preserved from existing manager-link selection;
+- services remain visible;
+- public DTO does **not** include internal reason codes;
+- wizard `bookingMode === "MANAGER_ONLY"` → existing manager-request branch.
+
+Internal eligibility remains machine-readable (`SELF_BOOKING_ALLOWED` / `MANAGER_HANDOFF` + reasonCode) and is separate from catalog.
+
+## Body limit
+
+`readBoundedJsonBody`:
+
+- early reject when declared `Content-Length` > 4096;
+- stream-read actual bytes; cancel reader on overflow;
+- UTF-8 fatal decode; JSON.parse;
+- oversized → HTTP 413 `PAYLOAD_TOO_LARGE`;
+- auth runs in `withBotInternalApi` **before** body read.
 
 ## Auth response
 
@@ -53,79 +86,21 @@ Staging/production provisioning — отдельный ops gate перед bot t
 { "ok": false, "code": "UNAUTHORIZED", "error": "Unauthorized" }
 ```
 
-Одинаковый ответ для missing header, malformed scheme, wrong token, misconfigured server token. Токен и body не логируются.
-
-## CSRF exemption scope
-
-`requiresAdminCsrfProtection` excludes **only** `/api/internal/bot/v1/*`.
-
-- Unrelated `/api/internal/...` outside bot v1 remains CSRF-protected (admin session + same-origin).
-- Bot eligibility route still requires Bearer (`enforceBotInternalAuth`) even with CSRF exemption.
-- Public booking routes keep existing same-origin CSRF contract.
-
 ## Eligibility contract
 
-Request:
+See Stage 3A docs: pair-specific outcomes, `selectedPairAllowed` null without masterId, alternatives only with `includeAlternatives=true`.
 
-```json
-{
-  "serviceId": "<uuid>",
-  "masterId": "<uuid?>",
-  "includeAlternatives": false
-}
-```
-
-Unknown fields / null optional fields / non-boolean `includeAlternatives` → `400 VALIDATION_ERROR`.
-Oversized body (`Content-Length` > 4096) → `400`.
-
-Success:
-
-```json
-{
-  "ok": true,
-  "outcome": "SELF_BOOKING_ALLOWED" | "MANAGER_HANDOFF",
-  "reasonCode": null | "STUDIO_ONLINE_DISABLED" | "SERVICE_INACTIVE" | "MASTER_INACTIVE" | "ONLINE_DISABLED" | "MASTER_SERVICE_UNAVAILABLE" | "MANAGER_ONLY",
-  "selectedPairAllowed": true | false | null,
-  "serviceOnlineInGeneral": boolean,
-  "otherOnlineMasterCount": number,
-  "otherOnlineMasters": [{ "id": "...", "publicName": "..." }]
-}
-```
-
-- `selectedPairAllowed` is `null` when `masterId` omitted; boolean when a pair was evaluated.
-- `otherOnlineMasters` only when `includeAlternatives: true`.
-- Unknown / private / inactive services share `SERVICE_INACTIVE` (no existence leak via `SERVICE_NOT_FOUND`).
-- Alternatives come from `listMastersForService` (canonical ONLINE chain), exclude selected master, ordered by `sortOrder`.
-
-Правила:
-
-- SoT = существующая AND-цепочка + studio kill-switch
-- Закрытый выбранный мастер (`Master.isOnlineBookingEnabled=false`) → **не** авто-замена
-- Другие ONLINE-мастера — только metadata alternatives
-- Internal API не возвращает клиентский текст и internal notes
-
-## Studio kill-switch
-
-`assertStudioOnlineBookingEnabled` вызывается из `assertOnlineBookable` (slots/create path).
-
-`getAvailableDaysInMonth` resolves the studio flag once, then reuses a memoized runtime for the day loop (avoids N+1 `StudioSettings` reads).
-
-Missing StudioSettings row: `ensureStudioSettings()` upserts singleton with `DEFAULT_STUDIO_SETTINGS.isOnlineBookingEnabled: true` — same SoT as public settings API.
-
-Studio off:
-
-- self-booking denied (`OnlineServiceUnavailableError` / `SERVICE_UNAVAILABLE`)
-- eligibility → `MANAGER_HANDOFF` + `STUDIO_ONLINE_DISABLED`
-- manager-request остаётся доступным (не использует `assertOnlineBookable`)
+Reason codes include `STUDIO_ONLINE_DISABLED` when studio self-booking is off (internal eligibility only; not exposed on public catalog DTO).
 
 ## Tests
 
 ```bash
 npm run test:security:bot-internal-api-pr-a
-npx tsx scripts/security-master-service-access-rules-check.ts
+npm run test:security:bot-internal-route-coverage
 npx tsx scripts/security-csrf-coverage-check.ts
+npx tsx scripts/security-master-service-access-rules-check.ts
 ```
 
 ## Public regression
 
-Public booking routes (`/api/booking/*`) не меняют CSRF/same-origin модель и source `ONLINE`. Internal path additive.
+Public booking CSRF/same-origin and source `ONLINE` unchanged. Manager-request remains available when studio self-booking is off.

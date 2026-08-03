@@ -93,6 +93,7 @@
     "test:security:admin-promotions": "tsx scripts/security-admin-promotions-check.ts",
     "test:security:bot-foundation": "tsx scripts/security-bot-foundation-check.ts",
     "test:security:bot-internal-api-pr-a": "tsx scripts/security-bot-internal-api-pr-a-check.ts",
+    "test:security:bot-internal-route-coverage": "tsx scripts/security-bot-internal-route-coverage-check.ts",
     "test:security:communications-foundation": "tsx scripts/security-communications-foundation-check.ts",
     "test:security:communications-composer": "tsx scripts/security-communications-composer-check.ts",
     "test:security:legal-consent": "tsx scripts/security-legal-consent-check.ts",

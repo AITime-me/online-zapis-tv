@@ -528,6 +528,14 @@ type ServiceBookingModeResult = {
   managerMasterName: string | null;
 };
 
+export type ResolveServiceBookingModesOptions = {
+  /**
+   * When false, services with an ONLINE path are projected as MANAGER_ONLY
+   * (public catalog studio kill-switch). Defaults to true.
+   */
+  selfBookingEnabled?: boolean;
+};
+
 export async function canBookServiceOnline(
   serviceId: string,
   service: {
@@ -568,8 +576,10 @@ export async function canBookServiceOnline(
 export async function resolveServiceBookingModes(
   serviceIds: string[],
   runtime: BookingPolicyRuntime = DEFAULT_BOOKING_POLICY_RUNTIME,
+  options: ResolveServiceBookingModesOptions = {},
 ): Promise<Map<string, ServiceBookingModeResult>> {
   const result = new Map<string, ServiceBookingModeResult>();
+  const selfBookingEnabled = options.selfBookingEnabled ?? true;
 
   if (serviceIds.length === 0) {
     return result;
@@ -640,7 +650,7 @@ export async function resolveServiceBookingModes(
       }
     }
 
-    if (hasOnlinePath) {
+    if (hasOnlinePath && selfBookingEnabled) {
       result.set(serviceId, {
         bookingMode: "ONLINE",
         managerMasterId: null,
@@ -663,9 +673,16 @@ export async function resolveServiceBookingModes(
   return result;
 }
 
-export async function getBookingCatalog(): Promise<{
+export async function getBookingCatalog(
+  runtime: BookingPolicyRuntime = DEFAULT_BOOKING_POLICY_RUNTIME,
+): Promise<{
   categories: BookingCatalogCategory[];
 }> {
+  // One studio-settings read per catalog request (not per service).
+  const studioOnline =
+    (await (runtime.isStudioOnlineBookingEnabled ??
+      defaultIsStudioOnlineBookingEnabled)()) === true;
+
   const categories = await prisma.serviceCategory.findMany({
     where: { isActive: true, isPublic: true },
     orderBy: { sortOrder: "asc" },
@@ -693,7 +710,9 @@ export async function getBookingCatalog(): Promise<{
   const serviceIds = categories.flatMap((category) =>
     category.services.map((service) => service.id),
   );
-  const bookingModes = await resolveServiceBookingModes(serviceIds);
+  const bookingModes = await resolveServiceBookingModes(serviceIds, runtime, {
+    selfBookingEnabled: studioOnline,
+  });
 
   const defaultManagerOnly: ServiceBookingModeResult = {
     bookingMode: "MANAGER_ONLY",

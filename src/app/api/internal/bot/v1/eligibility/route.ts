@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
-import { enforceBotInternalAuth } from "@/lib/auth/bot-internal-auth";
+import { withBotInternalApi } from "@/lib/auth/bot-internal-api";
 import {
   evaluateBotEligibility,
   parseBotEligibilityBody,
 } from "@/lib/bot-api/evaluate-eligibility";
+import {
+  BOT_INTERNAL_MAX_JSON_BODY_BYTES,
+  readBoundedJsonBody,
+} from "@/lib/bot-api/bounded-json-body";
 import { safeLogError } from "@/lib/logging/redact";
-import { enforceEndpointRateLimit } from "@/lib/security/rate-limit/enforce-policy";
 import {
   listMastersForService,
   resolveServiceBookingModes,
@@ -18,9 +21,6 @@ import { getPublicStudioSettings } from "@/services/StudioSettingsService";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-/** Soft body cap for PII-free eligibility JSON (IDs + boolean only). */
-const MAX_ELIGIBILITY_BODY_BYTES = 4_096;
-
 const DEFAULT_RUNTIME: BookingPolicyRuntime = {
   db: prisma,
   resolveTiming: resolveServiceTimingForMaster,
@@ -30,52 +30,33 @@ const DEFAULT_RUNTIME: BookingPolicyRuntime = {
   },
 };
 
-function validationErrorResponse(error: string) {
+function validationErrorResponse(error: string, status = 400) {
   return NextResponse.json(
     {
       ok: false as const,
-      code: "VALIDATION_ERROR" as const,
+      code: status === 413 ? ("PAYLOAD_TOO_LARGE" as const) : ("VALIDATION_ERROR" as const),
       error,
     },
     {
-      status: 400,
+      status,
       headers: { "Content-Type": "application/json; charset=utf-8" },
     },
   );
 }
 
-function isOversizedBody(request: Request): boolean {
-  const raw = request.headers.get("content-length");
-  if (!raw) {
-    return false;
-  }
-  const length = Number(raw);
-  return Number.isFinite(length) && length > MAX_ELIGIBILITY_BODY_BYTES;
-}
-
-export async function POST(request: Request) {
-  const authResponse = enforceBotInternalAuth(request);
-  if (authResponse) {
-    return authResponse;
+export const POST = withBotInternalApi(async (request: Request) => {
+  const bodyResult = await readBoundedJsonBody(
+    request,
+    BOT_INTERNAL_MAX_JSON_BODY_BYTES,
+  );
+  if (!bodyResult.ok) {
+    if (bodyResult.code === "PAYLOAD_TOO_LARGE") {
+      return validationErrorResponse(bodyResult.error, 413);
+    }
+    return validationErrorResponse(bodyResult.error);
   }
 
-  const rateLimitResponse = enforceEndpointRateLimit(request, "botInternal");
-  if (rateLimitResponse) {
-    return rateLimitResponse;
-  }
-
-  if (isOversizedBody(request)) {
-    return validationErrorResponse("Invalid request body");
-  }
-
-  let rawBody: unknown;
-  try {
-    rawBody = await request.json();
-  } catch {
-    return validationErrorResponse("Invalid JSON body");
-  }
-
-  const parsed = parseBotEligibilityBody(rawBody);
+  const parsed = parseBotEligibilityBody(bodyResult.value);
   if (!parsed.ok) {
     return validationErrorResponse(parsed.error);
   }
@@ -112,4 +93,4 @@ export async function POST(request: Request) {
       },
     );
   }
-}
+});
