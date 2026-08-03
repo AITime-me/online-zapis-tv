@@ -1,8 +1,10 @@
 import type { CatchTimeServerAssignmentV1 } from "@/lib/game/tier/server-assignment-contract";
+import type { WheelAssignmentPrizeSnapshotV1 } from "@/lib/game/wheel/wheel-assignment-prize-snapshot";
 
 /**
  * Wheel assignment is written at session start — before any client animation.
  * Client must animate the persisted sectorIndex; never trust client sector/prize ids.
+ * prizeSnapshot freezes prize metadata at start; complete must not read live GameGift.
  */
 export type WheelServerAssignmentV1 = {
   version: 1;
@@ -16,6 +18,7 @@ export type WheelServerAssignmentV1 = {
   totalSectors: number;
   prizeSystemKey: string;
   giftId: string;
+  prizeSnapshot: WheelAssignmentPrizeSnapshotV1;
 };
 
 export type GameServerAssignmentV1 =

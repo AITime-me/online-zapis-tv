@@ -32,7 +32,11 @@ const productionEnvSchema = baseEnvSchema
       .min(32, "SCHEDULE_VIEW_TOKEN должен содержать не менее 32 символов в production"),
   })
   .superRefine((value, ctx) => {
-    const result = validateAuthUrlForRuntime(value.AUTH_URL, value.APP_ENV);
+    const result = validateAuthUrlForRuntime(value.AUTH_URL, value.APP_ENV, {
+      // Only the isolated wheel E2E harness sets WHEEL_E2E_ISOLATED=1.
+      // Ordinary production must never rely on this bypass.
+      allowIsolatedE2eLoopbackHttp: process.env.WHEEL_E2E_ISOLATED === "1",
+    });
     if (!result.ok) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

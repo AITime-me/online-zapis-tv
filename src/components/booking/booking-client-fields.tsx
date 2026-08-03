@@ -113,6 +113,7 @@ export function BookingClientFields({
               onPhoneLocalChange(event.target.value);
               onClearError?.("phone");
             }}
+            aria-label="Номер телефона"
             aria-invalid={Boolean(errors.phone)}
             aria-describedby={errors.phone ? "client-phone-error" : undefined}
             className={phoneInputClassName}

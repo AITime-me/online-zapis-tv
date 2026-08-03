@@ -1,5 +1,5 @@
-import { Prisma, type GamePrizeType } from "@prisma/client";
-import { prisma } from "@/lib/db";
+import { Prisma, type GamePrizeType, type PrismaClient } from "@prisma/client";
+import { prisma as defaultPrisma } from "@/lib/db";
 import {
   buildDefaultWheelCatalogSettings,
   DEFAULT_WHEEL_PRIZE_DEFINITIONS,
@@ -110,13 +110,50 @@ export function buildWheelCatalogConfigDto(
 }
 
 /**
+ * ACTIVE wheel requires a valid expanded 16-sector layout.
+ * Throws Error with a public-safe message when invalid.
+ */
+export async function assertWheelCatalogReadyForActivation(
+  gameCatalogId: string,
+  settingsRaw?: unknown,
+  db: PrismaClient = defaultPrisma,
+): Promise<void> {
+  const catalog = await db.gameCatalog.findUnique({
+    where: { id: gameCatalogId },
+    select: { id: true, type: true, settings: true },
+  });
+  if (!catalog || catalog.type !== "WHEEL_OF_FORTUNE") {
+    throw new Error("Каталог колеса фортуны не найден");
+  }
+
+  const gifts = await db.gameGift.findMany({
+    where: { gameCatalogId: catalog.id },
+    select: {
+      id: true,
+      name: true,
+      isActive: true,
+      probability: true,
+      systemKey: true,
+      sortOrder: true,
+    },
+  });
+  const settings = settingsRaw !== undefined ? settingsRaw : catalog.settings;
+  const config = buildWheelCatalogConfigDto(settings, giftsToSectorGifts(gifts));
+  if (!config.sectorConfigOk) {
+    throw new Error(
+      config.sectorConfigError || "Конфигурация колеса невалидна",
+    );
+  }
+}
+
+/**
  * Idempotently seed default permanent-makeup wheel prizes for a draft catalog.
  * Does not modify Catch-Time gifts or activate the game.
  */
 export async function ensureDefaultWheelPrizes(
   gameCatalogId: string,
 ): Promise<{ created: number; skipped: number }> {
-  const catalog = await prisma.gameCatalog.findUnique({
+  const catalog = await defaultPrisma.gameCatalog.findUnique({
     where: { id: gameCatalogId },
     select: { id: true, type: true, settings: true, campaignKey: true },
   });
@@ -125,7 +162,7 @@ export async function ensureDefaultWheelPrizes(
   }
 
   if (catalog.settings == null) {
-    await prisma.gameCatalog.update({
+    await defaultPrisma.gameCatalog.update({
       where: { id: catalog.id },
       data: {
         settings: buildDefaultWheelCatalogSettings() as Prisma.InputJsonValue,
@@ -139,7 +176,7 @@ export async function ensureDefaultWheelPrizes(
   let skipped = 0;
 
   for (const definition of DEFAULT_WHEEL_PRIZE_DEFINITIONS) {
-    const existing = await prisma.gameGift.findFirst({
+    const existing = await defaultPrisma.gameGift.findFirst({
       where: {
         gameCatalogId: catalog.id,
         systemKey: definition.systemKey,
@@ -151,7 +188,7 @@ export async function ensureDefaultWheelPrizes(
       continue;
     }
 
-    await prisma.gameGift.create({
+    await defaultPrisma.gameGift.create({
       data: {
         name: definition.name,
         shortDescription: definition.shortDescription,

@@ -7,6 +7,8 @@ export const PUBLIC_MUTATING_API_PATHS = new Set([
   "/api/game/session/start",
   "/api/game/session/restart",
   "/api/game/session/complete",
+  "/api/game/wheel/start",
+  "/api/game/wheel/complete",
   "/api/booking/manage/cancel",
   "/api/booking/manage/reschedule-request",
 ]);

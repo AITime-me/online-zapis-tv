@@ -69,12 +69,16 @@ export const API_RATE_LIMIT_RULES: ApiRateLimitRouteRule[] = [
       (exactPath(pathname, "/api/game/play") ||
         exactPath(pathname, "/api/game/session/start") ||
         exactPath(pathname, "/api/game/session/restart") ||
-        exactPath(pathname, "/api/game/session/complete")),
+        exactPath(pathname, "/api/game/session/complete") ||
+        exactPath(pathname, "/api/game/wheel/start") ||
+        exactPath(pathname, "/api/game/wheel/complete")),
   },
   {
     policyId: "gameSessionRead",
     match: (pathname, method) =>
-      method === "GET" && exactPath(pathname, "/api/game/session/result"),
+      method === "GET" &&
+      (exactPath(pathname, "/api/game/session/result") ||
+        exactPath(pathname, "/api/game/wheel/result")),
   },
   {
     policyId: "availabilityCatalog",
@@ -128,9 +132,14 @@ export const RATE_LIMITED_API_PATHS = API_RATE_LIMIT_RULES.flatMap((rule) => {
         { method: "POST", pathname: "/api/game/session/start" },
         { method: "POST", pathname: "/api/game/session/restart" },
         { method: "POST", pathname: "/api/game/session/complete" },
+        { method: "POST", pathname: "/api/game/wheel/start" },
+        { method: "POST", pathname: "/api/game/wheel/complete" },
       ];
     case "gameSessionRead":
-      return [{ method: "GET", pathname: "/api/game/session/result" }];
+      return [
+        { method: "GET", pathname: "/api/game/session/result" },
+        { method: "GET", pathname: "/api/game/wheel/result" },
+      ];
     case "availabilityCatalog":
       return AVAILABILITY_CATALOG_PREFIXES.map((pathname) => ({
         method: "GET",

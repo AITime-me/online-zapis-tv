@@ -37,6 +37,16 @@ function runConsentComponentSourceTests(): void {
   assert.match(source, /публичной офертой/);
   assert.match(source, /заявкой на бронирование/);
   assert.match(source, /event\.stopPropagation\(\)/);
+  assert.match(
+    source,
+    /ariaLabel=["']Согласие на обработку персональных данных["']/,
+  );
+  assert.match(
+    source,
+    /ariaLabel=["']Ознакомление с условиями записи и публичной офертой["']/,
+  );
+  assert.match(source, /testId=["']legal-personal-data-consent["']/);
+  assert.match(source, /testId=["']legal-offer-acknowledgement["']/);
   assert.equal(
     (source.match(/LegalCheckboxField/g) ?? []).length >= 2,
     true,

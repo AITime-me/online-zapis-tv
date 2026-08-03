@@ -104,9 +104,6 @@ export function GameCatalogCreateForm() {
           onChange={(event) => {
             const nextType = event.target.value as GameCatalogTypeDto;
             setType(nextType);
-            if (nextType === "wheel_of_fortune" && status === "active") {
-              setStatus("draft");
-            }
           }}
           className={fieldClass}
         >
@@ -128,11 +125,7 @@ export function GameCatalogCreateForm() {
           className={fieldClass}
         >
           {Object.entries(GAME_CATALOG_STATUS_LABELS).map(([value, label]) => (
-            <option
-              key={value}
-              value={value}
-              disabled={type === "wheel_of_fortune" && value === "active"}
-            >
+            <option key={value} value={value}>
               {label}
             </option>
           ))}

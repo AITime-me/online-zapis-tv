@@ -22,6 +22,14 @@ import {
 } from "../src/lib/game/wheel/wheel-env-contract";
 import { registerWheelPhoneBoundSession } from "../src/lib/game/wheel/register-phone-bound-session";
 import type { WheelServerAssignmentV1 } from "../src/lib/game/wheel/wheel-assignment-contract";
+import {
+  buildTestWheelServerAssignment,
+  buildWheelAssignmentPrizeSnapshot,
+} from "../src/lib/game/wheel/wheel-assignment-prize-snapshot";
+import {
+  DEFAULT_WHEEL_PRIZE_DEFINITIONS,
+  serializeDefaultPrizeRules,
+} from "../src/lib/game/wheel/default-prizes";
 import { normalizeGameBookingPhoneKey } from "../src/lib/game/game-open-request-policy";
 import { normalizePhone } from "../src/lib/phone/normalize-phone";
 
@@ -43,20 +51,40 @@ const PHONE_FORMATS = [
   "8 (999) 123-45-67",
 ] as const;
 
+function buildTestGifts() {
+  return DEFAULT_WHEEL_PRIZE_DEFINITIONS.map((definition, index) => ({
+    id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    name: definition.name,
+    shortDescription: definition.shortDescription,
+    image: null,
+    priority:
+      definition.systemKey === "permanent_discount_20" ? "jackpot" : "standard",
+    cardStyle: "default",
+    isActive: definition.isActive,
+    probability: definition.sectorCount,
+    systemKey: definition.systemKey,
+    sortOrder: definition.sortOrder,
+    prizeType: definition.prizeType,
+    prizeRules: serializeDefaultPrizeRules(definition),
+    activationMode: "SINGLE_PAID_SERVICE" as const,
+    minCourseSessions: null,
+    activationConditionText: definition.activationConditionText,
+  }));
+}
+
 function assignment(sectorIndex: number): WheelServerAssignmentV1 {
-  return {
-    version: 1,
-    mechanicType: "WHEEL_OF_FORTUNE",
-    serverResultTier: 0,
-    campaignKey: "permanent-wheel",
-    rulesVersion: "1",
-    assignedAt: "2026-08-03T10:00:00.000Z",
-    tierBucket: "tier-0",
+  const gifts = buildTestGifts();
+  const gift = gifts[sectorIndex] ?? gifts[0]!;
+  const prizeSnapshot = buildWheelAssignmentPrizeSnapshot(gift.id, gifts);
+  if (!prizeSnapshot) {
+    throw new Error("test prize snapshot unavailable");
+  }
+  return buildTestWheelServerAssignment({
     sectorIndex,
-    totalSectors: 16,
-    prizeSystemKey: `prize-${sectorIndex}`,
-    giftId: `00000000-0000-4000-8000-${String(sectorIndex).padStart(12, "0")}`,
-  };
+    giftId: gift.id,
+    prizeSystemKey: gift.systemKey!,
+    prizeSnapshot,
+  });
 }
 
 function assertServiceSourceContracts(): void {
