@@ -25,8 +25,12 @@ export type WheelPublicStartResponse = {
   status: "ACTIVE";
   expiresAt: string;
   created: boolean;
-  sessionToken: string;
   animation: WheelPublicAnimationResult;
+};
+
+/** Internal start result: public fields + session credential for HttpOnly cookie / tests. */
+export type WheelPublicStartServiceResult = WheelPublicStartResponse & {
+  sessionToken: string;
 };
 
 export type WheelPublicResultResponse = {
@@ -64,6 +68,7 @@ const FORBIDDEN_PUBLIC_KEYS = [
   "participantPhoneHash",
   "attemptIdHash",
   "tokenHash",
+  "sessionToken",
   "prizeSystemKey",
   "serverAssignment",
   "campaignKey",

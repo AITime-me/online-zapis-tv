@@ -38,6 +38,29 @@ function assertBookingRequestPassesDbThroughCompleteFlow(): void {
   assert.match(booking, /resolveClientForLead\([\s\S]*db: tx/);
   assert.match(booking, /db: input\.db/);
 
+  // Early idempotent path inside createBookingRequest must pass the injectable db
+  // into assertIdempotentGameRetryAllowed (not only the P2002 helper path).
+  const earlyIdempotentRetry = booking.match(
+    /const existing = await findIdempotentBookingRequest\([\s\S]*?if \(resolvedGamePlayId\) \{\s*if \(!input\.request\) \{[\s\S]*?await assertIdempotentGameRetryAllowed\(\{([\s\S]*?)\}\);/,
+  );
+  assert.ok(
+    earlyIdempotentRetry,
+    "createBookingRequest early idempotent retry call site must exist",
+  );
+  assert.match(
+    earlyIdempotentRetry[1]!,
+    /db:\s*input\.db/,
+    "early idempotent assertIdempotentGameRetryAllowed must receive db: input.db",
+  );
+  assert.match(
+    booking,
+    /async function assertIdempotentGameRetryAllowed\(input: \{[\s\S]*?db\?: PrismaClient \| Prisma\.TransactionClient/,
+  );
+  assert.match(
+    booking,
+    /loadGamePlayForBooking\(input\.gamePlayId,\s*input\.db\)/,
+  );
+
   const wheel = read("src/services/WheelPublicGameService.ts");
   assert.match(wheel, /clientPhone: phoneCheck\.bookingPhone/);
   assert.doesNotMatch(wheel, /clientPhone: phoneCheck\.canonicalPhone/);

@@ -974,6 +974,7 @@ export async function createBookingRequest(
         request: input.request,
         gamePlayId: resolvedGamePlayId,
         bookingRequestId: existing.id,
+        db: input.db,
       });
     }
 

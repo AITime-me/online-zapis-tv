@@ -56,7 +56,6 @@ export async function POST(request: Request) {
       status: result.status,
       expiresAt: result.expiresAt,
       created: result.created,
-      sessionToken: result.sessionToken,
       animation: result.animation,
     });
     applyCookieOperations(response, result.cookieOperations);

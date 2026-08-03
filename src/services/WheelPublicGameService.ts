@@ -46,6 +46,7 @@ import {
   type WheelPublicResultResponse,
   type WheelPublicSessionStatus,
   type WheelPublicStartResponse,
+  type WheelPublicStartServiceResult,
 } from "@/lib/game/wheel/wheel-public-dto";
 import { assertWheelSessionPhoneMatches } from "@/lib/game/wheel/wheel-public-session-phone";
 import type { WheelAwareGiftSnapshot } from "@/lib/game/wheel/wheel-gift-snapshot";
@@ -253,7 +254,7 @@ export async function startWheelPublicGame(input: {
   db?: PrismaClient;
   env?: NodeJS.ProcessEnv;
   isGameEnabled?: boolean;
-}): Promise<WheelPublicStartResponse & { cookieOperations: CookieOperation[] }> {
+}): Promise<WheelPublicStartServiceResult & { cookieOperations: CookieOperation[] }> {
   const now = input.now ?? new Date();
   const db = input.db ?? defaultPrisma;
 
@@ -363,11 +364,14 @@ export async function startWheelPublicGame(input: {
     status: "ACTIVE",
     expiresAt: registered.session.expiresAt,
     created: registered.session.created,
-    sessionToken: registered.session.sessionToken,
     animation,
   };
   assertSafeWheelPublicPayload(response);
-  return { ...response, cookieOperations };
+  return {
+    ...response,
+    sessionToken: registered.session.sessionToken,
+    cookieOperations,
+  };
 }
 
 export async function getWheelPublicResult(input: {

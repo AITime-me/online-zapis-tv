@@ -85,6 +85,155 @@ function assertStrictAssignmentInRegister(): void {
   );
 }
 
+/** Public success keys for POST /api/game/wheel/start (WheelPublicStartResponse). */
+const WHEEL_START_PUBLIC_JSON_KEYS = [
+  "ok",
+  "status",
+  "expiresAt",
+  "created",
+  "animation",
+] as const;
+
+/**
+ * Forbid leaking WheelPublicStartServiceResult into HTTP JSON.
+ * Allows result.cookieOperations only via applyCookieOperations (HttpOnly cookies).
+ */
+function assertWheelStartRouteForbidsInternalResultLeak(startRoute: string): void {
+  assert.doesNotMatch(
+    startRoute,
+    /NextResponse\.json\(\s*result\s*[,)]/,
+    "public /start must not return NextResponse.json(result)",
+  );
+  assert.doesNotMatch(
+    startRoute,
+    /\.\.\.\s*result\b/,
+    "public /start must not spread service result (...result) into JSON",
+  );
+  assert.doesNotMatch(
+    startRoute,
+    /NextResponse\.json\([\s\S]*?\bsessionToken\s*:/,
+    "public /start JSON must not include sessionToken",
+  );
+  assert.doesNotMatch(
+    startRoute,
+    /NextResponse\.json\([\s\S]*?\bcookieOperations\s*:/,
+    "public /start JSON must not include cookieOperations",
+  );
+  assert.doesNotMatch(
+    startRoute,
+    /sessionToken:\s*result\.sessionToken/,
+    "public /start must not assign result.sessionToken into JSON",
+  );
+}
+
+function assertWheelStartRouteAllowlistedPublicPayload(startRoute: string): void {
+  // Cookie path stays internal — raw token never needs to appear in route source.
+  assert.match(
+    startRoute,
+    /applyCookieOperations\(\s*response\s*,\s*result\.cookieOperations\s*\)/,
+    "start route must set HttpOnly cookies via result.cookieOperations",
+  );
+
+  const success = startRoute.match(
+    /NextResponse\.json\(\s*\{\s*ok:\s*true\s*,([\s\S]*?)\}\s*\)/,
+  );
+  assert.ok(
+    success,
+    "success /start response must use explicit NextResponse.json({ ok: true, ... })",
+  );
+  const body = `ok: true,${success[1]}`;
+  assert.doesNotMatch(
+    body,
+    /\.\.\./,
+    "success /start JSON object must not use object spread",
+  );
+  assert.doesNotMatch(body, /\bsessionToken\b/);
+  assert.doesNotMatch(body, /\bcookieOperations\b/);
+
+  const keys = [
+    ...body.matchAll(/(?:^|[,{])\s*([A-Za-z_][\w]*)\s*:/g),
+  ].map((match) => match[1]!);
+  const uniqueKeys = [...new Set(keys)];
+  for (const key of uniqueKeys) {
+    assert.ok(
+      (WHEEL_START_PUBLIC_JSON_KEYS as readonly string[]).includes(key),
+      `unexpected public /start JSON key: ${key}`,
+    );
+  }
+  for (const required of WHEEL_START_PUBLIC_JSON_KEYS) {
+    assert.ok(
+      uniqueKeys.includes(required),
+      `missing required public /start JSON key: ${required}`,
+    );
+  }
+  assert.match(
+    body,
+    /status:\s*result\.status/,
+  );
+  assert.match(
+    body,
+    /expiresAt:\s*result\.expiresAt/,
+  );
+  assert.match(
+    body,
+    /created:\s*result\.created/,
+  );
+  assert.match(
+    body,
+    /animation:\s*result\.animation/,
+  );
+}
+
+function assertWheelStartRoutePublicJsonContract(startRoute: string): void {
+  assertWheelStartRouteForbidsInternalResultLeak(startRoute);
+  assertWheelStartRouteAllowlistedPublicPayload(startRoute);
+}
+
+function assertWheelStartRouteLeakGuardsSelfTest(): void {
+  assert.throws(
+    () =>
+      assertWheelStartRouteForbidsInternalResultLeak(
+        "NextResponse.json(result)",
+      ),
+    /NextResponse\.json\(result\)/,
+  );
+  assert.throws(
+    () =>
+      assertWheelStartRouteForbidsInternalResultLeak(
+        "NextResponse.json({ ...result })",
+      ),
+    /\.\.\.\s*result/,
+  );
+  assert.throws(
+    () =>
+      assertWheelStartRouteForbidsInternalResultLeak(
+        "NextResponse.json({ ok: true, animation: result.animation, ...result })",
+      ),
+    /\.\.\.\s*result/,
+  );
+  assert.throws(
+    () =>
+      assertWheelStartRouteForbidsInternalResultLeak(
+        "const payload = { ...result };\nNextResponse.json(payload)",
+      ),
+    /\.\.\.\s*result/,
+  );
+  assert.throws(
+    () =>
+      assertWheelStartRouteForbidsInternalResultLeak(
+        "NextResponse.json({ ok: true, sessionToken: result.sessionToken })",
+      ),
+    /sessionToken/,
+  );
+  assert.throws(
+    () =>
+      assertWheelStartRouteForbidsInternalResultLeak(
+        "NextResponse.json({ ok: true, cookieOperations: result.cookieOperations })",
+      ),
+    /cookieOperations/,
+  );
+}
+
 function assertPublicContracts(): void {
   assert.equal(canActivateGameCatalog("wheel_of_fortune", "active"), true);
   assert.ok(PUBLIC_MUTATING_API_PATHS.has("/api/game/wheel/start"));
@@ -151,6 +300,31 @@ function assertPublicContracts(): void {
       ok: true,
       serverAssignment: { sectorIndex: 1 },
     }),
+  );
+  assert.throws(
+    () => assertSafeWheelPublicPayload({ ok: true, sessionToken: "secret" }),
+    /sessionToken/,
+  );
+
+  assertWheelStartRouteLeakGuardsSelfTest();
+  const startRoute = read("src/app/api/game/wheel/start/route.ts");
+  assertWheelStartRoutePublicJsonContract(startRoute);
+
+  const dto = read("src/lib/game/wheel/wheel-public-dto.ts");
+  assert.match(dto, /"sessionToken"/);
+  assert.match(dto, /FORBIDDEN_PUBLIC_KEYS[\s\S]*sessionToken/);
+  const startResponseType = dto.match(
+    /export type WheelPublicStartResponse = \{([^}]+)\}/,
+  );
+  assert.ok(startResponseType, "WheelPublicStartResponse type must exist");
+  assert.doesNotMatch(
+    startResponseType[1]!,
+    /sessionToken|cookieOperations/,
+    "WheelPublicStartResponse must not declare credential fields",
+  );
+  assert.match(
+    dto,
+    /export type WheelPublicStartServiceResult = WheelPublicStartResponse & \{\s*sessionToken: string;/,
   );
 
   const biorevitalizant = DEFAULT_WHEEL_PRIZE_DEFINITIONS.find(
@@ -649,8 +823,24 @@ async function assertFakePrismaPublicFlow(): Promise<void> {
   assert.equal(started.animation.totalSectors, 16);
   assert.ok(started.animation.sectorIndex >= 0);
   assert.ok(started.animation.sectorIndex <= 15);
-  assertSafeWheelPublicPayload(started);
-  assert.doesNotMatch(JSON.stringify(started), /prizeSystemKey|HMAC|probability|attemptIdHash/);
+  // Public JSON contract excludes sessionToken; service still returns it for cookies/tests.
+  assertSafeWheelPublicPayload({
+    ok: started.ok,
+    status: started.status,
+    expiresAt: started.expiresAt,
+    created: started.created,
+    animation: started.animation,
+  });
+  assert.doesNotMatch(
+    JSON.stringify({
+      ok: started.ok,
+      status: started.status,
+      expiresAt: started.expiresAt,
+      created: started.created,
+      animation: started.animation,
+    }),
+    /prizeSystemKey|HMAC|probability|attemptIdHash|sessionToken/,
+  );
   assert.equal(fake.getCreateCalls(), 1);
   assert.equal(fake.sessions[0]!.browserVisitorHash, VISITOR_HASH);
 
