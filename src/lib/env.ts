@@ -67,6 +67,12 @@ export type Env = z.infer<typeof baseEnvSchema> & {
   AUTH_SECRET?: string;
   AUTH_URL?: string;
   SCHEDULE_VIEW_TOKEN?: string;
+  /**
+   * Optional at schema load-time (CI/public runtime).
+   * `/api/internal/bot/v1/*` fail-closed via bot-internal-auth helper if unset/short.
+   * See docs/architecture/bot-internal-api-pr-a.md.
+   */
+  BOT_INTERNAL_API_TOKEN?: string;
 };
 
 function assertProductionDebugDisabled(): void {

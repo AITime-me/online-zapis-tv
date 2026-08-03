@@ -32,6 +32,11 @@ export function requiresAdminCsrfProtection(
     return false;
   }
 
+  // S2S bot routes use Bearer auth; browser CSRF/same-origin does not apply.
+  if (pathname.startsWith("/api/internal/")) {
+    return false;
+  }
+
   if (PUBLIC_MUTATING_API_PATHS.has(pathname)) {
     return false;
   }

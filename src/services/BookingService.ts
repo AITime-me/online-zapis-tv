@@ -69,6 +69,7 @@ import {
   resolveServiceTimingForMaster,
   resolveTimingFromLoadedParts,
 } from "@/services/ServiceTimingService";
+import { getPublicStudioSettings } from "@/services/StudioSettingsService";
 
 export type {
   BookingCatalogCategory,
@@ -85,11 +86,19 @@ export type BookingPolicyDb = Pick<
 export type BookingPolicyRuntime = {
   db: BookingPolicyDb;
   resolveTiming: typeof resolveServiceTimingForMaster;
+  /** Studio kill-switch; defaults to StudioSettings.isOnlineBookingEnabled. */
+  isStudioOnlineBookingEnabled?: () => Promise<boolean>;
 };
+
+async function defaultIsStudioOnlineBookingEnabled(): Promise<boolean> {
+  const settings = await getPublicStudioSettings();
+  return settings.isOnlineBookingEnabled === true;
+}
 
 const DEFAULT_BOOKING_POLICY_RUNTIME: BookingPolicyRuntime = {
   db: prisma,
   resolveTiming: resolveServiceTimingForMaster,
+  isStudioOnlineBookingEnabled: defaultIsStudioOnlineBookingEnabled,
 };
 
 export type OnlineBookingInput = {
@@ -121,6 +130,18 @@ export class OnlineServiceUnavailableError extends AppointmentValidationError {
   constructor(message = ONLINE_SERVICE_UNAVAILABLE_MESSAGE) {
     super(message);
     this.name = SERVICE_UNAVAILABLE_CODE;
+  }
+}
+
+/**
+ * Enforces StudioSettings.isOnlineBookingEnabled for self-booking paths.
+ * Manager-request intake is intentionally out of scope (stays available).
+ */
+export async function assertStudioOnlineBookingEnabled(
+  isEnabled: () => Promise<boolean> = defaultIsStudioOnlineBookingEnabled,
+): Promise<void> {
+  if ((await isEnabled()) !== true) {
+    throw new OnlineServiceUnavailableError();
   }
 }
 
@@ -330,6 +351,10 @@ export async function assertOnlineBookable(
   serviceId: string,
   runtime: BookingPolicyRuntime = DEFAULT_BOOKING_POLICY_RUNTIME,
 ): Promise<{ durationMinutes: number; breakAfterMinutes: number }> {
+  await assertStudioOnlineBookingEnabled(
+    runtime.isStudioOnlineBookingEnabled ?? defaultIsStudioOnlineBookingEnabled,
+  );
+
   const [service, master, masterService, timing] = await Promise.all([
     runtime.db.service.findUnique({
       where: { id: serviceId },
