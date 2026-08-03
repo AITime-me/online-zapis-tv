@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { PrismaClient } from "@prisma/client";
+import { buildIsolatedMigrateEnv } from "./wheel-isolated-env";
 
 export type EphemeralPostgres = {
   databaseUrl: string;
@@ -97,11 +98,16 @@ export async function startEphemeralPostgres(
   return null;
 }
 
+/**
+ * Runs `prisma migrate deploy` with an allowlisted isolated env.
+ * `databaseUrl` must be the ephemeral postgres URL from startEphemeralPostgres —
+ * never a caller-shell database URL or secret.
+ */
 export function runPrismaMigrateDeploy(databaseUrl: string): void {
   const migrate = spawnSync("npx", ["prisma", "migrate", "deploy"], {
     encoding: "utf8",
     timeout: 300_000,
-    env: { ...process.env, DATABASE_URL: databaseUrl },
+    env: buildIsolatedMigrateEnv(databaseUrl),
     shell: true,
   });
   if (migrate.status !== 0) {

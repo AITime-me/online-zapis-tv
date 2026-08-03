@@ -63,7 +63,24 @@ export function buildIsolatedBuildEnv(): NodeJS.ProcessEnv {
   };
 }
 
-/** Env for `next start` — only ephemeral DATABASE_URL from harness postgres. */
+/**
+ * Env for `prisma migrate deploy` against ephemeral postgres.
+ * Never spreads caller process.env; never reads the caller-shell database URL.
+ */
+export function buildIsolatedMigrateEnv(
+  ephemeralDatabaseUrl: string,
+): NodeJS.ProcessEnv {
+  return {
+    ...buildIsolatedBaseEnv(),
+    NODE_ENV: "test",
+    DATABASE_URL: ephemeralDatabaseUrl,
+  };
+}
+
+/**
+ * Env for standalone `node .next/standalone/server.js`.
+ * Only ephemeral DATABASE_URL from harness postgres — never caller shell.
+ */
 export function buildIsolatedRuntimeEnv(
   port: number,
   ephemeralDatabaseUrl: string,
@@ -72,6 +89,8 @@ export function buildIsolatedRuntimeEnv(
   return {
     ...buildIsolatedBaseEnv(),
     NODE_ENV: "production",
+    PORT: String(port),
+    HOSTNAME: "127.0.0.1",
     DATABASE_URL: ephemeralDatabaseUrl,
     AUTH_URL: baseUrl,
     PLAYWRIGHT_BASE_URL: baseUrl,
@@ -90,7 +109,7 @@ const PLAYWRIGHT_ENV_KEYS = [
   "WHEEL_E2E_INVALID_SLUG",
 ] as const;
 
-/** Minimal env passed to Playwright (host or docker -e). No DATABASE_URL. */
+/** Minimal env passed to Playwright in the current process/container. No DATABASE_URL. */
 export function buildIsolatedPlaywrightEnv(
   runtimeEnv: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
@@ -102,16 +121,4 @@ export function buildIsolatedPlaywrightEnv(
     }
   }
   return out;
-}
-
-export function playwrightDockerEnvArgs(runtimeEnv: NodeJS.ProcessEnv): string[] {
-  const env = buildIsolatedPlaywrightEnv(runtimeEnv);
-  const args: string[] = [];
-  for (const key of PLAYWRIGHT_ENV_KEYS) {
-    const value = env[key];
-    if (value) {
-      args.push("-e", `${key}=${value}`);
-    }
-  }
-  return args;
 }
