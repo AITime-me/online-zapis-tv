@@ -36,6 +36,8 @@
     "test:security:open-game-phone-catalog-preflight": "tsx scripts/security-open-game-phone-catalog-preflight-check.ts",
     "test:security:game-tier-foundation": "tsx scripts/security-game-tier-foundation-check.ts",
     "test:security:game-gift-activation": "tsx scripts/security-game-gift-activation-check.ts",
+    "test:security:wheel-of-fortune-foundation": "tsx --import ./scripts/lib/stub-server-only.ts scripts/security-wheel-of-fortune-foundation-check.ts",
+    "test:security:wheel-phone-attempt-db": "tsx --import ./scripts/lib/stub-server-only.ts scripts/security-wheel-phone-attempt-db-check.ts",
     "test:security:csrf-coverage": "tsx scripts/security-csrf-coverage-check.ts",
     "test:security:safe-callback-url": "tsx scripts/security-safe-callback-url-check.ts",
     "test:security:env-auth-url": "tsx scripts/security-env-auth-url-check.ts",

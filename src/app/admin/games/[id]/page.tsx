@@ -3,7 +3,11 @@ import { notFound } from "next/navigation";
 import { requireAdminSection } from "@/lib/auth/session";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { GamePanel } from "@/components/admin/game-panel";
-import { getGameAdminPageData } from "@/services/GameAdminService";
+import { WheelFortunePanel } from "@/components/admin/wheel-fortune-panel";
+import {
+  getGameAdminPageData,
+  getWheelAdminPageData,
+} from "@/services/GameAdminService";
 import {
   GameCatalogNotFoundError,
   getGameCatalogById,
@@ -66,6 +70,8 @@ export default async function GameDetailAdminPage({ params }: GameDetailPageProp
 
       {game.type === "catch_time" && game.legacyConfigId ? (
         <CatchTimeEditor gameCatalogId={game.id} />
+      ) : game.type === "wheel_of_fortune" ? (
+        <WheelEditor gameCatalogId={game.id} />
       ) : (
         <section className="rounded border border-dashed border-zinc-300 bg-zinc-50 px-4 py-8 text-center text-sm text-zinc-600">
           Для этого типа игры пока нет редактора механики. Игра может существовать
@@ -83,6 +89,20 @@ async function CatchTimeEditor({ gameCatalogId }: { gameCatalogId: string }) {
       gameCatalogId={gameCatalogId}
       initialConfig={config}
       initialGifts={gifts}
+    />
+  );
+}
+
+async function WheelEditor({ gameCatalogId }: { gameCatalogId: string }) {
+  const data = await getWheelAdminPageData(gameCatalogId);
+  return (
+    <WheelFortunePanel
+      gameCatalogId={gameCatalogId}
+      initialGifts={data.gifts}
+      initialWheelConfig={data.wheelConfig}
+      initialTitle={data.title}
+      initialSlug={data.slug}
+      initialDescription={data.description}
     />
   );
 }

@@ -1,3 +1,4 @@
+import { Prisma, type GamePrizeType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import {
   assertCreateGiftCatalogId,
@@ -10,11 +11,21 @@ import {
   validateGiftActivationInput,
   type GameGiftActivationMode,
 } from "@/lib/game/gift-activation";
+import {
+  buildWheelCatalogConfigDto,
+  ensureDefaultWheelPrizes,
+  giftsToSectorGifts,
+  mapPrizeRulesJson,
+  normalizePrizeRulesInput,
+  normalizePrizeType,
+  normalizeSystemKey,
+} from "@/lib/game/wheel/wheel-admin";
 import type {
   GameConfigDto,
   GameConfigWriteInput,
   GameGiftDto,
   GameGiftWriteInput,
+  WheelCatalogConfigDto,
 } from "@/types/game-admin";
 import { syncCatchTimeCatalogFromLegacyConfig } from "@/services/GameCatalogService";
 
@@ -60,6 +71,10 @@ function mapGift(row: {
   activationMode: GameGiftActivationMode;
   minCourseSessions: number | null;
   activationConditionText: string;
+  systemKey: string | null;
+  prizeType: GamePrizeType | null;
+  prizeRules: Prisma.JsonValue | null;
+  sortOrder: number;
   gameCatalogId: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -79,6 +94,10 @@ function mapGift(row: {
     activationMode: row.activationMode,
     minCourseSessions: row.minCourseSessions,
     activationConditionText: row.activationConditionText,
+    systemKey: row.systemKey ?? null,
+    prizeType: row.prizeType ?? null,
+    prizeRules: mapPrizeRulesJson(row.prizeRules),
+    sortOrder: row.sortOrder ?? 0,
     gameCatalogId: row.gameCatalogId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -124,6 +143,73 @@ export async function getGameAdminPageData(gameCatalogId: string): Promise<{
     config: mapConfig(configRow),
     gifts: gifts.map(mapGift),
     gameCatalogId: catalogId,
+  };
+}
+
+export async function getWheelAdminPageData(gameCatalogId: string): Promise<{
+  gifts: GameGiftDto[];
+  wheelConfig: WheelCatalogConfigDto;
+  gameCatalogId: string;
+  title: string;
+  slug: string;
+  description: string | null;
+  status: string;
+}> {
+  const catalogId = await requireGameCatalogId(gameCatalogId);
+  const catalog = await prisma.gameCatalog.findUnique({
+    where: { id: catalogId },
+    select: {
+      id: true,
+      title: true,
+      slug: true,
+      description: true,
+      status: true,
+      type: true,
+      settings: true,
+    },
+  });
+  if (!catalog || catalog.type !== "WHEEL_OF_FORTUNE") {
+    throw new GameAdminNotFoundError("Каталог колеса фортуны не найден");
+  }
+
+  const gifts = await prisma.gameGift.findMany({
+    where: { gameCatalogId: catalogId },
+    orderBy: [{ sortOrder: "asc" }, { probability: "desc" }, { createdAt: "asc" }],
+  });
+  const mapped = gifts.map(mapGift);
+
+  return {
+    gifts: mapped,
+    wheelConfig: buildWheelCatalogConfigDto(
+      catalog.settings,
+      giftsToSectorGifts(mapped),
+    ),
+    gameCatalogId: catalogId,
+    title: catalog.title,
+    slug: catalog.slug,
+    description: catalog.description,
+    status: catalog.status,
+  };
+}
+
+export async function seedDefaultWheelPrizesForCatalog(
+  gameCatalogId: string,
+): Promise<{ created: number; skipped: number; wheelConfig: WheelCatalogConfigDto; gifts: GameGiftDto[] }> {
+  const catalogId = await requireGameCatalogId(gameCatalogId);
+  let seeded: { created: number; skipped: number };
+  try {
+    seeded = await ensureDefaultWheelPrizes(catalogId);
+  } catch (error) {
+    throw new GameAdminValidationError(
+      error instanceof Error ? error.message : "Не удалось создать призы по умолчанию",
+    );
+  }
+  const data = await getWheelAdminPageData(catalogId);
+  return {
+    created: seeded.created,
+    skipped: seeded.skipped,
+    wheelConfig: data.wheelConfig,
+    gifts: data.gifts,
   };
 }
 
@@ -235,6 +321,21 @@ export async function createGameGift(
 
   const probability = Math.max(0, toInt(input.probability, 0));
   const requiredPremiumLevel = Math.max(0, toInt(input.requiredPremiumLevel, 0));
+  const sortOrder = Math.max(0, toInt(input.sortOrder, 0));
+
+  let systemKey: string | null = null;
+  let prizeType: GamePrizeType | null = null;
+  let prizeRules: Prisma.InputJsonValue | typeof Prisma.JsonNull | undefined =
+    undefined;
+  try {
+    systemKey = normalizeSystemKey(input.systemKey);
+    prizeType = normalizePrizeType(input.prizeType);
+    prizeRules = normalizePrizeRulesInput(input.prizeRules);
+  } catch (error) {
+    throw new GameAdminValidationError(
+      error instanceof Error ? error.message : "Некорректные поля приза",
+    );
+  }
 
   const activation = validateGiftActivationInput({
     activationMode: input.activationMode ?? "SINGLE_PAID_SERVICE",
@@ -260,6 +361,10 @@ export async function createGameGift(
       activationMode: activation.value.activationMode,
       minCourseSessions: activation.value.minCourseSessions,
       activationConditionText: activation.value.activationConditionText,
+      systemKey,
+      prizeType,
+      ...(prizeRules !== undefined ? { prizeRules } : {}),
+      sortOrder,
       gameCatalogId: catalogId,
     },
   });
@@ -346,6 +451,29 @@ export async function updateGameGift(
     );
   }
 
+  let nextSystemKey: string | null | undefined;
+  let nextPrizeType: GamePrizeType | null | undefined;
+  let nextPrizeRules: Prisma.InputJsonValue | typeof Prisma.JsonNull | undefined;
+  let nextSortOrder: number | undefined;
+  try {
+    if (input.systemKey !== undefined) {
+      nextSystemKey = normalizeSystemKey(input.systemKey);
+    }
+    if (input.prizeType !== undefined) {
+      nextPrizeType = normalizePrizeType(input.prizeType);
+    }
+    if (input.prizeRules !== undefined) {
+      nextPrizeRules = normalizePrizeRulesInput(input.prizeRules);
+    }
+    if (input.sortOrder !== undefined) {
+      nextSortOrder = Math.max(0, toInt(input.sortOrder, existing.sortOrder ?? 0));
+    }
+  } catch (error) {
+    throw new GameAdminValidationError(
+      error instanceof Error ? error.message : "Некорректные поля приза",
+    );
+  }
+
   const updated = await prisma.gameGift.update({
     where: { id },
     data: {
@@ -379,6 +507,10 @@ export async function updateGameGift(
             activationConditionText,
           }
         : {}),
+      ...(nextSystemKey !== undefined ? { systemKey: nextSystemKey } : {}),
+      ...(nextPrizeType !== undefined ? { prizeType: nextPrizeType } : {}),
+      ...(nextPrizeRules !== undefined ? { prizeRules: nextPrizeRules } : {}),
+      ...(nextSortOrder !== undefined ? { sortOrder: nextSortOrder } : {}),
       gameCatalogId: catalogId,
     },
   });

@@ -21,6 +21,8 @@ import {
   C2_SERVER_TIER_POLICY,
   PREMIUM_DISABLED_READINESS_WARNING,
 } from "@/lib/game/tier/server-tier-policy";
+import { buildDefaultWheelCatalogSettings } from "@/lib/game/wheel/default-prizes";
+import { ensureDefaultWheelPrizes } from "@/lib/game/wheel/wheel-admin";
 
 export class GameCatalogValidationError extends Error {
   constructor(message: string) {
@@ -217,6 +219,11 @@ export async function createGameCatalog(
     );
   }
 
+  const defaultWheelSettings =
+    type === "wheel_of_fortune" && input.settings === undefined
+      ? buildDefaultWheelCatalogSettings()
+      : null;
+
   const created = await prisma.gameCatalog.create({
     data: {
       slug,
@@ -227,11 +234,23 @@ export async function createGameCatalog(
       settings:
         input.settings !== undefined
           ? (input.settings as Prisma.InputJsonValue)
-          : undefined,
+          : defaultWheelSettings
+            ? (defaultWheelSettings as Prisma.InputJsonValue)
+            : undefined,
       externalUrl: input.externalUrl?.trim() || null,
       legacyConfigId: null,
+      ...(type === "wheel_of_fortune"
+        ? {
+            campaignKey: "permanent-wheel",
+            rulesVersion: "1",
+          }
+        : {}),
     },
   });
+
+  if (type === "wheel_of_fortune") {
+    await ensureDefaultWheelPrizes(created.id);
+  }
 
   return mapGameCatalog(created, origin);
 }

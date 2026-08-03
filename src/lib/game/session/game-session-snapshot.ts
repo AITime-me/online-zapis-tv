@@ -17,7 +17,7 @@ export type GiftSnapshot = {
   image: string | null;
   priority: string;
   cardStyle: string;
-  ruleType: "weighted_pool";
+  ruleType: "weighted_pool" | "wheel_sector";
   assignedValue: string | null;
   assignedAt: string;
   /**
@@ -82,6 +82,17 @@ export function buildGiftSnapshot(
     minCourseSessions: activation.minCourseSessions,
     activationConditionText: activation.activationConditionText,
     validityDays: activation.validityDays,
+  };
+}
+
+export function buildGiftSnapshotWithRuleType(
+  gift: GiftSnapshotSource,
+  assignedAt: Date,
+  ruleType: GiftSnapshot["ruleType"],
+): GiftSnapshot {
+  return {
+    ...buildGiftSnapshot(gift, assignedAt),
+    ruleType,
   };
 }
 
@@ -250,6 +261,9 @@ export function parseGiftSnapshot(value: unknown): GiftSnapshot | null {
 
   const activation = resolveActivationFromPartial(snapshot);
 
+  const ruleType =
+    snapshot.ruleType === "wheel_sector" ? "wheel_sector" : "weighted_pool";
+
   return {
     giftId: snapshot.giftId,
     name: snapshot.name,
@@ -257,7 +271,7 @@ export function parseGiftSnapshot(value: unknown): GiftSnapshot | null {
     image: snapshot.image ?? null,
     priority: snapshot.priority,
     cardStyle: snapshot.cardStyle,
-    ruleType: "weighted_pool",
+    ruleType,
     assignedValue: snapshot.assignedValue ?? null,
     assignedAt: snapshot.assignedAt,
     activationMode: activation.activationMode,
