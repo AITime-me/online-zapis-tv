@@ -1,3 +1,5 @@
+import type { WheelSettingsV1 } from "@/lib/game/tier/wheel-settings-contract";
+
 export type GameCatalogSettingsV1 = {
   version: 1;
   campaign?: {
@@ -9,7 +11,8 @@ export type GameCatalogSettingsV1 = {
     weight: number;
   }>;
   directionPolicy?: "cosmetic";
-  wheel?: unknown;
+  /** Wheel of Fortune settings; ignored by CATCH_TIME. */
+  wheel?: WheelSettingsV1 | unknown;
 };
 
 export type GameCatalogSettingsStatus = "valid" | "safe-default" | "invalid";

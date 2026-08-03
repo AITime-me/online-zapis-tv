@@ -33,6 +33,10 @@ export type GameGiftDto = {
   activationMode: "SINGLE_PAID_SERVICE" | "COURSE_MIN_SESSIONS";
   minCourseSessions: number | null;
   activationConditionText: string;
+  systemKey: string | null;
+  prizeType: "PERCENT_DISCOUNT" | "GIFT_SERVICE" | "SERVICE_UPGRADE" | null;
+  prizeRules: Record<string, unknown> | null;
+  sortOrder: number;
   gameCatalogId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -45,3 +49,11 @@ export type GameGiftWriteInput = Partial<
   shortDescription: string;
 };
 
+export type WheelCatalogConfigDto = {
+  expectedSectorCount: number;
+  confirmWindowDays: number;
+  procedureWindowDays: number;
+  activeSectorSum: number;
+  sectorConfigOk: boolean;
+  sectorConfigError: string | null;
+};

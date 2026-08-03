@@ -1,7 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 
 /** Bump after Prisma schema changes so dev HMR does not keep a stale PrismaClient. */
-const PRISMA_CLIENT_CACHE_KEY = "bot-settings-log-retention-v1";
+const PRISMA_CLIENT_CACHE_KEY = "wheel-attempt-id-hash-v1";
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;

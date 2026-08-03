@@ -155,6 +155,16 @@ enum GameGiftActivationMode {
   COURSE_MIN_SESSIONS
 }
 
+/**
+ * Prize kind for Wheel of Fortune (and future mechanics).
+ * Null on legacy Catch-Time gifts — additive, non-breaking.
+ */
+enum GamePrizeType {
+  PERCENT_DISCOUNT
+  GIFT_SERVICE
+  SERVICE_UPGRADE
+}
+
 model User {
   id                String    @id @default(uuid()) @db.Uuid
   email             String    @unique
@@ -615,6 +625,15 @@ model GameGift {
   minCourseSessions         Int?                   @map("min_course_sessions")
   activationConditionText   String                 @default("") @map("activation_condition_text")
 
+  /**
+   * Wheel / extensible prize metadata. Null for Catch-Time gifts.
+   * Critical rules live in prizeRules JSON and are snapshotted at result time.
+   */
+  systemKey String?        @map("system_key")
+  prizeType GamePrizeType? @map("prize_type")
+  prizeRules Json?         @map("prize_rules")
+  sortOrder Int            @default(0) @map("sort_order")
+
   gameCatalogId String?      @map("game_catalog_id") @db.Uuid
   gameCatalog   GameCatalog? @relation(fields: [gameCatalogId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
@@ -627,6 +646,9 @@ model GameGift {
   @@index([probability])
   @@index([gameCatalogId])
   @@index([activationMode])
+  @@index([systemKey])
+  @@index([prizeType])
+  @@unique([gameCatalogId, systemKey])
   @@map("game_gifts")
 }
 
@@ -711,6 +733,21 @@ model GameSession {
   gameCatalogId      String            @map("game_catalog_id") @db.Uuid
   tokenHash          String?           @unique @map("token_hash") @db.VarChar(64)
   browserVisitorHash String?           @map("browser_visitor_hash") @db.VarChar(64)
+  /**
+   * Irreversible HMAC of normalized phone, scoped to catalog+campaign.
+   * Null for Catch-Time and unbound sessions. Never store plaintext phone here.
+   */
+  participantPhoneHash String? @map("participant_phone_hash") @db.VarChar(64)
+  /**
+   * Resolved non-empty campaign key snapshot at attempt registration.
+   * Paired with participantPhoneHash for unique participation.
+   */
+  campaignKeySnapshot String? @map("campaign_key_snapshot") @db.VarChar(64)
+  /**
+   * HMAC of client attemptId for idempotent spin retries.
+   * Null for Catch-Time. Never store plaintext attemptId.
+   */
+  attemptIdHash String? @map("attempt_id_hash") @db.VarChar(64)
   status             GameSessionStatus @default(ACTIVE)
   startedAt          DateTime          @default(now()) @map("started_at") @db.Timestamptz
   playExpiresAt      DateTime          @map("play_expires_at") @db.Timestamptz
@@ -728,6 +765,8 @@ model GameSession {
   @@index([status, playExpiresAt])
   @@index([status, claimExpiresAt])
   @@index([browserVisitorHash, gameCatalogId, startedAt])
+  @@index([participantPhoneHash])
+  @@index([attemptIdHash])
   @@map("game_sessions")
 }
 
