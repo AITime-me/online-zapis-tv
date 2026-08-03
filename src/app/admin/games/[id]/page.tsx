@@ -103,6 +103,7 @@ async function WheelEditor({ gameCatalogId }: { gameCatalogId: string }) {
       initialTitle={data.title}
       initialSlug={data.slug}
       initialDescription={data.description}
+      initialStatus={data.status}
     />
   );
 }

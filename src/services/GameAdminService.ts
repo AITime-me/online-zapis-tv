@@ -27,6 +27,7 @@ import type {
   GameGiftWriteInput,
   WheelCatalogConfigDto,
 } from "@/types/game-admin";
+import type { GameCatalogStatusDto } from "@/types/game-catalog";
 import { syncCatchTimeCatalogFromLegacyConfig } from "@/services/GameCatalogService";
 
 export class GameAdminValidationError extends Error {}
@@ -146,6 +147,21 @@ export async function getGameAdminPageData(gameCatalogId: string): Promise<{
   };
 }
 
+function mapWheelAdminStatusDto(
+  status: "DRAFT" | "ACTIVE" | "DISABLED" | "ARCHIVED",
+): GameCatalogStatusDto {
+  switch (status) {
+    case "ACTIVE":
+      return "active";
+    case "DISABLED":
+      return "disabled";
+    case "ARCHIVED":
+      return "archived";
+    default:
+      return "draft";
+  }
+}
+
 export async function getWheelAdminPageData(gameCatalogId: string): Promise<{
   gifts: GameGiftDto[];
   wheelConfig: WheelCatalogConfigDto;
@@ -153,7 +169,7 @@ export async function getWheelAdminPageData(gameCatalogId: string): Promise<{
   title: string;
   slug: string;
   description: string | null;
-  status: string;
+  status: GameCatalogStatusDto;
 }> {
   const catalogId = await requireGameCatalogId(gameCatalogId);
   const catalog = await prisma.gameCatalog.findUnique({
@@ -188,7 +204,7 @@ export async function getWheelAdminPageData(gameCatalogId: string): Promise<{
     title: catalog.title,
     slug: catalog.slug,
     description: catalog.description,
-    status: catalog.status,
+    status: mapWheelAdminStatusDto(catalog.status),
   };
 }
 

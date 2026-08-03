@@ -37,6 +37,7 @@
     "test:security:game-tier-foundation": "tsx scripts/security-game-tier-foundation-check.ts",
     "test:security:game-gift-activation": "tsx scripts/security-game-gift-activation-check.ts",
     "test:security:wheel-of-fortune-foundation": "tsx --import ./scripts/lib/stub-security-batch-env.ts scripts/security-wheel-of-fortune-foundation-check.ts",
+    "test:security:wheel-admin-activation": "tsx scripts/security-wheel-admin-activation-check.ts",
     "test:security:wheel-phone-attempt-db": "tsx --import ./scripts/lib/stub-security-batch-env.ts scripts/security-wheel-phone-attempt-db-check.ts",
     "test:security:wheel-of-fortune-public": "tsx --import ./scripts/lib/stub-security-batch-env.ts scripts/security-wheel-of-fortune-public-check.ts",
     "test:security:wheel-public-complete-db": "tsx --import ./scripts/lib/stub-security-batch-env.ts scripts/security-wheel-public-complete-db-check.ts",
