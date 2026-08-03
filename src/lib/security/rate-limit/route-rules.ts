@@ -81,6 +81,12 @@ export const API_RATE_LIMIT_RULES: ApiRateLimitRouteRule[] = [
     match: (pathname, method) =>
       method === "GET" && startsWithAny(pathname, AVAILABILITY_CATALOG_PREFIXES),
   },
+  {
+    policyId: "botInternal",
+    match: (pathname, method) =>
+      method === "POST" &&
+      pathname.startsWith("/api/internal/bot/v1/"),
+  },
 ];
 
 export function resolveApiRateLimitPolicy(
@@ -130,6 +136,10 @@ export const RATE_LIMITED_API_PATHS = API_RATE_LIMIT_RULES.flatMap((rule) => {
         method: "GET",
         pathname,
       }));
+    case "botInternal":
+      return [
+        { method: "POST", pathname: "/api/internal/bot/v1/eligibility" },
+      ];
     default:
       return [];
   }

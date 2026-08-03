@@ -8,6 +8,7 @@ export type RateLimitPolicyId =
   | "gamePlay"
   | "gameSessionRead"
   | "availabilityCatalog"
+  | "botInternal"
   | "health"
   | "passwordResetRequest";
 

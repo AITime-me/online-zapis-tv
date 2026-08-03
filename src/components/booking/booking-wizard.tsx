@@ -524,6 +524,21 @@ export function BookingWizard() {
   };
 
   const selectServiceFromMaster = (service: BookingCatalogService) => {
+    // Same mode contract as selectService: studio-off / manager-only never
+    // opens the online date/slots path.
+    if (service.bookingMode === "MANAGER_ONLY") {
+      openManagerOnlyServiceRequest(
+        service.managerMasterId
+          ? service
+          : {
+              ...service,
+              managerMasterId: selection.master?.id ?? null,
+              managerMasterName: selection.master?.publicName ?? null,
+            },
+      );
+      return;
+    }
+
     const masterId = selection.master?.id;
     setSelection((prev) => ({
       ...prev,

@@ -53,6 +53,15 @@ export const RATE_LIMIT_POLICIES: Record<RateLimitPolicyId, RateLimitPolicy> = {
     windowMs: 60 * 1000,
     maxRequests: 120,
   },
+  /**
+   * Authenticated S2S bot internal API (Bearer).
+   * Separate bucket from public browser catalog/booking limits.
+   */
+  botInternal: {
+    id: "botInternal",
+    windowMs: 60 * 1000,
+    maxRequests: 120,
+  },
   health: {
     id: "health",
     windowMs: 60 * 1000,

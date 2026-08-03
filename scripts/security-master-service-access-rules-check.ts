@@ -546,6 +546,9 @@ function createBookingRuntime(options: {
         source: "service",
       };
     },
+    async isStudioOnlineBookingEnabled() {
+      return true;
+    },
   };
 }
 
@@ -590,6 +593,24 @@ async function testCatalogAndInternalRules(): Promise<void> {
         },
       }),
     ),
+  );
+
+  await assert.rejects(
+    () =>
+      booking.assertOnlineBookable(M1, S1, {
+        ...createBookingRuntime(),
+        async isStudioOnlineBookingEnabled() {
+          return false;
+        },
+      }),
+    (error: unknown) =>
+      error instanceof Error && error.name === "SERVICE_UNAVAILABLE",
+  );
+  await booking.assertStudioOnlineBookingEnabled(async () => true);
+  await assert.rejects(
+    () => booking.assertStudioOnlineBookingEnabled(async () => false),
+    (error: unknown) =>
+      error instanceof Error && error.name === "SERVICE_UNAVAILABLE",
   );
 
   const where = internal.internalEditorMasterServiceWhere(M1);

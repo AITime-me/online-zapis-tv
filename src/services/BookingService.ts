@@ -69,6 +69,7 @@ import {
   resolveServiceTimingForMaster,
   resolveTimingFromLoadedParts,
 } from "@/services/ServiceTimingService";
+import { getPublicStudioSettings } from "@/services/StudioSettingsService";
 
 export type {
   BookingCatalogCategory,
@@ -85,11 +86,19 @@ export type BookingPolicyDb = Pick<
 export type BookingPolicyRuntime = {
   db: BookingPolicyDb;
   resolveTiming: typeof resolveServiceTimingForMaster;
+  /** Studio kill-switch; defaults to StudioSettings.isOnlineBookingEnabled. */
+  isStudioOnlineBookingEnabled?: () => Promise<boolean>;
 };
+
+async function defaultIsStudioOnlineBookingEnabled(): Promise<boolean> {
+  const settings = await getPublicStudioSettings();
+  return settings.isOnlineBookingEnabled === true;
+}
 
 const DEFAULT_BOOKING_POLICY_RUNTIME: BookingPolicyRuntime = {
   db: prisma,
   resolveTiming: resolveServiceTimingForMaster,
+  isStudioOnlineBookingEnabled: defaultIsStudioOnlineBookingEnabled,
 };
 
 export type OnlineBookingInput = {
@@ -115,12 +124,29 @@ export type PublicSlotCalculationOptions = {
   loadOnlineFillTimings?: (
     masterId: string,
   ) => Promise<SlotChainTiming[] | null>;
+  /**
+   * Optional booking policy runtime (studio kill-switch memoization for month loops).
+   * Defaults to DEFAULT_BOOKING_POLICY_RUNTIME.
+   */
+  bookingPolicyRuntime?: BookingPolicyRuntime;
 };
 
 export class OnlineServiceUnavailableError extends AppointmentValidationError {
   constructor(message = ONLINE_SERVICE_UNAVAILABLE_MESSAGE) {
     super(message);
     this.name = SERVICE_UNAVAILABLE_CODE;
+  }
+}
+
+/**
+ * Enforces StudioSettings.isOnlineBookingEnabled for self-booking paths.
+ * Manager-request intake is intentionally out of scope (stays available).
+ */
+export async function assertStudioOnlineBookingEnabled(
+  isEnabled: () => Promise<boolean> = defaultIsStudioOnlineBookingEnabled,
+): Promise<void> {
+  if ((await isEnabled()) !== true) {
+    throw new OnlineServiceUnavailableError();
   }
 }
 
@@ -330,6 +356,10 @@ export async function assertOnlineBookable(
   serviceId: string,
   runtime: BookingPolicyRuntime = DEFAULT_BOOKING_POLICY_RUNTIME,
 ): Promise<{ durationMinutes: number; breakAfterMinutes: number }> {
+  await assertStudioOnlineBookingEnabled(
+    runtime.isStudioOnlineBookingEnabled ?? defaultIsStudioOnlineBookingEnabled,
+  );
+
   const [service, master, masterService, timing] = await Promise.all([
     runtime.db.service.findUnique({
       where: { id: serviceId },
@@ -498,6 +528,14 @@ type ServiceBookingModeResult = {
   managerMasterName: string | null;
 };
 
+export type ResolveServiceBookingModesOptions = {
+  /**
+   * When false, services with an ONLINE path are projected as MANAGER_ONLY
+   * (public catalog studio kill-switch). Defaults to true.
+   */
+  selfBookingEnabled?: boolean;
+};
+
 export async function canBookServiceOnline(
   serviceId: string,
   service: {
@@ -538,8 +576,10 @@ export async function canBookServiceOnline(
 export async function resolveServiceBookingModes(
   serviceIds: string[],
   runtime: BookingPolicyRuntime = DEFAULT_BOOKING_POLICY_RUNTIME,
+  options: ResolveServiceBookingModesOptions = {},
 ): Promise<Map<string, ServiceBookingModeResult>> {
   const result = new Map<string, ServiceBookingModeResult>();
+  const selfBookingEnabled = options.selfBookingEnabled ?? true;
 
   if (serviceIds.length === 0) {
     return result;
@@ -610,7 +650,7 @@ export async function resolveServiceBookingModes(
       }
     }
 
-    if (hasOnlinePath) {
+    if (hasOnlinePath && selfBookingEnabled) {
       result.set(serviceId, {
         bookingMode: "ONLINE",
         managerMasterId: null,
@@ -633,9 +673,16 @@ export async function resolveServiceBookingModes(
   return result;
 }
 
-export async function getBookingCatalog(): Promise<{
+export async function getBookingCatalog(
+  runtime: BookingPolicyRuntime = DEFAULT_BOOKING_POLICY_RUNTIME,
+): Promise<{
   categories: BookingCatalogCategory[];
 }> {
+  // One studio-settings read per catalog request (not per service).
+  const studioOnline =
+    (await (runtime.isStudioOnlineBookingEnabled ??
+      defaultIsStudioOnlineBookingEnabled)()) === true;
+
   const categories = await prisma.serviceCategory.findMany({
     where: { isActive: true, isPublic: true },
     orderBy: { sortOrder: "asc" },
@@ -663,7 +710,9 @@ export async function getBookingCatalog(): Promise<{
   const serviceIds = categories.flatMap((category) =>
     category.services.map((service) => service.id),
   );
-  const bookingModes = await resolveServiceBookingModes(serviceIds);
+  const bookingModes = await resolveServiceBookingModes(serviceIds, runtime, {
+    selfBookingEnabled: studioOnline,
+  });
 
   const defaultManagerOnly: ServiceBookingModeResult = {
     bookingMode: "MANAGER_ONLY",
@@ -744,24 +793,35 @@ export async function listServicesForMaster(
   masterId: string,
   runtime: BookingPolicyRuntime = DEFAULT_BOOKING_POLICY_RUNTIME,
 ): Promise<BookingCatalogService[]> {
-  const masterServices = await runtime.db.masterService.findMany({
-    where: onlinePublicMasterServiceWhere(masterId),
-    include: {
-      service: {
-        select: {
-          id: true,
-          publicName: true,
-          clientDescription: true,
-          durationMinutes: true,
-          breakAfterMinutes: true,
-          priceFrom: true,
-          priceTo: true,
-          category: { select: { name: true } },
+  // One studio-settings read per by-master services request (not per service).
+  const studioOnline =
+    (await (runtime.isStudioOnlineBookingEnabled ??
+      defaultIsStudioOnlineBookingEnabled)()) === true;
+
+  const [master, masterServices] = await Promise.all([
+    runtime.db.master.findUnique({
+      where: { id: masterId },
+      select: { id: true, publicName: true },
+    }),
+    runtime.db.masterService.findMany({
+      where: onlinePublicMasterServiceWhere(masterId),
+      include: {
+        service: {
+          select: {
+            id: true,
+            publicName: true,
+            clientDescription: true,
+            durationMinutes: true,
+            breakAfterMinutes: true,
+            priceFrom: true,
+            priceTo: true,
+            category: { select: { name: true } },
+          },
         },
       },
-    },
-    orderBy: [{ sortOrder: "asc" }, { service: { publicName: "asc" } }],
-  });
+      orderBy: [{ sortOrder: "asc" }, { service: { publicName: "asc" } }],
+    }),
+  ]);
 
   const services: BookingCatalogService[] = [];
 
@@ -776,6 +836,12 @@ export async function listServicesForMaster(
       entry.service.priceTo,
     );
 
+    // When studio self-booking is off, keep the service visible but hand off
+    // to manager-request with the selected master as preference.
+    const bookingMode: BookingServiceMode = studioOnline
+      ? "ONLINE"
+      : "MANAGER_ONLY";
+
     services.push({
       id: entry.service.id,
       publicName: entry.service.publicName,
@@ -785,9 +851,9 @@ export async function listServicesForMaster(
       priceLabel: price.priceLabel,
       basePrice: price.basePrice,
       categoryName: entry.service.category.name,
-      bookingMode: "ONLINE",
-      managerMasterId: null,
-      managerMasterName: null,
+      bookingMode,
+      managerMasterId: studioOnline ? null : masterId,
+      managerMasterName: studioOnline ? null : (master?.publicName ?? null),
     });
   }
 
@@ -801,7 +867,11 @@ export async function getAvailableTimeSlots(
   studioToday: string,
   options: PublicSlotCalculationOptions = {},
 ): Promise<string[]> {
-  const timing = await assertOnlineBookable(masterId, serviceId);
+  const timing = await assertOnlineBookable(
+    masterId,
+    serviceId,
+    options.bookingPolicyRuntime ?? DEFAULT_BOOKING_POLICY_RUNTIME,
+  );
   const context = await loadSlotContext(masterId, dateKey);
 
   if (!context) {
@@ -901,6 +971,18 @@ export async function getAvailableDaysInMonth(
   const futureDays = days.filter((dateKey) => dateKey >= studioToday);
   const availableDays: string[] = [];
 
+  // Resolve studio kill-switch once for the month loop (avoid N+1 StudioSettings reads).
+  const baseRuntime =
+    options.bookingPolicyRuntime ?? DEFAULT_BOOKING_POLICY_RUNTIME;
+  await assertStudioOnlineBookingEnabled(
+    baseRuntime.isStudioOnlineBookingEnabled ??
+      defaultIsStudioOnlineBookingEnabled,
+  );
+  const monthRuntime: BookingPolicyRuntime = {
+    ...baseRuntime,
+    isStudioOnlineBookingEnabled: async () => true,
+  };
+
   const loader =
     options.loadOnlineFillTimings ?? loadOnlineFillTimingsForMaster;
 
@@ -921,6 +1003,7 @@ export async function getAvailableDaysInMonth(
       {
         preloadedOnlineTimings,
         loadOnlineFillTimings: options.loadOnlineFillTimings,
+        bookingPolicyRuntime: monthRuntime,
       },
     );
     if (slots.length > 0) {
