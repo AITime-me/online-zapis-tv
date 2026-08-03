@@ -64,14 +64,16 @@ async function gotoActiveWheel(page: Page) {
 }
 
 async function acceptConsents(page: Page) {
-  const personal = page.getByLabel(/согласие на обработку персональных данных/i);
-  const offer = page.getByLabel(/ознакомлена с офертой/i);
-  if ((await personal.count()) > 0) {
-    await personal.check();
-  }
-  if ((await offer.count()) > 0) {
-    await offer.check();
-  }
+  // Key phrases live in <a> siblings outside <label> fragments, so tests must
+  // use explicit accessible names / test ids — never silent skip on miss.
+  const personal = page.getByTestId("legal-personal-data-consent");
+  const offer = page.getByTestId("legal-offer-acknowledgement");
+  await expect(personal).toBeVisible({ timeout: 10_000 });
+  await expect(offer).toBeVisible({ timeout: 10_000 });
+  await personal.check();
+  await offer.check();
+  await expect(personal).toBeChecked();
+  await expect(offer).toBeChecked();
 }
 
 async function fillLeadForm(page: Page, phone: string) {
@@ -82,9 +84,60 @@ async function fillLeadForm(page: Page, phone: string) {
   await acceptConsents(page);
 }
 
+type WheelStartApiBody = {
+  ok?: boolean;
+  error?: string;
+  code?: string;
+  animation?: {
+    sectorIndex?: number;
+    prizeDisplayName?: string;
+    totalSectors?: number;
+  };
+};
+
+function safeWheelStartFailureMessage(
+  status: number,
+  body: WheelStartApiBody,
+): string {
+  const code = typeof body.code === "string" ? body.code : "none";
+  const error = typeof body.error === "string" ? body.error : "unknown";
+  // Never log request bodies, cookies, phones, or secrets.
+  return `wheel start failed: HTTP ${status}, code=${code}, error=${error}`;
+}
+
+/**
+ * Fill lead form, POST /api/game/wheel/start, assert success, wait for claim UI.
+ */
 async function spinWheel(page: Page, phone: string) {
   await fillLeadForm(page, phone);
+
+  const startResponsePromise = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/game/wheel/start") &&
+      response.request().method() === "POST",
+  );
+
   await page.getByTestId("wheel-start-button").click();
+
+  const startResponse = await startResponsePromise;
+  let body: WheelStartApiBody = {};
+  try {
+    body = (await startResponse.json()) as WheelStartApiBody;
+  } catch {
+    body = {};
+  }
+
+  if (
+    startResponse.status() !== 200 ||
+    body.ok !== true ||
+    !body.animation ||
+    typeof body.animation.sectorIndex !== "number" ||
+    typeof body.animation.prizeDisplayName !== "string"
+  ) {
+    throw new Error(safeWheelStartFailureMessage(startResponse.status(), body));
+  }
+
+  await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.getByTestId("wheel-complete-button")).toBeVisible({
     timeout: 30_000,
   });
@@ -94,8 +147,6 @@ test.describe("Wheel of Fortune public flow", () => {
   test("desktop happy path — form, spin, complete", async ({ page }) => {
     await gotoActiveWheel(page);
     const phone = phoneForTest(1);
-    await fillLeadForm(page, phone);
-    await expect(page.getByTestId("wheel-start-button")).toBeEnabled();
     await spinWheel(page, phone);
     await page.getByRole("radio", { name: "Губы" }).check();
     await acceptConsents(page);

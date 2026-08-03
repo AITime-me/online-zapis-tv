@@ -44,6 +44,9 @@ type LegalCheckboxFieldProps = {
   onChange: (checked: boolean) => void;
   error?: string;
   textColor?: string;
+  /** Stable accessible name — link text sits outside <label> fragments. */
+  ariaLabel: string;
+  testId?: string;
   wording: (labelId: string) => ReactNode;
 };
 
@@ -52,6 +55,8 @@ function LegalCheckboxField({
   onChange,
   error,
   textColor = bookingTheme.textMuted,
+  ariaLabel,
+  testId,
   wording,
 }: LegalCheckboxFieldProps) {
   const fieldId = useId();
@@ -66,7 +71,9 @@ function LegalCheckboxField({
           onChange={(event) => onChange(event.target.checked)}
           className="mt-0.5 h-4 w-4 shrink-0 rounded border accent-[#1a3d32]"
           style={{ borderColor: bookingTheme.border }}
+          aria-label={ariaLabel}
           aria-invalid={Boolean(error)}
+          data-testid={testId}
         />
         <div style={{ color: textColor }}>{wording(fieldId)}</div>
       </div>
@@ -123,6 +130,8 @@ export function BookingLegalConsentFields({
         onChange={onPersonalDataConsentChange}
         error={personalDataConsentError}
         textColor={textColor}
+        ariaLabel="Согласие на обработку персональных данных"
+        testId="legal-personal-data-consent"
         wording={(id) => (
           <>
             <LabelPart consentId={id}>Даю </LabelPart>
@@ -143,6 +152,8 @@ export function BookingLegalConsentFields({
         onChange={onOfferAcknowledgementChange}
         error={offerAcknowledgementError}
         textColor={textColor}
+        ariaLabel="Ознакомление с условиями записи и публичной офертой"
+        testId="legal-offer-acknowledgement"
         wording={(id) => (
           <>
             <LabelPart consentId={id}>

@@ -602,6 +602,16 @@ function assertWheelSpecNoSilentSkipInIsolatedMode(): void {
   assert.match(spec, /wheel-promo-unavailable/);
   assert.match(spec, /wheel-promo-invalid-config/);
   assert.match(spec, /getByTestId\(["']wheel-phone-input["']\)/);
+  assert.match(spec, /getByTestId\(["']legal-personal-data-consent["']\)/);
+  assert.match(spec, /getByTestId\(["']legal-offer-acknowledgement["']\)/);
+  assert.match(spec, /waitForResponse/);
+  assert.match(spec, /\/api\/game\/wheel\/start/);
+  assert.match(spec, /wheel start failed/);
+  assert.doesNotMatch(
+    spec,
+    /if \(\(await personal\.count\(\)\) > 0\)/,
+    "acceptConsents must not silently skip missing consent checkboxes",
+  );
   assert.doesNotMatch(
     spec,
     /getByLabel\(["']Телефон["']\)/,
