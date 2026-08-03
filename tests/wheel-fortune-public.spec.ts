@@ -61,6 +61,180 @@ function isWheelResultGet(response: Response): boolean {
   );
 }
 
+type InPageFetchResult<T> = {
+  status: number;
+  ok: boolean;
+  bodyText: string;
+  body: T;
+};
+
+/** Relative wheel API paths only — never absolute or protocol-relative URLs. */
+const WHEEL_IN_PAGE_API_PATH_RE =
+  /^\/api\/game\/wheel\/(start|result|complete)(?:\?|$)/;
+
+function assertAllowlistedWheelApiPath(path: string): void {
+  if (typeof path !== "string" || path.length === 0) {
+    throw new Error("wheel in-page fetch rejected: empty path");
+  }
+  // Fail closed before browser fetch: schemes, //host, traversal, backslashes.
+  if (
+    /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(path) ||
+    path.startsWith("//") ||
+    path.includes("\\") ||
+    path.includes("..")
+  ) {
+    throw new Error("wheel in-page fetch rejected: non-relative or unsafe path");
+  }
+  if (!WHEEL_IN_PAGE_API_PATH_RE.test(path)) {
+    throw new Error(
+      "wheel in-page fetch rejected: path outside wheel API allowlist",
+    );
+  }
+}
+
+/**
+ * Session-authenticated wheel API calls MUST use in-page fetch with
+ * credentials:"include". Isolated runtime sets NODE_ENV=production, so session
+ * cookies are Secure on http://127.0.0.1. Chromium sends them; Playwright's
+ * Node-side page.request cookie jar often does not → 404/403 on /result.
+ * Never use a detached APIRequestContext for wheel session reads/writes.
+ * Paths must be relative allowlisted wheel routes (same-origin only).
+ */
+async function fetchJsonInPage<T extends Record<string, unknown>>(
+  page: Page,
+  path: string,
+  init?: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: Record<string, unknown>;
+  },
+): Promise<InPageFetchResult<T>> {
+  assertAllowlistedWheelApiPath(path);
+
+  const result = await page.evaluate(
+    async ({ path, method, headers, body }) => {
+      const response = await fetch(path, {
+        method: method ?? "GET",
+        credentials: "include",
+        headers: {
+          ...(body ? { "Content-Type": "application/json" } : {}),
+          ...(headers ?? {}),
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const bodyText = await response.text();
+      return {
+        status: response.status,
+        ok: response.ok,
+        bodyText: bodyText.slice(0, 800),
+      };
+    },
+    {
+      path,
+      method: init?.method,
+      headers: init?.headers,
+      body: init?.body,
+    },
+  );
+
+  let body = {} as T;
+  try {
+    body = JSON.parse(result.bodyText) as T;
+  } catch {
+    body = {} as T;
+  }
+  return { ...result, body };
+}
+
+/** Cookie names only — never values, phones, or tokens. */
+async function sessionCookiePresence(page: Page): Promise<{
+  cookieNames: string[];
+  hasVisitorCookie: boolean;
+  hasSessionCookie: boolean;
+}> {
+  const cookies = await page.context().cookies();
+  const cookieNames = [...new Set(cookies.map((cookie) => cookie.name))].sort();
+  return {
+    cookieNames,
+    hasVisitorCookie: cookieNames.includes("game_visitor"),
+    hasSessionCookie: cookieNames.some((name) => name.startsWith("gs_")),
+  };
+}
+
+async function readUiPhaseHint(page: Page): Promise<string> {
+  const submittedVisible = await page
+    .getByTestId("wheel-submitted")
+    .isVisible()
+    .catch(() => false);
+  const completeVisible = await page
+    .getByTestId("wheel-complete-button")
+    .isVisible()
+    .catch(() => false);
+  const startVisible = await page
+    .getByTestId("wheel-start-button")
+    .isVisible()
+    .catch(() => false);
+  if (submittedVisible) {
+    return "submitted";
+  }
+  if (completeVisible) {
+    return "claim";
+  }
+  if (startVisible) {
+    return "lead-or-spinning";
+  }
+  return "unknown";
+}
+
+type WheelResultApiBody = {
+  ok?: boolean;
+  error?: string;
+  code?: string;
+  bookingSubmitted?: boolean;
+  animation?: { sectorIndex?: number; prizeDisplayName?: string };
+};
+
+async function assertWheelResultInPage(
+  page: Page,
+  meta: {
+    startPostCount: number;
+    startHTTP: number;
+    startOk: boolean;
+  },
+): Promise<WheelResultApiBody> {
+  const path = `/api/game/wheel/result?catalogSlug=${encodeURIComponent(WHEEL_SLUG)}`;
+  const result = await fetchJsonInPage<WheelResultApiBody>(page, path);
+
+  if (!result.ok || result.body.ok !== true) {
+    const cookies = await sessionCookiePresence(page);
+    const phase = await readUiPhaseHint(page);
+    const code =
+      typeof result.body.code === "string" ? result.body.code : "none";
+    const error =
+      typeof result.body.error === "string" ? result.body.error : "none";
+    throw new Error(
+      [
+        "wheel result request failed",
+        `HTTP ${result.status}`,
+        `code=${code}`,
+        `error=${error}`,
+        `body=${JSON.stringify(result.bodyText)}`,
+        `startPostCount=${meta.startPostCount}`,
+        `startHTTP=${meta.startHTTP}`,
+        `startOk=${String(meta.startOk)}`,
+        `hasVisitorCookie=${String(cookies.hasVisitorCookie)}`,
+        `hasSessionCookie=${String(cookies.hasSessionCookie)}`,
+        `cookieNames=${cookies.cookieNames.join(",")}`,
+        `url=${page.url()}`,
+        `uiPhaseHint=${phase}`,
+        `claimVisible=${String(phase === "claim")}`,
+      ].join("; "),
+    );
+  }
+
+  return result.body;
+}
+
 async function dismissCookieBanner(page: Page) {
   const accept = page.getByRole("button", { name: "Понятно" });
   try {
@@ -345,7 +519,9 @@ test.describe("Wheel of Fortune public flow", () => {
     }
   });
 
-  test("double-click start creates one session result", async ({ page }) => {
+  test("double-click sends one start request and restores one readable result", async ({
+    page,
+  }) => {
     await gotoActiveWheel(page);
     const phone = phoneForTest(5);
     await fillLeadForm(page, phone);
@@ -366,23 +542,44 @@ test.describe("Wheel of Fortune public flow", () => {
       await start.dblclick();
 
       const startResponse = await startResponsePromise;
-      expect(startResponse.ok()).toBeTruthy();
+      const startHTTP = startResponse.status();
+      let startBody: WheelStartApiBody = {};
+      try {
+        startBody = (await startResponse.json()) as WheelStartApiBody;
+      } catch {
+        startBody = {};
+      }
+      expect(startHTTP).toBe(200);
+      expect(startBody.ok).toBe(true);
+      expect(typeof startBody.animation?.sectorIndex).toBe("number");
+
       await expect(page.getByTestId("wheel-complete-button")).toBeVisible({
         timeout: 30_000,
       });
       expect(startPostCount).toBe(1);
+      await assertNoWheelGameError(page, {
+        status: startHTTP,
+        body: startBody,
+        startPostCount,
+      });
 
-      const resultResponse = await page.request.get(
-        `/api/game/wheel/result?catalogSlug=${encodeURIComponent(WHEEL_SLUG)}`,
+      // Read result via in-page fetch so Secure session cookies on HTTP loopback
+      // are included (page.request Node jar is unreliable here).
+      const resultBody = await assertWheelResultInPage(page, {
+        startPostCount,
+        startHTTP,
+        startOk: startBody.ok === true,
+      });
+      expect(typeof resultBody.animation?.sectorIndex).toBe("number");
+      expect(resultBody.animation?.prizeDisplayName).toBeTruthy();
+      expect(resultBody.animation?.sectorIndex).toBe(
+        startBody.animation?.sectorIndex,
       );
-      expect(resultResponse.ok()).toBeTruthy();
-      const body = (await resultResponse.json()) as {
-        ok?: boolean;
-        animation?: { sectorIndex: number; prizeDisplayName?: string };
-      };
-      expect(body.ok).toBe(true);
-      expect(typeof body.animation?.sectorIndex).toBe("number");
-      expect(body.animation?.prizeDisplayName).toBeTruthy();
+      expect(resultBody.bookingSubmitted).not.toBe(true);
+
+      const cookies = await sessionCookiePresence(page);
+      expect(cookies.hasVisitorCookie).toBe(true);
+      expect(cookies.hasSessionCookie).toBe(true);
     } finally {
       page.off("response", onStartResponse);
     }
@@ -423,6 +620,10 @@ test.describe("Wheel of Fortune public flow", () => {
     // PII is not persisted in sessionStorage — claim fields reset after reload.
     await expect(page.getByTestId("wheel-phone-input")).toHaveValue("");
     await expect(page.getByLabel("Имя")).toHaveValue("");
+
+    const cookies = await sessionCookiePresence(page);
+    expect(cookies.hasVisitorCookie).toBe(true);
+    expect(cookies.hasSessionCookie).toBe(true);
   });
 
   test("retry complete does not create duplicate submission UI", async ({
@@ -468,6 +669,10 @@ test.describe("Wheel of Fortune public flow", () => {
       await expect(page.getByTestId("wheel-complete-button")).toHaveCount(0);
       await expect(page.getByTestId("wheel-submitted")).toHaveCount(1);
       expect(completePostCount).toBe(1);
+
+      const cookies = await sessionCookiePresence(page);
+      expect(cookies.hasVisitorCookie).toBe(true);
+      expect(cookies.hasSessionCookie).toBe(true);
     } finally {
       page.off("response", onCompleteResponse);
     }
@@ -490,21 +695,29 @@ test.describe("Wheel of Fortune public flow", () => {
       timeout: 30_000,
     });
 
-    const resultBeforeResponse = await page.request.get(
-      `/api/game/wheel/result?catalogSlug=${encodeURIComponent(WHEEL_SLUG)}`,
-    );
-    expect(resultBeforeResponse.ok()).toBeTruthy();
-    const resultBefore = (await resultBeforeResponse.json()) as {
-      bookingSubmitted?: boolean;
-      animation?: { sectorIndex?: number; prizeDisplayName?: string };
-    };
+    const resultBefore = await assertWheelResultInPage(page, {
+      startPostCount: 1,
+      startHTTP: 200,
+      startOk: true,
+    });
     expect(resultBefore.bookingSubmitted).toBe(true);
     expect(typeof resultBefore.animation?.sectorIndex).toBe("number");
     expect(resultBefore.animation?.prizeDisplayName).toBeTruthy();
 
-    const origin = new URL(page.url()).origin;
-    const retry = await page.request.post("/api/game/wheel/complete", {
-      data: {
+    // Same-origin in-page fetch: browser sets Origin / Sec-Fetch-Site itself.
+    // Do not set Origin manually — it is a forbidden request header.
+    const retry = await fetchJsonInPage<{
+      ok?: boolean;
+      error?: string;
+      code?: string;
+      bookingSubmitted?: boolean;
+      prizeDisplayName?: string;
+    }>(page, "/api/game/wheel/complete", {
+      method: "POST",
+      headers: {
+        "Idempotency-Key": `e2e-interest-retry-${phone}`,
+      },
+      body: {
         catalogSlug: WHEEL_SLUG,
         interest: "brows",
         name: TEST_NAME,
@@ -512,21 +725,29 @@ test.describe("Wheel of Fortune public flow", () => {
         personalDataConsent: true,
         offerAcknowledgement: true,
       },
-      headers: {
-        "Idempotency-Key": `e2e-interest-retry-${phone}`,
-        Origin: origin,
-      },
     });
-    expect(retry.status()).toBe(200);
-    expect(retry.ok()).toBeTruthy();
-    const retryBody = (await retry.json()) as {
-      ok?: boolean;
-      bookingSubmitted?: boolean;
-      prizeDisplayName?: string;
-    };
-    expect(retryBody.ok).toBe(true);
-    expect(retryBody.bookingSubmitted).toBe(true);
-    expect(retryBody.prizeDisplayName).toBe(
+    if (!retry.ok || retry.body.ok !== true) {
+      const cookies = await sessionCookiePresence(page);
+      const code =
+        typeof retry.body.code === "string" ? retry.body.code : "none";
+      const error =
+        typeof retry.body.error === "string" ? retry.body.error : "none";
+      throw new Error(
+        [
+          "wheel interest-retry complete failed",
+          `HTTP ${retry.status}`,
+          `code=${code}`,
+          `error=${error}`,
+          `body=${JSON.stringify(retry.bodyText)}`,
+          `hasVisitorCookie=${String(cookies.hasVisitorCookie)}`,
+          `hasSessionCookie=${String(cookies.hasSessionCookie)}`,
+          `cookieNames=${cookies.cookieNames.join(",")}`,
+        ].join("; "),
+      );
+    }
+    expect(retry.status).toBe(200);
+    expect(retry.body.bookingSubmitted).toBe(true);
+    expect(retry.body.prizeDisplayName).toBe(
       resultBefore.animation?.prizeDisplayName,
     );
 
@@ -537,14 +758,11 @@ test.describe("Wheel of Fortune public flow", () => {
     );
     await expect(page.getByTestId("wheel-complete-button")).toHaveCount(0);
 
-    const resultAfterResponse = await page.request.get(
-      `/api/game/wheel/result?catalogSlug=${encodeURIComponent(WHEEL_SLUG)}`,
-    );
-    expect(resultAfterResponse.ok()).toBeTruthy();
-    const resultAfter = (await resultAfterResponse.json()) as {
-      bookingSubmitted?: boolean;
-      animation?: { sectorIndex?: number; prizeDisplayName?: string };
-    };
+    const resultAfter = await assertWheelResultInPage(page, {
+      startPostCount: 1,
+      startHTTP: 200,
+      startOk: true,
+    });
     expect(resultAfter.bookingSubmitted).toBe(true);
     expect(resultAfter.animation?.sectorIndex).toBe(
       resultBefore.animation?.sectorIndex,

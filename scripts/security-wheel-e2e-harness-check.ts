@@ -620,7 +620,6 @@ function assertWheelSpecNoSilentSkipInIsolatedMode(): void {
   assert.match(spec, /waitForResponse/);
   assert.match(spec, /\/api\/game\/wheel\/start/);
   assert.match(spec, /wheel start failed/);
-  assert.match(spec, /Origin:\s*origin/);
   assert.match(spec, /phoneE164/);
   assert.match(spec, /getByTestId\(["']wheel-prize-name["']\)/);
   assert.match(spec, /getByTestId\(["']wheel-submitted["']\)/);
@@ -651,14 +650,111 @@ function assertWheelSpecNoSilentSkipInIsolatedMode(): void {
     "empty-form click must not require wheel-error-alert (native validation blocks React)",
   );
 
-  // Test #5 — exactly one start POST after dblclick.
+  // Session API must use in-page fetch (Secure cookies on HTTP loopback).
+  assert.match(spec, /fetchJsonInPage/);
+  assert.match(spec, /assertWheelResultInPage/);
+  assert.match(spec, /assertAllowlistedWheelApiPath|WHEEL_IN_PAGE_API_PATH/);
+  assert.match(
+    spec,
+    /\/\^\\\/api\\\/game\\\/wheel\\\/\(start\|result\|complete\)\(\?:\\\?\|\$\)\//,
+  );
+  assert.match(spec, /credentials:\s*["']include["']/);
+  assert.match(
+    spec,
+    /Node-side page\.request cookie jar|page\.request Node jar/,
+  );
+  assert.match(spec, /hasVisitorCookie/);
+  assert.match(spec, /hasSessionCookie/);
+  assert.match(spec, /wheel result request failed/);
+  assert.match(spec, /HTTP \$\{result\.status\}|HTTP \$\{retry\.status\}/);
+  assert.match(
+    spec,
+    /wheel in-page fetch rejected:\s*path outside wheel API allowlist|outside wheel API allowlist/,
+  );
+  assert.match(
+    spec,
+    /wheel in-page fetch rejected:\s*non-relative or unsafe path|non-relative or unsafe path/,
+  );
+  assert.doesNotMatch(
+    spec,
+    /page\.request\.(get|post|fetch)\s*\(/,
+    "wheel session API must not use page.request (Secure cookie jar mismatch on HTTP loopback)",
+  );
+  assert.doesNotMatch(
+    spec,
+    /request\.newContext|apiRequestContext|browser\.newContext\(\)[\s\S]{0,80}request/,
+    "must not create a detached APIRequestContext without browser cookies",
+  );
+  assert.doesNotMatch(
+    spec,
+    /new URL\(\s*path\s*,/,
+    "fetchJsonInPage must not resolve path against an external base URL",
+  );
+  assert.doesNotMatch(
+    spec,
+    /Origin:\s*origin/,
+    "must not set forbidden Origin header manually; browser supplies same-origin Origin",
+  );
+
+  // Allowlist must run before browser fetch (page.evaluate).
+  {
+    const allowlistConstPos = spec.search(
+      /WHEEL_IN_PAGE_API_PATH_RE\s*=\s*\/\^\\\/api\\\/game\\\/wheel\\\/\(start\|result\|complete\)\(\?:\\\?\|\$\)\//,
+    );
+    assert.ok(
+      allowlistConstPos >= 0,
+      "WHEEL_IN_PAGE_API_PATH_RE must allowlist only start|result|complete",
+    );
+
+    const fetchFnStart = spec.indexOf("async function fetchJsonInPage");
+    assert.ok(fetchFnStart >= 0, "fetchJsonInPage must be defined");
+    assert.ok(
+      allowlistConstPos < fetchFnStart,
+      "path allowlist regex must be defined before fetchJsonInPage",
+    );
+
+    const fetchFnSlice = spec.slice(fetchFnStart, fetchFnStart + 1_200);
+    const guardPos = fetchFnSlice.search(
+      /assertAllowlistedWheelApiPath\s*\(\s*path\s*\)/,
+    );
+    const evaluatePos = fetchFnSlice.indexOf("page.evaluate");
+    assert.ok(
+      guardPos >= 0,
+      "fetchJsonInPage must call assertAllowlistedWheelApiPath(path)",
+    );
+    assert.ok(evaluatePos >= 0, "fetchJsonInPage must use page.evaluate");
+    assert.ok(
+      guardPos < evaluatePos,
+      "path allowlist must run before page.evaluate / browser fetch",
+    );
+    assert.doesNotMatch(
+      fetchFnSlice.slice(0, evaluatePos),
+      /\bfetch\s*\(/,
+      "browser fetch must not run before path allowlist succeeds",
+    );
+  }
+
+  // Test #5 — one start POST after dblclick + in-page readable result (not DB row count).
   assert.match(spec, /dblclick/);
   assert.match(
     spec,
-    /double-click start[\s\S]*?startPostCount\)\.toBe\(1\)/,
+    /double-click sends one start request[\s\S]*?startPostCount\)\.toBe\(1\)/,
+  );
+  assert.match(
+    spec,
+    /double-click sends one start request[\s\S]*?assertWheelResultInPage/,
+  );
+  assert.match(
+    spec,
+    /double-click sends one start request[\s\S]*?hasSessionCookie\)\.toBe\(true\)/,
+  );
+  assert.doesNotMatch(
+    spec,
+    /double-click start creates one session result/,
+    "test #5 title must not claim DB session-result uniqueness",
   );
 
-  // Test #6 — result restore after reload + PII reset.
+  // Test #6 — result restore after reload + PII reset + session cookies.
   assert.match(
     spec,
     /refresh restores[\s\S]*?isWheelResultGet|refresh restores[\s\S]*?\/api\/game\/wheel\/result/,
@@ -667,11 +763,19 @@ function assertWheelSpecNoSilentSkipInIsolatedMode(): void {
     spec,
     /refresh restores[\s\S]*?toHaveValue\(["']["']\)/,
   );
+  assert.match(
+    spec,
+    /refresh restores[\s\S]*?hasSessionCookie\)\.toBe\(true\)/,
+  );
 
-  // Test #7/#9 — complete count / idempotency key reuse.
+  // Test #7/#9 — complete count / idempotency key reuse + session continuity.
   assert.match(
     spec,
     /retry complete[\s\S]*?completePostCount\)\.toBe\(1\)/,
+  );
+  assert.match(
+    spec,
+    /retry complete[\s\S]*?hasSessionCookie\)\.toBe\(true\)/,
   );
   assert.match(
     spec,
@@ -682,14 +786,27 @@ function assertWheelSpecNoSilentSkipInIsolatedMode(): void {
     /network retry on complete[\s\S]*?completeCalls\)\.toBe\(2\)/,
   );
 
-  // Test #8 — Origin + E164 + result prize lock.
-  assert.match(
-    spec,
-    /different interest after success[\s\S]*?Origin:\s*origin/,
-  );
+  // Test #8 — E164 + same-origin in-page result/complete (no page.request, no manual Origin).
   assert.match(
     spec,
     /different interest after success[\s\S]*?phoneE164\(phone\)/,
+  );
+  assert.match(
+    spec,
+    /different interest after success[\s\S]*?assertWheelResultInPage/,
+  );
+  assert.match(
+    spec,
+    /different interest after success[\s\S]*?fetchJsonInPage[\s\S]*?\/api\/game\/wheel\/complete/,
+  );
+  assert.match(
+    spec,
+    /different interest after success[\s\S]*?credentials:\s*["']include["']|different interest after success[\s\S]*?fetchJsonInPage/,
+  );
+  assert.doesNotMatch(
+    spec,
+    /different interest after success[\s\S]*?Origin:\s*origin/,
+    "test #8 must rely on browser same-origin Origin, not a manual header",
   );
 
   // Test #10/#11 — distinct blocked states.
