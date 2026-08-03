@@ -1,3 +1,5 @@
+import "server-only";
+
 import { isCanonicalUuid } from "@/lib/booking-requests/idempotency-contract";
 import {
   isOnlinePublicBookable,
@@ -69,7 +71,7 @@ export function parseBotEligibilityBody(
   }
 
   let masterId: string | undefined;
-  if (body.masterId !== undefined && body.masterId !== null) {
+  if (Object.prototype.hasOwnProperty.call(body, "masterId")) {
     if (typeof body.masterId !== "string" || !isCanonicalUuid(body.masterId.trim())) {
       return {
         ok: false,
@@ -81,7 +83,7 @@ export function parseBotEligibilityBody(
   }
 
   let includeAlternatives = false;
-  if (body.includeAlternatives !== undefined) {
+  if (Object.prototype.hasOwnProperty.call(body, "includeAlternatives")) {
     if (typeof body.includeAlternatives !== "boolean") {
       return {
         ok: false,
@@ -129,11 +131,8 @@ function resolvePairReasonCode(input: {
 }): BotEligibilityReasonCode {
   const { service, master, masterService, timingOk } = input;
 
-  if (!service) {
-    return "SERVICE_NOT_FOUND";
-  }
-
-  if (!isOnlinePublicServiceEligible(service)) {
+  // Unknown and ineligible services share SERVICE_INACTIVE to avoid existence leaks.
+  if (!service || !isOnlinePublicServiceEligible(service)) {
     return "SERVICE_INACTIVE";
   }
 
@@ -163,7 +162,7 @@ function resolvePairReasonCode(input: {
 function buildResult(input: {
   outcome: BotEligibilityResult["outcome"];
   reasonCode: BotEligibilityReasonCode | null;
-  selectedPairAllowed: boolean;
+  selectedPairAllowed: boolean | null;
   serviceOnlineInGeneral: boolean;
   otherOnlineMasters: BotEligibilityAlternativeMaster[];
   includeAlternatives: boolean;
@@ -217,7 +216,7 @@ export async function evaluateBotEligibility(
     return buildResult({
       outcome: "MANAGER_HANDOFF",
       reasonCode: "STUDIO_ONLINE_DISABLED",
-      selectedPairAllowed: false,
+      selectedPairAllowed: request.masterId ? false : null,
       serviceOnlineInGeneral: false,
       otherOnlineMasters: [],
       includeAlternatives,
@@ -237,7 +236,7 @@ export async function evaluateBotEligibility(
       return buildResult({
         outcome: "SELF_BOOKING_ALLOWED",
         reasonCode: null,
-        selectedPairAllowed: false,
+        selectedPairAllowed: null,
         serviceOnlineInGeneral: true,
         otherOnlineMasters: onlineMasters.map((master) => ({
           id: master.id,
@@ -250,7 +249,7 @@ export async function evaluateBotEligibility(
     return buildResult({
       outcome: "MANAGER_HANDOFF",
       reasonCode: "MANAGER_ONLY",
-      selectedPairAllowed: false,
+      selectedPairAllowed: null,
       serviceOnlineInGeneral: false,
       otherOnlineMasters: [],
       includeAlternatives,
@@ -320,7 +319,7 @@ export async function evaluateBotEligibility(
 
   // Selected master closed while other ONLINE masters exist — still handoff;
   // bot shows alternatives only after explicit client consent (metadata only here).
-  if (!entityOnlineInGeneral && reasonCode !== "SERVICE_NOT_FOUND") {
+  if (!entityOnlineInGeneral) {
     return buildResult({
       outcome: "MANAGER_HANDOFF",
       reasonCode:

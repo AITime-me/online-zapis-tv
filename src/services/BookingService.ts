@@ -124,6 +124,11 @@ export type PublicSlotCalculationOptions = {
   loadOnlineFillTimings?: (
     masterId: string,
   ) => Promise<SlotChainTiming[] | null>;
+  /**
+   * Optional booking policy runtime (studio kill-switch memoization for month loops).
+   * Defaults to DEFAULT_BOOKING_POLICY_RUNTIME.
+   */
+  bookingPolicyRuntime?: BookingPolicyRuntime;
 };
 
 export class OnlineServiceUnavailableError extends AppointmentValidationError {
@@ -826,7 +831,11 @@ export async function getAvailableTimeSlots(
   studioToday: string,
   options: PublicSlotCalculationOptions = {},
 ): Promise<string[]> {
-  const timing = await assertOnlineBookable(masterId, serviceId);
+  const timing = await assertOnlineBookable(
+    masterId,
+    serviceId,
+    options.bookingPolicyRuntime ?? DEFAULT_BOOKING_POLICY_RUNTIME,
+  );
   const context = await loadSlotContext(masterId, dateKey);
 
   if (!context) {
@@ -926,6 +935,18 @@ export async function getAvailableDaysInMonth(
   const futureDays = days.filter((dateKey) => dateKey >= studioToday);
   const availableDays: string[] = [];
 
+  // Resolve studio kill-switch once for the month loop (avoid N+1 StudioSettings reads).
+  const baseRuntime =
+    options.bookingPolicyRuntime ?? DEFAULT_BOOKING_POLICY_RUNTIME;
+  await assertStudioOnlineBookingEnabled(
+    baseRuntime.isStudioOnlineBookingEnabled ??
+      defaultIsStudioOnlineBookingEnabled,
+  );
+  const monthRuntime: BookingPolicyRuntime = {
+    ...baseRuntime,
+    isStudioOnlineBookingEnabled: async () => true,
+  };
+
   const loader =
     options.loadOnlineFillTimings ?? loadOnlineFillTimingsForMaster;
 
@@ -946,6 +967,7 @@ export async function getAvailableDaysInMonth(
       {
         preloadedOnlineTimings,
         loadOnlineFillTimings: options.loadOnlineFillTimings,
+        bookingPolicyRuntime: monthRuntime,
       },
     );
     if (slots.length > 0) {

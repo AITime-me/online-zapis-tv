@@ -220,11 +220,22 @@ async function testAuthHelpers(): Promise<void> {
     assert.equal(auth.getBotInternalApiToken(), null);
   });
 
+  withTokenEnv(`  ${TOKEN}  `, () => {
+    assert.equal(auth.getBotInternalApiToken(), TOKEN);
+  });
+
   withTokenEnv(TOKEN, () => {
     assert.equal(auth.getBotInternalApiToken(), TOKEN);
     assert.equal(auth.isValidBotInternalBearerToken(TOKEN), true);
     assert.equal(auth.isValidBotInternalBearerToken(`${TOKEN}x`), false);
-    assert.equal(auth.isValidBotInternalBearerToken("wrong-token-also-long-enough-xxxxxx"), false);
+    assert.equal(
+      auth.isValidBotInternalBearerToken("wrong-token-also-long-enough-xxxxxx"),
+      false,
+    );
+    // Same-length wrong token must fail (mutation: plain === would still fail, but
+    // length-mismatch path must not throw / grant access).
+    const sameLenWrong = "x".repeat(TOKEN.length);
+    assert.equal(auth.isValidBotInternalBearerToken(sameLenWrong), false);
   });
 
   assert.equal(auth.parseBearerAuthorizationHeader(null), null);
@@ -233,12 +244,18 @@ async function testAuthHelpers(): Promise<void> {
   assert.equal(auth.parseBearerAuthorizationHeader("Bearer"), null);
   assert.equal(auth.parseBearerAuthorizationHeader("Bearer "), null);
   assert.equal(auth.parseBearerAuthorizationHeader("Bearer a b"), null);
+  assert.equal(auth.parseBearerAuthorizationHeader(`Bearer ${TOKEN}, Bearer other`), null);
+  assert.equal(auth.parseBearerAuthorizationHeader(`Bearer\t${TOKEN}`), null);
   assert.equal(
     auth.parseBearerAuthorizationHeader(`Bearer ${TOKEN}`),
     TOKEN,
   );
   assert.equal(
     auth.parseBearerAuthorizationHeader(`bearer ${TOKEN}`),
+    TOKEN,
+  );
+  assert.equal(
+    auth.parseBearerAuthorizationHeader(`  Bearer   ${TOKEN}  `),
     TOKEN,
   );
 
@@ -251,9 +268,20 @@ async function testAuthHelpers(): Promise<void> {
     );
     assert.equal(ok, null);
 
+    // Query string must never authenticate.
+    const queryAttempt = auth.enforceBotInternalAuth(
+      new Request(
+        `http://localhost/api/internal/bot/v1/eligibility?token=${TOKEN}`,
+        { method: "POST" },
+      ),
+    );
+    assert.ok(queryAttempt);
+    assert.equal(queryAttempt.status, 401);
+
     for (const headers of [
       {},
       { Authorization: "Bearer wrong-token-also-long-enough-xxxxxx" },
+      { Authorization: `Bearer ${"x".repeat(TOKEN.length)}` },
       { Authorization: "Basic xyz" },
       { Authorization: "Bearer" },
     ] as Record<string, string>[]) {
@@ -271,7 +299,14 @@ async function testAuthHelpers(): Promise<void> {
         code: "UNAUTHORIZED",
         error: "Unauthorized",
       });
+      assert.equal(JSON.stringify(body).includes(TOKEN), false);
     }
+
+    // Zero-width / unicode junk in token is rejected by parser (cannot place in Headers ByteString).
+    assert.equal(
+      auth.parseBearerAuthorizationHeader(`Bearer ${TOKEN}\u200b`),
+      null,
+    );
   });
 
   await withTokenEnv(undefined, async () => {
@@ -296,6 +331,24 @@ async function testEligibility(): Promise<void> {
     parseBotEligibilityBody({ serviceId: S1, extra: true }).ok,
     false,
   );
+  assert.equal(parseBotEligibilityBody({ serviceId: S1, masterId: null }).ok, false);
+  assert.equal(
+    parseBotEligibilityBody({ serviceId: S1, includeAlternatives: null }).ok,
+    false,
+  );
+  assert.equal(
+    parseBotEligibilityBody({ serviceId: S1, includeAlternatives: 1 }).ok,
+    false,
+  );
+  assert.equal(
+    parseBotEligibilityBody({ serviceId: S1, masterId: 123 }).ok,
+    false,
+  );
+  assert.equal(
+    parseBotEligibilityBody({ serviceId: [S1] }).ok,
+    false,
+  );
+
   const parsed = parseBotEligibilityBody({
     serviceId: S1,
     masterId: M1,
@@ -321,16 +374,7 @@ async function testEligibility(): Promise<void> {
     { id: M2, publicName: "Master Two" },
   ]);
 
-  const studioOff = await evaluateBotEligibility(
-    { serviceId: S1, masterId: M1 },
-    createEligibilityRuntime({ studioEnabled: false }),
-  );
-  assert.equal(studioOff.outcome, "MANAGER_HANDOFF");
-  assert.equal(studioOff.reasonCode, "STUDIO_ONLINE_DISABLED");
-  assert.equal(studioOff.selectedPairAllowed, false);
-  assert.equal(studioOff.serviceOnlineInGeneral, false);
-  assert.equal(studioOff.otherOnlineMasters, undefined);
-
+  // Closed selected master must NOT become allowed because an alternative exists.
   const masterClosed = await evaluateBotEligibility(
     { serviceId: S1, masterId: M1, includeAlternatives: true },
     createEligibilityRuntime({
@@ -354,6 +398,27 @@ async function testEligibility(): Promise<void> {
   assert.deepEqual(masterClosed.otherOnlineMasters, [
     { id: M2, publicName: "Master Two" },
   ]);
+  // No automatic replacement field / selected master stays M1 semantics.
+  assert.equal(
+    masterClosed.otherOnlineMasters?.some((m) => m.id === M1),
+    false,
+  );
+
+  const studioOff = await evaluateBotEligibility(
+    { serviceId: S1, masterId: M1 },
+    createEligibilityRuntime({ studioEnabled: false }),
+  );
+  assert.equal(studioOff.outcome, "MANAGER_HANDOFF");
+  assert.equal(studioOff.reasonCode, "STUDIO_ONLINE_DISABLED");
+  assert.equal(studioOff.selectedPairAllowed, false);
+  assert.equal(studioOff.serviceOnlineInGeneral, false);
+  assert.equal(studioOff.otherOnlineMasters, undefined);
+
+  const studioOffNoMaster = await evaluateBotEligibility(
+    { serviceId: S1 },
+    createEligibilityRuntime({ studioEnabled: false }),
+  );
+  assert.equal(studioOffNoMaster.selectedPairAllowed, null);
 
   const managerOnly = await evaluateBotEligibility(
     { serviceId: S1, masterId: M1 },
@@ -372,14 +437,34 @@ async function testEligibility(): Promise<void> {
     createEligibilityRuntime(),
   );
   assert.equal(serviceOnly.outcome, "SELF_BOOKING_ALLOWED");
-  assert.equal(serviceOnly.selectedPairAllowed, false);
+  assert.equal(serviceOnly.selectedPairAllowed, null);
   assert.equal(serviceOnly.otherOnlineMasterCount, 2);
+
+  const withoutAlternatives = await evaluateBotEligibility(
+    { serviceId: S1, masterId: M1, includeAlternatives: false },
+    createEligibilityRuntime(),
+  );
+  assert.equal(withoutAlternatives.otherOnlineMasterCount, 1);
+  assert.equal(withoutAlternatives.otherOnlineMasters, undefined);
 
   const inactiveMaster = await evaluateBotEligibility(
     { serviceId: S1, masterId: M1 },
     createEligibilityRuntime({ selectedMasterActive: false }),
   );
   assert.equal(inactiveMaster.reasonCode, "MASTER_INACTIVE");
+
+  const missingMaster = await evaluateBotEligibility(
+    { serviceId: S1, masterId: M1 },
+    createEligibilityRuntime({ masterExists: false }),
+  );
+  assert.equal(missingMaster.reasonCode, "MASTER_INACTIVE");
+
+  const missingService = await evaluateBotEligibility(
+    { serviceId: S1, masterId: M1 },
+    createEligibilityRuntime({ serviceExists: false, serviceOnline: false }),
+  );
+  assert.equal(missingService.reasonCode, "SERVICE_INACTIVE");
+  assert.equal(missingService.outcome, "MANAGER_HANDOFF");
 
   const linkDown = await evaluateBotEligibility(
     { serviceId: S1, masterId: M1 },
@@ -400,21 +485,58 @@ async function testStudioKillSwitch(): Promise<void> {
   const enabled = createEligibilityRuntime({ studioEnabled: true });
   const timing = await booking.assertOnlineBookable(M1, S1, enabled);
   assert.equal(timing.durationMinutes, 60);
+
+  // Missing settings default contract: ensureStudioSettings / DEFAULT true.
+  const defaults = read("src/lib/studio-settings/defaults.ts");
+  assert.match(defaults, /isOnlineBookingEnabled:\s*true/);
+  const studioService = read("src/services/StudioSettingsService.ts");
+  assert.match(studioService, /ensureStudioSettings/);
+  assert.match(studioService, /DEFAULT_STUDIO_SETTINGS/);
+}
+
+async function testMonthStudioMemoizationStatic(): Promise<void> {
+  const bookingSource = read("src/services/BookingService.ts");
+  assert.match(
+    bookingSource,
+    /export async function getAvailableDaysInMonth[\s\S]*await assertStudioOnlineBookingEnabled/,
+  );
+  assert.match(
+    bookingSource,
+    /getAvailableDaysInMonth[\s\S]*isStudioOnlineBookingEnabled:\s*async \(\) => true/,
+  );
+  assert.match(
+    bookingSource,
+    /getAvailableTimeSlots[\s\S]*options\.bookingPolicyRuntime/,
+  );
 }
 
 function testStaticContracts(): void {
   const authSource = read("src/lib/auth/bot-internal-auth.ts");
   assert.match(authSource, /timingSafeEqual/);
+  assert.match(authSource, /import "server-only"/);
   assert.match(authSource, /BOT_INTERNAL_API_TOKEN/);
   assert.doesNotMatch(authSource, /cursor15-pr-a-bot-internal-token/);
+  assert.doesNotMatch(authSource, /searchParams|query/);
+
+  const eligibilitySource = read("src/lib/bot-api/evaluate-eligibility.ts");
+  assert.match(eligibilitySource, /import "server-only"/);
+  assert.match(eligibilitySource, /isOnlinePublicBookable/);
+  assert.doesNotMatch(eligibilitySource, /SERVICE_NOT_FOUND/);
 
   const routeSource = read(
     "src/app/api/internal/bot/v1/eligibility/route.ts",
   );
   assert.match(routeSource, /enforceBotInternalAuth/);
   assert.match(routeSource, /evaluateBotEligibility/);
+  assert.match(routeSource, /enforceEndpointRateLimit/);
+  // Auth must run before rate limit (mutation: swapping would still auth-fail, but order is contract).
+  const authIdx = routeSource.indexOf("enforceBotInternalAuth");
+  const rlIdx = routeSource.indexOf("enforceEndpointRateLimit");
+  assert.ok(authIdx >= 0 && rlIdx > authIdx);
   assert.doesNotMatch(routeSource, /enforceSameOriginForMutatingRequest/);
   assert.doesNotMatch(routeSource, /requireProtectedMutatingApi/);
+  assert.doesNotMatch(routeSource, /console\.(log|info|debug|error)/);
+  assert.match(routeSource, /safeLogError\("bot-internal-eligibility"/);
 
   const bookingSource = read("src/services/BookingService.ts");
   assert.match(bookingSource, /assertStudioOnlineBookingEnabled/);
@@ -422,33 +544,82 @@ function testStaticContracts(): void {
     bookingSource,
     /export async function assertOnlineBookable[\s\S]*await assertStudioOnlineBookingEnabled/,
   );
+  assert.match(
+    bookingSource,
+    /export async function createOnlineBooking[\s\S]*assertOnlineBookable/,
+  );
+  assert.match(
+    bookingSource,
+    /export async function getAvailableTimeSlots[\s\S]*assertOnlineBookable/,
+  );
+
+  const requestRoute = read("src/app/api/booking/request/route.ts");
+  assert.match(requestRoute, /enforceSameOriginForMutatingRequest/);
+  assert.doesNotMatch(requestRoute, /enforceBotInternalAuth|BOT_INTERNAL_API_TOKEN/);
+  assert.doesNotMatch(requestRoute, /assertStudioOnlineBookingEnabled/);
+
+  const csrfRules = read("src/lib/security/csrf-route-rules.ts");
+  assert.match(csrfRules, /\/api\/internal\/bot\/v1\//);
+  assert.doesNotMatch(
+    csrfRules,
+    /pathname\.startsWith\("\/api\/internal\/"\)/,
+  );
 
   const envExample = read(".env.example");
   assert.match(envExample, /^BOT_INTERNAL_API_TOKEN=$/m);
   assert.doesNotMatch(envExample, /BOT_INTERNAL_API_TOKEN=.+/);
 
+  // Narrow CSRF exemption: bot v1 only.
   assert.equal(
     requiresAdminCsrfProtection("/api/internal/bot/v1/eligibility", "POST"),
     false,
   );
   assert.equal(
+    requiresAdminCsrfProtection("/api/internal/other/thing", "POST"),
+    true,
+  );
+  assert.equal(
     requiresAdminCsrfProtection("/api/admin/settings", "POST"),
     true,
+  );
+  // Public mutating paths use same-origin helper, not admin CSRF middleware gate.
+  assert.equal(
+    requiresAdminCsrfProtection("/api/booking/create", "POST"),
+    false,
   );
   assert.equal(
     resolveApiRateLimitPolicy("/api/internal/bot/v1/eligibility", "POST"),
     "botInternal",
   );
+  assert.equal(
+    resolveApiRateLimitPolicy("/api/booking/create", "POST"),
+    "bookingCreate",
+  );
+
+  const rlIdentity = read("src/lib/security/rate-limit/client-identity.ts");
+  assert.doesNotMatch(rlIdentity, /authorization|BOT_INTERNAL/i);
 
   // Public create still CSRF-guarded at route level (regression).
   const createRoute = read("src/app/api/booking/create/route.ts");
   assert.match(createRoute, /enforceSameOriginForMutatingRequest/);
   assert.match(createRoute, /createOnlineBooking/);
+  assert.doesNotMatch(createRoute, /enforceBotInternalAuth/);
+
+  // No Prisma / source enum drift in PR A.
+  assert.equal(fs.existsSync(path.join(ROOT, "prisma/schema.prisma")), true);
+  const schemaDiffMarker = read("prisma/schema.prisma");
+  assert.match(schemaDiffMarker, /enum AppointmentSource/);
+  // AppointmentService / BookingRequestService must remain untouched by PR A files list —
+  // verified via git inventory in recovery; static: create still hardcodes ONLINE path.
+  const appointment = read("src/services/AppointmentService.ts");
+  assert.match(appointment, /source:\s*"ONLINE"|source:\s*'ONLINE'/);
 
   const docs = read("docs/architecture/bot-internal-api-pr-a.md");
   assert.match(docs, /BOT_INTERNAL_API_TOKEN/);
   assert.match(docs, /SELF_BOOKING_ALLOWED/);
   assert.match(docs, /STUDIO_ONLINE_DISABLED/);
+  assert.match(docs, /\/api\/internal\/bot\/v1\//);
+  assert.match(docs, /selectedPairAllowed/);
 }
 
 async function main(): Promise<void> {
@@ -456,6 +627,7 @@ async function main(): Promise<void> {
   await testAuthHelpers();
   await testEligibility();
   await testStudioKillSwitch();
+  await testMonthStudioMemoizationStatic();
   console.log("security-bot-internal-api-pr-a-check: OK");
 }
 

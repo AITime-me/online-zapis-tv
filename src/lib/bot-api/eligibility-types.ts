@@ -10,7 +10,6 @@ export type BotEligibilityOutcome =
 export type BotEligibilityReasonCode =
   | "STUDIO_ONLINE_DISABLED"
   | "SERVICE_INACTIVE"
-  | "SERVICE_NOT_FOUND"
   | "MASTER_INACTIVE"
   | "ONLINE_DISABLED"
   | "MASTER_SERVICE_UNAVAILABLE"
@@ -30,7 +29,8 @@ export type BotEligibilityRequest = {
 export type BotEligibilityResult = {
   outcome: BotEligibilityOutcome;
   reasonCode: BotEligibilityReasonCode | null;
-  selectedPairAllowed: boolean;
+  /** null when masterId was not supplied; boolean when a pair was evaluated. */
+  selectedPairAllowed: boolean | null;
   serviceOnlineInGeneral: boolean;
   otherOnlineMasterCount: number;
   otherOnlineMasters?: BotEligibilityAlternativeMaster[];

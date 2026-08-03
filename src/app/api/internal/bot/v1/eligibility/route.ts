@@ -18,6 +18,9 @@ import { getPublicStudioSettings } from "@/services/StudioSettingsService";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+/** Soft body cap for PII-free eligibility JSON (IDs + boolean only). */
+const MAX_ELIGIBILITY_BODY_BYTES = 4_096;
+
 const DEFAULT_RUNTIME: BookingPolicyRuntime = {
   db: prisma,
   resolveTiming: resolveServiceTimingForMaster,
@@ -41,6 +44,15 @@ function validationErrorResponse(error: string) {
   );
 }
 
+function isOversizedBody(request: Request): boolean {
+  const raw = request.headers.get("content-length");
+  if (!raw) {
+    return false;
+  }
+  const length = Number(raw);
+  return Number.isFinite(length) && length > MAX_ELIGIBILITY_BODY_BYTES;
+}
+
 export async function POST(request: Request) {
   const authResponse = enforceBotInternalAuth(request);
   if (authResponse) {
@@ -50,6 +62,10 @@ export async function POST(request: Request) {
   const rateLimitResponse = enforceEndpointRateLimit(request, "botInternal");
   if (rateLimitResponse) {
     return rateLimitResponse;
+  }
+
+  if (isOversizedBody(request)) {
+    return validationErrorResponse("Invalid request body");
   }
 
   let rawBody: unknown;
@@ -82,6 +98,7 @@ export async function POST(request: Request) {
       },
     );
   } catch (error) {
+    // Event name only — safeLogError redacts secrets/PII; never log Authorization/body.
     safeLogError("bot-internal-eligibility", error);
     return NextResponse.json(
       {

@@ -62,7 +62,13 @@ export function parseBearerAuthorizationHeader(
 
   const scheme = trimmed.slice(0, spaceIndex);
   const token = trimmed.slice(spaceIndex + 1).trim();
-  if (scheme.toLowerCase() !== "bearer" || !token || /\s/.test(token)) {
+  // Strict token: printable ASCII only, no whitespace/control/unicode junk.
+  if (
+    scheme.toLowerCase() !== "bearer" ||
+    !token ||
+    token.length > 512 ||
+    !/^[\x21-\x7E]+$/.test(token)
+  ) {
     return null;
   }
 

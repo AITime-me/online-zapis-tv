@@ -32,8 +32,9 @@ export function requiresAdminCsrfProtection(
     return false;
   }
 
-  // S2S bot routes use Bearer auth; browser CSRF/same-origin does not apply.
-  if (pathname.startsWith("/api/internal/")) {
+  // Narrow S2S bot namespace only. Unrelated /api/internal/* stays CSRF-protected
+  // until it has its own authenticated contract (Bearer enforced in-route).
+  if (pathname.startsWith("/api/internal/bot/v1/")) {
     return false;
   }
 

@@ -1,7 +1,7 @@
 # Bot internal API — PR A (auth + eligibility + studio kill-switch)
 
-Дата: 2026-08-03  
-Статус: implemented locally (CURSOR-15 Stage 3A / PR A)
+Дата: 2026-08-03
+Статус: implemented locally (CURSOR-15 Stage 3A / PR A + Stage 3A-R remediation)
 
 ## Scope
 
@@ -11,7 +11,7 @@
 2. Internal eligibility: `POST /api/internal/bot/v1/eligibility`
 3. Серверное enforcement `StudioSettings.isOnlineBookingEnabled` в `assertOnlineBookable`
 4. Отдельный rate-limit bucket `botInternal`
-5. CSRF exemption для `/api/internal/*` (Bearer, не browser session)
+5. CSRF exemption **только** для `/api/internal/bot/v1/*` (Bearer enforced in-route)
 
 Вне scope PR A: available-days/slots/bookings/manager-requests internal routes, `source: BOT` writes, idempotency store, Prisma migration, bot-TV.
 
@@ -55,6 +55,14 @@ Staging/production provisioning — отдельный ops gate перед bot t
 
 Одинаковый ответ для missing header, malformed scheme, wrong token, misconfigured server token. Токен и body не логируются.
 
+## CSRF exemption scope
+
+`requiresAdminCsrfProtection` excludes **only** `/api/internal/bot/v1/*`.
+
+- Unrelated `/api/internal/...` outside bot v1 remains CSRF-protected (admin session + same-origin).
+- Bot eligibility route still requires Bearer (`enforceBotInternalAuth`) even with CSRF exemption.
+- Public booking routes keep existing same-origin CSRF contract.
+
 ## Eligibility contract
 
 Request:
@@ -67,7 +75,8 @@ Request:
 }
 ```
 
-Unknown fields → `400 VALIDATION_ERROR`.
+Unknown fields / null optional fields / non-boolean `includeAlternatives` → `400 VALIDATION_ERROR`.
+Oversized body (`Content-Length` > 4096) → `400`.
 
 Success:
 
@@ -75,38 +84,45 @@ Success:
 {
   "ok": true,
   "outcome": "SELF_BOOKING_ALLOWED" | "MANAGER_HANDOFF",
-  "reasonCode": null | "STUDIO_ONLINE_DISABLED" | "SERVICE_INACTIVE" | "SERVICE_NOT_FOUND" | "MASTER_INACTIVE" | "ONLINE_DISABLED" | "MASTER_SERVICE_UNAVAILABLE" | "MANAGER_ONLY",
-  "selectedPairAllowed": boolean,
+  "reasonCode": null | "STUDIO_ONLINE_DISABLED" | "SERVICE_INACTIVE" | "MASTER_INACTIVE" | "ONLINE_DISABLED" | "MASTER_SERVICE_UNAVAILABLE" | "MANAGER_ONLY",
+  "selectedPairAllowed": true | false | null,
   "serviceOnlineInGeneral": boolean,
   "otherOnlineMasterCount": number,
   "otherOnlineMasters": [{ "id": "...", "publicName": "..." }]
 }
 ```
 
-`otherOnlineMasters` только при `includeAlternatives: true`.
+- `selectedPairAllowed` is `null` when `masterId` omitted; boolean when a pair was evaluated.
+- `otherOnlineMasters` only when `includeAlternatives: true`.
+- Unknown / private / inactive services share `SERVICE_INACTIVE` (no existence leak via `SERVICE_NOT_FOUND`).
+- Alternatives come from `listMastersForService` (canonical ONLINE chain), exclude selected master, ordered by `sortOrder`.
 
 Правила:
 
 - SoT = существующая AND-цепочка + studio kill-switch
 - Закрытый выбранный мастер (`Master.isOnlineBookingEnabled=false`) → **не** авто-замена
-- Другие ONLINE-мастера — только metadata alternatives; bot покажет их после явного согласия клиента
+- Другие ONLINE-мастера — только metadata alternatives
 - Internal API не возвращает клиентский текст и internal notes
 
 ## Studio kill-switch
 
 `assertStudioOnlineBookingEnabled` вызывается из `assertOnlineBookable` (slots/create path).
 
+`getAvailableDaysInMonth` resolves the studio flag once, then reuses a memoized runtime for the day loop (avoids N+1 `StudioSettings` reads).
+
+Missing StudioSettings row: `ensureStudioSettings()` upserts singleton with `DEFAULT_STUDIO_SETTINGS.isOnlineBookingEnabled: true` — same SoT as public settings API.
+
 Studio off:
 
 - self-booking denied (`OnlineServiceUnavailableError` / `SERVICE_UNAVAILABLE`)
 - eligibility → `MANAGER_HANDOFF` + `STUDIO_ONLINE_DISABLED`
-- manager-request остаётся доступным (PR C; не блокируется здесь)
+- manager-request остаётся доступным (не использует `assertOnlineBookable`)
 
 ## Tests
 
 ```bash
 npm run test:security:bot-internal-api-pr-a
-npm run test:security:master-service-access-rules
+npx tsx scripts/security-master-service-access-rules-check.ts
 npx tsx scripts/security-csrf-coverage-check.ts
 ```
 
