@@ -80,7 +80,9 @@ uses the TypeScript compiler API (AST). It fails if:
 - namespace has zero routes;
 - any HTTP method export is a bare function/arrow;
 - wrapper appears only in comments, strings, or dead code;
-- import is missing, aliased, or from a non-approved module;
+- import is not the **exact** runtime named import
+  `import { withBotInternalApi } from "@/lib/auth/bot-internal-api"`
+  (no alias, type-only, relative/suffix/fake path, shadowing, or competing binding);
 - one method is wrapped while another is raw.
 
 ## Body limit

@@ -14,10 +14,8 @@ import ts from "typescript";
 /** Must match `BOT_INTERNAL_API_WRAPPER_NAME` in src/lib/auth/bot-internal-api.ts */
 export const BOT_INTERNAL_API_WRAPPER_NAME = "withBotInternalApi";
 
-const APPROVED_IMPORT_SPECIFIERS = new Set([
-  "@/lib/auth/bot-internal-api",
-  "src/lib/auth/bot-internal-api",
-]);
+/** Exact production import path only — no suffix/relative/fuzzy matches. */
+export const APPROVED_BOT_INTERNAL_API_MODULE = "@/lib/auth/bot-internal-api";
 
 const HTTP_METHODS = new Set([
   "GET",
@@ -44,56 +42,96 @@ function hasExportModifier(
   );
 }
 
-function normalizeImportSpecifier(specifier: string): string {
-  return specifier.replace(/\\/g, "/").replace(/\.ts$/, "");
-}
-
-function isApprovedImportSpecifier(specifier: string): boolean {
-  const normalized = normalizeImportSpecifier(specifier);
-  if (APPROVED_IMPORT_SPECIFIERS.has(normalized)) {
-    return true;
-  }
-  return (
-    normalized.endsWith("/lib/auth/bot-internal-api") ||
-    normalized === "lib/auth/bot-internal-api"
-  );
+function isExactApprovedModuleSpecifier(specifier: string): boolean {
+  // Exact equality only. No endsWith, normalize, relative, or case-folding.
+  return specifier === APPROVED_BOT_INTERNAL_API_MODULE;
 }
 
 /**
- * True when `withBotInternalApi` is imported by exact name (no alias) from the
- * approved server-only module.
+ * True when exactly one unambiguous runtime binding named
+ * `withBotInternalApi` exists: an exact named non-type-only import from
+ * `@/lib/auth/bot-internal-api`, with no alias, no local shadow, and no
+ * competing import of the same local name.
  */
 export function findApprovedBotInternalWrapperImport(
   sourceFile: ts.SourceFile,
 ): boolean {
+  let approvedRuntimeImportCount = 0;
+  let competingBinding = false;
+
   for (const statement of sourceFile.statements) {
-    if (!ts.isImportDeclaration(statement)) {
-      continue;
-    }
-    if (!ts.isStringLiteral(statement.moduleSpecifier)) {
-      continue;
-    }
-    if (!isApprovedImportSpecifier(statement.moduleSpecifier.text)) {
-      continue;
-    }
-
-    const bindings = statement.importClause?.namedBindings;
-    if (!bindings || !ts.isNamedImports(bindings)) {
-      continue;
-    }
-
-    for (const element of bindings.elements) {
-      // Alias imports are rejected: propertyName present means renamed binding.
-      if (element.propertyName) {
+    if (ts.isImportDeclaration(statement)) {
+      if (!ts.isStringLiteral(statement.moduleSpecifier)) {
         continue;
       }
-      if (element.name.text === BOT_INTERNAL_API_WRAPPER_NAME) {
-        return true;
+
+      const specifier = statement.moduleSpecifier.text;
+      const clause = statement.importClause;
+      if (!clause) {
+        continue;
+      }
+
+      if (clause.name?.text === BOT_INTERNAL_API_WRAPPER_NAME) {
+        // Default import bound to the wrapper name.
+        competingBinding = true;
+      }
+
+      const bindings = clause.namedBindings;
+      if (bindings && ts.isNamespaceImport(bindings)) {
+        if (bindings.name.text === BOT_INTERNAL_API_WRAPPER_NAME) {
+          competingBinding = true;
+        }
+      }
+
+      if (bindings && ts.isNamedImports(bindings)) {
+        for (const element of bindings.elements) {
+          const importsWrapperName =
+            element.name.text === BOT_INTERNAL_API_WRAPPER_NAME ||
+            element.propertyName?.text === BOT_INTERNAL_API_WRAPPER_NAME;
+          if (!importsWrapperName) {
+            continue;
+          }
+
+          const isExactApprovedRuntime =
+            isExactApprovedModuleSpecifier(specifier) &&
+            clause.isTypeOnly !== true &&
+            element.isTypeOnly !== true &&
+            element.propertyName == null &&
+            element.name.text === BOT_INTERNAL_API_WRAPPER_NAME;
+
+          if (isExactApprovedRuntime) {
+            approvedRuntimeImportCount += 1;
+          } else {
+            // Alias, type-only, fake/relative path, or renamed binding.
+            competingBinding = true;
+          }
+        }
+      }
+
+      continue;
+    }
+
+    if (
+      ts.isFunctionDeclaration(statement) &&
+      statement.name?.text === BOT_INTERNAL_API_WRAPPER_NAME
+    ) {
+      competingBinding = true;
+      continue;
+    }
+
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (
+          ts.isIdentifier(declaration.name) &&
+          declaration.name.text === BOT_INTERNAL_API_WRAPPER_NAME
+        ) {
+          competingBinding = true;
+        }
       }
     }
   }
 
-  return false;
+  return approvedRuntimeImportCount === 1 && !competingBinding;
 }
 
 function isWithBotInternalApiCall(expression: ts.Expression): boolean {
@@ -186,7 +224,7 @@ export function assertRouteSourceUsesBotInternalApi(
 
   if (!analysis.hasApprovedImport) {
     throw new Error(
-      `missing exact named import { ${BOT_INTERNAL_API_WRAPPER_NAME} } from approved @/lib/auth/bot-internal-api`,
+      `missing exact named runtime import { ${BOT_INTERNAL_API_WRAPPER_NAME} } from "${APPROVED_BOT_INTERNAL_API_MODULE}" (no alias/type-only/suffix/shadow)`,
     );
   }
 

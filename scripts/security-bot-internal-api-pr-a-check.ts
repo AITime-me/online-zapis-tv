@@ -874,6 +874,146 @@ export const POST = wrap(async () => null);
 `),
   );
 
+  // Fake suffix path (@/evil/.../bot-internal-api)
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+import { withBotInternalApi } from "@/evil/lib/auth/bot-internal-api";
+export const POST = withBotInternalApi(async () => null);
+`),
+  );
+
+  // Similar fake path
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+import { withBotInternalApi } from "@/lib/auth/bot-internal-api-fake";
+export const POST = withBotInternalApi(async () => null);
+`),
+  );
+
+  // Relative suffix path
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+import { withBotInternalApi } from "../../../../lib/auth/bot-internal-api";
+export const POST = withBotInternalApi(async () => null);
+`),
+  );
+
+  // src/ absolute-style path (not the approved alias)
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+import { withBotInternalApi } from "src/lib/auth/bot-internal-api";
+export const POST = withBotInternalApi(async () => null);
+`),
+  );
+
+  // Trailing slash
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+import { withBotInternalApi } from "@/lib/auth/bot-internal-api/";
+export const POST = withBotInternalApi(async () => null);
+`),
+  );
+
+  // Case variation
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+import { withBotInternalApi } from "@/Lib/Auth/bot-internal-api";
+export const POST = withBotInternalApi(async () => null);
+`),
+  );
+
+  // Clause-level type-only import
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+import type { withBotInternalApi } from "@/lib/auth/bot-internal-api";
+export const POST = withBotInternalApi(async () => null);
+`),
+  );
+
+  // Specifier-level type-only import
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+import { type withBotInternalApi } from "@/lib/auth/bot-internal-api";
+export const POST = withBotInternalApi(async () => null);
+`),
+  );
+
+  // Default import
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+import withBotInternalApi from "@/lib/auth/bot-internal-api";
+export const POST = withBotInternalApi(async () => null);
+`),
+  );
+
+  // Namespace import
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+import * as withBotInternalApi from "@/lib/auth/bot-internal-api";
+export const POST = withBotInternalApi.withBotInternalApi(async () => null);
+`),
+  );
+
+  // Local fake function with exact name (no import)
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+function withBotInternalApi(handler: unknown) { return handler; }
+export const POST = withBotInternalApi(async () => null);
+`),
+  );
+
+  // Approved import shadowed by local function
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+${approvedImport}
+function withBotInternalApi(handler: unknown) { return handler; }
+export const POST = withBotInternalApi(async () => null);
+`),
+  );
+
+  // Approved import shadowed by local variable
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+${approvedImport}
+const withBotInternalApi = (handler: unknown) => handler;
+export const POST = withBotInternalApi(async () => null);
+`),
+  );
+
+  // Duplicate approved + fake binding ambiguity
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+${approvedImport}
+import { withBotInternalApi as other } from "@/evil/lib/auth/bot-internal-api";
+export const POST = withBotInternalApi(async () => null);
+`),
+  );
+
+  // Fake import alone with wrapped-looking POST
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+import { withBotInternalApi } from "@/evil/lib/auth/bot-internal-api";
+export const POST = withBotInternalApi(async () => null);
+`),
+  );
+
+  // Re-exported POST
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+${approvedImport}
+const POST = async () => null;
+export { POST };
+`),
+  );
+
+  // Raw exported function POST
+  assert.throws(() =>
+    coverage.assertRouteSourceUsesBotInternalApi(`
+${approvedImport}
+export async function POST() { return null; }
+`),
+  );
+
   // Empty exports
   assert.throws(() =>
     coverage.assertRouteSourceUsesBotInternalApi(`
