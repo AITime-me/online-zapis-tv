@@ -19,11 +19,40 @@ export const WHEEL_E2E_SLUGS = {
 
 export type WheelE2eSlugs = typeof WHEEL_E2E_SLUGS;
 
-const CATALOG_IDS = {
+export const CATALOG_IDS = {
   active: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
   draft: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
   invalid: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
 } as const;
+
+/** Distinct gift id namespace per catalog — shared UUIDs would move gifts between catalogs on upsert. */
+export const CATALOG_GIFT_ID_PREFIX: Record<keyof typeof CATALOG_IDS, string> = {
+  active: "00000000-0000-4000-8000",
+  draft: "00000000-0000-4000-8001",
+  invalid: "00000000-0000-4000-8002",
+};
+
+function catalogKeyFromId(catalogId: string): keyof typeof CATALOG_IDS | null {
+  if (catalogId === CATALOG_IDS.active) {
+    return "active";
+  }
+  if (catalogId === CATALOG_IDS.draft) {
+    return "draft";
+  }
+  if (catalogId === CATALOG_IDS.invalid) {
+    return "invalid";
+  }
+  return null;
+}
+
+export function wheelGiftId(catalogId: string, index: number): string {
+  const catalogKey = catalogKeyFromId(catalogId);
+  if (!catalogKey) {
+    throw new Error(`unknown wheel E2E catalog id: ${catalogId}`);
+  }
+  const prefix = CATALOG_GIFT_ID_PREFIX[catalogKey];
+  return `${prefix}-${String(index + 1).padStart(12, "0")}`;
+}
 
 export async function publishRequiredLegalDocuments(
   prisma: PrismaClient,
@@ -81,7 +110,7 @@ async function upsertWheelGifts(
     if (options?.onlyFirstGift && index > 0) {
       continue;
     }
-    const id = `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
+    const id = wheelGiftId(catalogId, index);
     const isActive = options?.deactivateAll ? false : definition.isActive;
     await prisma.gameGift.upsert({
       where: { id },
@@ -134,7 +163,6 @@ async function upsertWheelCatalog(
       status: input.status,
       settings: buildDefaultWheelCatalogSettings() as object,
       campaignKey: "permanent-wheel",
-      publicPath: `/promo/${input.slug}`,
     },
     create: {
       id: input.id,
@@ -145,7 +173,6 @@ async function upsertWheelCatalog(
       settings: buildDefaultWheelCatalogSettings() as object,
       campaignKey: "permanent-wheel",
       rulesVersion: "1",
-      publicPath: `/promo/${input.slug}`,
     },
   });
 }

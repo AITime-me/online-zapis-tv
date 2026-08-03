@@ -7,14 +7,17 @@ import {
   startEphemeralPostgres,
 } from "./lib/ephemeral-postgres";
 import {
+  buildIsolatedBuildEnv,
+  buildIsolatedPlaywrightEnv,
+  buildIsolatedRuntimeEnv,
+  playwrightDockerEnvArgs,
+} from "./lib/wheel-isolated-env";
+import {
   seedWheelIsolatedE2eData,
   WHEEL_E2E_SLUGS,
 } from "./lib/wheel-isolated-seed";
 
 const ROOT = path.resolve(__dirname, "..");
-
-const ISOLATED_AUTH_SECRET = "wheel-e2e-isolated-auth-secret-32chars-min";
-const ISOLATED_VIEW_TOKEN = "wheel-e2e-schedule-view-token-32chars";
 
 function pickAppPort(): number {
   return 38000 + (Date.now() % 2000);
@@ -65,66 +68,22 @@ function ensureProductionBuild(): void {
     timeout: 900_000,
     shell: true,
     stdio: "inherit",
-    env: {
-      ...process.env,
-      DATABASE_URL:
-        process.env.DATABASE_URL ??
-        "postgresql://postgres:build@127.0.0.1:65534/wheel_e2e_build_stub",
-      AUTH_SECRET: ISOLATED_AUTH_SECRET,
-      AUTH_URL: "http://127.0.0.1:3000",
-      SCHEDULE_VIEW_TOKEN: ISOLATED_VIEW_TOKEN,
-      MAIL_PROVIDER: "disabled",
-    },
+    env: buildIsolatedBuildEnv(),
   });
   if (build.status !== 0) {
     throw new Error("wheel-e2e-isolated: production build failed");
   }
 }
 
-function buildAppEnv(port: number, databaseUrl: string): NodeJS.ProcessEnv {
-  const baseUrl = `http://127.0.0.1:${port}`;
-  return {
-    ...process.env,
-    NODE_ENV: "production",
-    DATABASE_URL: databaseUrl,
-    AUTH_SECRET: ISOLATED_AUTH_SECRET,
-    AUTH_URL: baseUrl,
-    SCHEDULE_VIEW_TOKEN: ISOLATED_VIEW_TOKEN,
-    MAIL_PROVIDER: "disabled",
-    PLAYWRIGHT_BASE_URL: baseUrl,
-    WHEEL_E2E_ISOLATED: "1",
-    WHEEL_E2E_CATALOG_SLUG: WHEEL_E2E_SLUGS.active,
-    WHEEL_E2E_DRAFT_SLUG: WHEEL_E2E_SLUGS.draft,
-    WHEEL_E2E_INVALID_SLUG: WHEEL_E2E_SLUGS.invalid,
-  };
-}
-
-function playwrightEnvVars(appEnv: NodeJS.ProcessEnv): string[] {
-  const keys = [
-    "PLAYWRIGHT_BASE_URL",
-    "WHEEL_E2E_ISOLATED",
-    "WHEEL_E2E_CATALOG_SLUG",
-    "WHEEL_E2E_DRAFT_SLUG",
-    "WHEEL_E2E_INVALID_SLUG",
-  ] as const;
-  const args: string[] = [];
-  for (const key of keys) {
-    const value = appEnv[key];
-    if (value) {
-      args.push("-e", `${key}=${value}`);
-    }
-  }
-  return args;
-}
-
-function runPlaywrightHost(appEnv: NodeJS.ProcessEnv): Promise<number> {
+function runPlaywrightHost(runtimeEnv: NodeJS.ProcessEnv): Promise<number> {
+  const playwrightEnv = buildIsolatedPlaywrightEnv(runtimeEnv);
   return new Promise((resolve) => {
     const child = spawn(
       "npx",
       ["playwright", "test", "tests/wheel-fortune-public.spec.ts"],
       {
         cwd: ROOT,
-        env: appEnv,
+        env: playwrightEnv,
         shell: true,
         stdio: "inherit",
       },
@@ -133,7 +92,7 @@ function runPlaywrightHost(appEnv: NodeJS.ProcessEnv): Promise<number> {
   });
 }
 
-function runPlaywrightDocker(appEnv: NodeJS.ProcessEnv): Promise<number> {
+function runPlaywrightDocker(runtimeEnv: NodeJS.ProcessEnv): Promise<number> {
   const image =
     process.env.WHEEL_E2E_PLAYWRIGHT_IMAGE ??
     "mcr.microsoft.com/playwright:v1.61.1-noble";
@@ -152,7 +111,7 @@ function runPlaywrightDocker(appEnv: NodeJS.ProcessEnv): Promise<number> {
       `${mountPath}:/work`,
       "-w",
       "/work",
-      ...playwrightEnvVars(appEnv),
+      ...playwrightDockerEnvArgs(runtimeEnv),
       image,
       "npx",
       "playwright",
@@ -213,13 +172,13 @@ async function main(): Promise<void> {
     ensureProductionBuild();
 
     const port = pickAppPort();
-    const appEnv = buildAppEnv(port, pg.databaseUrl);
-    const baseUrl = appEnv.PLAYWRIGHT_BASE_URL!;
+    const runtimeEnv = buildIsolatedRuntimeEnv(port, pg.databaseUrl);
+    const baseUrl = runtimeEnv.PLAYWRIGHT_BASE_URL!;
 
     console.log(`wheel-e2e-isolated: starting Next.js on ${baseUrl}`);
     nextProcess = spawn("npx", ["next", "start", "-p", String(port)], {
       cwd: ROOT,
-      env: appEnv,
+      env: runtimeEnv,
       shell: true,
       stdio: "inherit",
     });
@@ -229,8 +188,8 @@ async function main(): Promise<void> {
     console.log("wheel-e2e-isolated: running Playwright wheel E2E…");
     exitCode =
       process.env.WHEEL_E2E_PLAYWRIGHT_DOCKER === "1"
-        ? await runPlaywrightDocker(appEnv)
-        : await runPlaywrightHost(appEnv);
+        ? await runPlaywrightDocker(runtimeEnv)
+        : await runPlaywrightHost(runtimeEnv);
   } catch (error) {
     console.error(
       "wheel-e2e-isolated: error",
@@ -246,7 +205,7 @@ async function main(): Promise<void> {
 
   if (exitCode === 0) {
     console.log("wheel-e2e-isolated: PASS");
-    console.log("wheel-fortune-public-e2e: PASS");
+    console.log("wheel-fortune-public-e2e: PASS (13 tests)");
   } else {
     console.error(`wheel-e2e-isolated: FAIL (playwright exit ${exitCode})`);
   }
