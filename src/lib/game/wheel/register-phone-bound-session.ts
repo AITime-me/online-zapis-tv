@@ -21,6 +21,7 @@ import {
   isPrismaUniqueViolation,
   readPrismaUniqueTarget,
 } from "@/lib/game/wheel/phone-attempt-registration";
+import { parseWheelServerAssignment } from "@/lib/game/wheel/parse-wheel-assignment";
 import { WheelSecretError } from "@/lib/game/wheel/wheel-env-contract";
 import type { WheelServerAssignmentV1 } from "@/lib/game/wheel/wheel-assignment-contract";
 import { normalizeGameBookingPhoneKey } from "@/lib/game/game-open-request-policy";
@@ -116,8 +117,8 @@ function validateRegisterInput(
   if (!isValidWheelAttemptId(input.attemptId)) {
     return { ok: false, message: "attemptId is invalid" };
   }
-  if (input.serverAssignment?.mechanicType !== "WHEEL_OF_FORTUNE") {
-    return { ok: false, message: "serverAssignment mechanic is invalid" };
+  if (!parseWheelServerAssignment(input.serverAssignment)) {
+    return { ok: false, message: "serverAssignment is invalid" };
   }
   if (
     !(input.playExpiresAt instanceof Date) ||
@@ -146,26 +147,6 @@ function toPublicDto(input: {
   };
 }
 
-function parseStoredAssignment(
-  raw: unknown,
-): WheelServerAssignmentV1 | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return null;
-  }
-  const value = raw as Partial<WheelServerAssignmentV1>;
-  if (value.mechanicType !== "WHEEL_OF_FORTUNE" || value.version !== 1) {
-    return null;
-  }
-  if (
-    typeof value.sectorIndex !== "number" ||
-    typeof value.giftId !== "string" ||
-    typeof value.prizeSystemKey !== "string"
-  ) {
-    return null;
-  }
-  return value as WheelServerAssignmentV1;
-}
-
 function requireStoredAssignment(
   raw: unknown,
 ):
@@ -175,7 +156,7 @@ function requireStoredAssignment(
       error: "RESULT_UNAVAILABLE";
       message: string;
     } {
-  const stored = parseStoredAssignment(raw);
+  const stored = parseWheelServerAssignment(raw);
   if (!stored) {
     return {
       ok: false,

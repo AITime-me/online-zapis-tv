@@ -5,7 +5,6 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   canActivateGameCatalog,
-  getGameCatalogActivationBlockReason,
 } from "../src/types/game-catalog";
 import { canManageGameAdmin } from "../src/lib/auth/permissions";
 import {
@@ -399,7 +398,10 @@ function assertServerOnlyAssignmentAndIdempotency(): void {
   assert.doesNotMatch(assignmentJson, /"probability"|"weight"/);
 }
 
-function assertPhoneCampaignDbBackedIsolation(): void {
+function assertPhoneCampaignInMemoryIsolation(): void {
+  // Unit-level concurrent semantics via InMemoryPhoneAttemptRegistry.
+  // Real PostgreSQL unique-index / P2002 proof lives in
+  // scripts/security-wheel-phone-attempt-db-check.ts — do not treat this as DB proof.
   const existing = [
     {
       normalizedPhone: "79991234567",
@@ -756,9 +758,8 @@ function assertEligibilityRules(): void {
 }
 
 function assertCatchTimeAndAccessUnchanged(): void {
-  assert.equal(canActivateGameCatalog("wheel_of_fortune", "active"), false);
+  assert.equal(canActivateGameCatalog("wheel_of_fortune", "active"), true);
   assert.equal(canActivateGameCatalog("wheel_of_fortune", "draft"), true);
-  assert.ok(getGameCatalogActivationBlockReason("wheel_of_fortune"));
   assert.equal(canActivateGameCatalog("catch_time", "active"), true);
 
   assert.equal(canManageGameAdmin("OWNER"), true);
@@ -769,6 +770,7 @@ function assertCatchTimeAndAccessUnchanged(): void {
     path.join(process.cwd(), "src/services/GameSessionService.ts"),
     "utf8",
   );
+  // Legacy Catch-Time session routes still reject wheel; public wheel uses /api/game/wheel/*.
   assert.match(sessionService, /GAME_MECHANIC_UNSUPPORTED/);
 }
 
@@ -844,7 +846,7 @@ function runChecks(): void {
   assertDefaultSectorLayout();
   assertInactiveExcluded();
   assertServerOnlyAssignmentAndIdempotency();
-  assertPhoneCampaignDbBackedIsolation();
+  assertPhoneCampaignInMemoryIsolation();
   assertClientAttemptIdModuleSplit();
   assertEligibilityRules();
   assertCatchTimeAndAccessUnchanged();

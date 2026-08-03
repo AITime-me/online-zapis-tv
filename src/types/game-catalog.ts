@@ -61,9 +61,7 @@ export const GAME_CATALOG_STATUS_LABELS: Record<GameCatalogStatusDto, string> = 
   archived: "Архив",
 };
 
-export const GAME_TYPES_WITHOUT_PUBLIC_RENDERER: GameCatalogTypeDto[] = [
-  "wheel_of_fortune",
-];
+export const GAME_TYPES_WITHOUT_PUBLIC_RENDERER: GameCatalogTypeDto[] = [];
 
 export function isGameTypePubliclyRenderable(type: GameCatalogTypeDto): boolean {
   return !GAME_TYPES_WITHOUT_PUBLIC_RENDERER.includes(type);

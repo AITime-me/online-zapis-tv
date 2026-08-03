@@ -22,7 +22,10 @@ import {
   PREMIUM_DISABLED_READINESS_WARNING,
 } from "@/lib/game/tier/server-tier-policy";
 import { buildDefaultWheelCatalogSettings } from "@/lib/game/wheel/default-prizes";
-import { ensureDefaultWheelPrizes } from "@/lib/game/wheel/wheel-admin";
+import {
+  assertWheelCatalogReadyForActivation,
+  ensureDefaultWheelPrizes,
+} from "@/lib/game/wheel/wheel-admin";
 
 export class GameCatalogValidationError extends Error {
   constructor(message: string) {
@@ -219,6 +222,12 @@ export async function createGameCatalog(
     );
   }
 
+  if (status === "active" && type === "wheel_of_fortune") {
+    throw new GameCatalogValidationError(
+      "Сначала создайте черновик и загрузите 16 секторов, затем активируйте игру",
+    );
+  }
+
   const defaultWheelSettings =
     type === "wheel_of_fortune" && input.settings === undefined
       ? buildDefaultWheelCatalogSettings()
@@ -273,6 +282,20 @@ export async function updateGameCatalog(
       getGameCatalogActivationBlockReason(nextType) ??
         "Нельзя активировать игру этого типа",
     );
+  }
+
+  if (nextStatus === "active" && nextType === "wheel_of_fortune") {
+    const settingsRaw =
+      input.settings !== undefined ? input.settings : existing.settings;
+    try {
+      await assertWheelCatalogReadyForActivation(id, settingsRaw);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Конфигурация колеса невалидна";
+      throw new GameCatalogValidationError(message);
+    }
   }
 
   const slug =

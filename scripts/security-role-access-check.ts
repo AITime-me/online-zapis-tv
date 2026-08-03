@@ -442,6 +442,9 @@ const PUBLIC_OR_TOKEN_API = new Set([
   "src/app/api/game/session/complete/route.ts",
   "src/app/api/game/session/result/route.ts",
   "src/app/api/game/play/route.ts",
+  "src/app/api/game/wheel/start/route.ts",
+  "src/app/api/game/wheel/complete/route.ts",
+  "src/app/api/game/wheel/result/route.ts",
 ]);
 
 const AUTH_HELPER_CALL =
