@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Response } from "@playwright/test";
 import { config as loadEnv } from "dotenv";
 
 const IS_ISOLATED = process.env.WHEEL_E2E_ISOLATED === "1";
@@ -38,6 +38,27 @@ export function phoneForTest(testNumber: number): string {
 
 function phoneE164(localPhone: string): string {
   return `+7${localPhone}`;
+}
+
+function isWheelStartPost(response: Response): boolean {
+  return (
+    response.url().includes("/api/game/wheel/start") &&
+    response.request().method() === "POST"
+  );
+}
+
+function isWheelCompletePost(response: Response): boolean {
+  return (
+    response.url().includes("/api/game/wheel/complete") &&
+    response.request().method() === "POST"
+  );
+}
+
+function isWheelResultGet(response: Response): boolean {
+  return (
+    response.url().includes("/api/game/wheel/result") &&
+    response.request().method() === "GET"
+  );
 }
 
 async function dismissCookieBanner(page: Page) {
@@ -179,24 +200,14 @@ async function spinWheel(page: Page, phone: string) {
   await fillLeadForm(page, phone);
 
   let startPostCount = 0;
-  const onStartResponse = (response: {
-    url(): string;
-    request(): { method(): string };
-  }) => {
-    if (
-      response.url().includes("/api/game/wheel/start") &&
-      response.request().method() === "POST"
-    ) {
+  const onStartResponse = (response: Response) => {
+    if (isWheelStartPost(response)) {
       startPostCount += 1;
     }
   };
   page.on("response", onStartResponse);
 
-  const startResponsePromise = page.waitForResponse(
-    (response) =>
-      response.url().includes("/api/game/wheel/start") &&
-      response.request().method() === "POST",
-  );
+  const startResponsePromise = page.waitForResponse(isWheelStartPost);
 
   try {
     await page.getByTestId("wheel-start-button").click();
@@ -246,7 +257,10 @@ test.describe("Wheel of Fortune public flow", () => {
     await spinWheel(page, phone);
     await page.getByRole("radio", { name: "Губы" }).check();
     await acceptConsents(page);
+    const completeResponsePromise = page.waitForResponse(isWheelCompletePost);
     await page.getByTestId("wheel-complete-button").click();
+    const completeResponse = await completeResponsePromise;
+    expect(completeResponse.ok()).toBeTruthy();
     await expect(page.getByTestId("wheel-submitted")).toBeVisible({
       timeout: 30_000,
     });
@@ -266,10 +280,69 @@ test.describe("Wheel of Fortune public flow", () => {
     await spinWheel(page, phoneForTest(3));
   });
 
-  test("name, phone and consents are required before start", async ({ page }) => {
+  test("name, phone and consents are required before start", async ({
+    page,
+  }) => {
     await gotoActiveWheel(page);
-    await page.getByTestId("wheel-start-button").click();
-    await expect(page.getByTestId("wheel-error-alert")).toBeVisible();
+
+    const nameInput = page.getByLabel("Имя");
+    const phoneInput = page.getByTestId("wheel-phone-input");
+    const personal = page.getByTestId("legal-personal-data-consent");
+    const offer = page.getByTestId("legal-offer-acknowledgement");
+    const start = page.getByTestId("wheel-start-button");
+
+    let startPostCount = 0;
+    const onStartResponse = (response: Response) => {
+      if (isWheelStartPost(response)) {
+        startPostCount += 1;
+      }
+    };
+    page.on("response", onStartResponse);
+
+    try {
+      // Part A — native HTML constraint validation on empty required fields.
+      // Name/phone have `required`; submit button is type="submit".
+      // Browser blocks the submit event before React onStart() runs, so
+      // wheel-error-alert must NOT be required here.
+      await start.click();
+      await expect(nameInput).toHaveJSProperty("validity.valid", false);
+      await expect(phoneInput).toHaveJSProperty("validity.valid", false);
+      const nameCheckValidity = await nameInput.evaluate(
+        (element: HTMLInputElement) => element.checkValidity(),
+      );
+      const phoneCheckValidity = await phoneInput.evaluate(
+        (element: HTMLInputElement) => element.checkValidity(),
+      );
+      expect(nameCheckValidity).toBe(false);
+      expect(phoneCheckValidity).toBe(false);
+      expect(startPostCount).toBe(0);
+      await expect(page.getByTestId("wheel-error-alert")).toHaveCount(0);
+      await expect(start).toBeVisible();
+      await expect(page.getByTestId("wheel-complete-button")).toHaveCount(0);
+      await expect(page.getByTestId("wheel-fortune-public")).toBeVisible();
+
+      // Part B — consent checkboxes are NOT native-required; React onStart
+      // validates them after name/phone satisfy HTML constraints.
+      await nameInput.fill(TEST_NAME);
+      await phoneInput.fill(phoneForTest(4));
+      await expect(nameInput).toHaveJSProperty("validity.valid", true);
+      await expect(phoneInput).toHaveJSProperty("validity.valid", true);
+      await expect(personal).not.toBeChecked();
+      await expect(offer).not.toBeChecked();
+
+      await start.click();
+      await expect(page.getByTestId("wheel-error-alert")).toBeVisible({
+        timeout: 5_000,
+      });
+      await expect(page.getByTestId("wheel-error-alert")).toContainText(
+        "соглас",
+      );
+      expect(startPostCount).toBe(0);
+      await expect(start).toBeVisible();
+      await expect(page.getByTestId("wheel-complete-button")).toHaveCount(0);
+    } finally {
+      page.off("response", onStartResponse);
+    }
   });
 
   test("double-click start creates one session result", async ({ page }) => {
@@ -278,22 +351,22 @@ test.describe("Wheel of Fortune public flow", () => {
     await fillLeadForm(page, phone);
 
     let startPostCount = 0;
-    const onStartResponse = (response: {
-      url(): string;
-      request(): { method(): string };
-    }) => {
-      if (
-        response.url().includes("/api/game/wheel/start") &&
-        response.request().method() === "POST"
-      ) {
+    const onStartResponse = (response: Response) => {
+      if (isWheelStartPost(response)) {
         startPostCount += 1;
       }
     };
     page.on("response", onStartResponse);
 
+    const startResponsePromise = page.waitForResponse(isWheelStartPost);
+
     try {
       const start = page.getByTestId("wheel-start-button");
+      await expect(start).toBeEnabled();
       await start.dblclick();
+
+      const startResponse = await startResponsePromise;
+      expect(startResponse.ok()).toBeTruthy();
       await expect(page.getByTestId("wheel-complete-button")).toBeVisible({
         timeout: 30_000,
       });
@@ -304,9 +377,12 @@ test.describe("Wheel of Fortune public flow", () => {
       );
       expect(resultResponse.ok()).toBeTruthy();
       const body = (await resultResponse.json()) as {
-        animation?: { sectorIndex: number };
+        ok?: boolean;
+        animation?: { sectorIndex: number; prizeDisplayName?: string };
       };
+      expect(body.ok).toBe(true);
       expect(typeof body.animation?.sectorIndex).toBe("number");
+      expect(body.animation?.prizeDisplayName).toBeTruthy();
     } finally {
       page.off("response", onStartResponse);
     }
@@ -318,13 +394,35 @@ test.describe("Wheel of Fortune public flow", () => {
     await spinWheel(page, phone);
     const prizeBefore = await page.getByTestId("wheel-prize-name").textContent();
     expect(prizeBefore?.trim()).toBeTruthy();
+
+    const resultRestorePromise = page.waitForResponse(
+      (response) =>
+        isWheelResultGet(response) &&
+        response.url().includes(encodeURIComponent(WHEEL_SLUG)),
+    );
     await page.reload();
     await dismissCookieBanner(page);
+    const resultRestore = await resultRestorePromise;
+    expect(resultRestore.ok()).toBeTruthy();
+    const restoreBody = (await resultRestore.json()) as {
+      ok?: boolean;
+      animation?: { sectorIndex?: number; prizeDisplayName?: string };
+      bookingSubmitted?: boolean;
+    };
+    expect(restoreBody.ok).toBe(true);
+    expect(restoreBody.bookingSubmitted).not.toBe(true);
+    expect(restoreBody.animation?.prizeDisplayName).toBe(prizeBefore?.trim());
+
     await expect(page.getByTestId("wheel-complete-button")).toBeVisible({
       timeout: 30_000,
     });
+    await expect(page.getByTestId("wheel-start-button")).toHaveCount(0);
     const prizeAfter = await page.getByTestId("wheel-prize-name").textContent();
     expect(prizeAfter).toBe(prizeBefore);
+
+    // PII is not persisted in sessionStorage — claim fields reset after reload.
+    await expect(page.getByTestId("wheel-phone-input")).toHaveValue("");
+    await expect(page.getByLabel("Имя")).toHaveValue("");
   });
 
   test("retry complete does not create duplicate submission UI", async ({
@@ -335,18 +433,44 @@ test.describe("Wheel of Fortune public flow", () => {
     await spinWheel(page, phone);
     await page.getByRole("radio", { name: "Губы" }).check();
     await acceptConsents(page);
-    const complete = page.getByTestId("wheel-complete-button");
-    await complete.click();
-    await expect(page.getByTestId("wheel-submitted")).toBeVisible({
-      timeout: 30_000,
-    });
-    await expect(page.getByText("Спасибо!")).toBeVisible();
-    await page.reload();
-    await dismissCookieBanner(page);
-    await expect(page.getByText("Заявка уже отправлена")).toBeVisible({
-      timeout: 30_000,
-    });
-    await expect(page.getByTestId("wheel-complete-button")).toHaveCount(0);
+
+    let completePostCount = 0;
+    const onCompleteResponse = (response: Response) => {
+      if (isWheelCompletePost(response)) {
+        completePostCount += 1;
+      }
+    };
+    page.on("response", onCompleteResponse);
+
+    try {
+      const completeResponsePromise = page.waitForResponse(isWheelCompletePost);
+      await page.getByTestId("wheel-complete-button").click();
+      const completeResponse = await completeResponsePromise;
+      expect(completeResponse.ok()).toBeTruthy();
+      const completeBody = (await completeResponse.json()) as { ok?: boolean };
+      expect(completeBody.ok).toBe(true);
+
+      await expect(page.getByTestId("wheel-submitted")).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(page.getByTestId("wheel-submitted")).toHaveCount(1);
+      await expect(page.getByText("Спасибо!")).toBeVisible();
+      expect(completePostCount).toBe(1);
+
+      await page.reload();
+      await dismissCookieBanner(page);
+      await expect(page.getByTestId("wheel-submitted")).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(page.getByTestId("wheel-submitted-status")).toContainText(
+        "Заявка уже отправлена",
+      );
+      await expect(page.getByTestId("wheel-complete-button")).toHaveCount(0);
+      await expect(page.getByTestId("wheel-submitted")).toHaveCount(1);
+      expect(completePostCount).toBe(1);
+    } finally {
+      page.off("response", onCompleteResponse);
+    }
   });
 
   test("different interest after success does not change submitted state", async ({
@@ -357,7 +481,11 @@ test.describe("Wheel of Fortune public flow", () => {
     await spinWheel(page, phone);
     await page.getByRole("radio", { name: "Губы" }).check();
     await acceptConsents(page);
+
+    const completeResponsePromise = page.waitForResponse(isWheelCompletePost);
     await page.getByTestId("wheel-complete-button").click();
+    const completeResponse = await completeResponsePromise;
+    expect(completeResponse.ok()).toBeTruthy();
     await expect(page.getByTestId("wheel-submitted")).toBeVisible({
       timeout: 30_000,
     });
@@ -389,15 +517,24 @@ test.describe("Wheel of Fortune public flow", () => {
         Origin: origin,
       },
     });
+    expect(retry.status()).toBe(200);
     expect(retry.ok()).toBeTruthy();
-    const retryBody = (await retry.json()) as { ok?: boolean };
+    const retryBody = (await retry.json()) as {
+      ok?: boolean;
+      bookingSubmitted?: boolean;
+      prizeDisplayName?: string;
+    };
     expect(retryBody.ok).toBe(true);
+    expect(retryBody.bookingSubmitted).toBe(true);
+    expect(retryBody.prizeDisplayName).toBe(
+      resultBefore.animation?.prizeDisplayName,
+    );
 
     await page.reload();
     await dismissCookieBanner(page);
-    await expect(page.getByText("Заявка уже отправлена")).toBeVisible({
-      timeout: 30_000,
-    });
+    await expect(page.getByTestId("wheel-submitted-status")).toContainText(
+      "Заявка уже отправлена",
+    );
     await expect(page.getByTestId("wheel-complete-button")).toHaveCount(0);
 
     const resultAfterResponse = await page.request.get(
@@ -426,9 +563,15 @@ test.describe("Wheel of Fortune public flow", () => {
     await page.getByRole("radio", { name: "Брови" }).check();
     await acceptConsents(page);
 
+    const idempotencyKeys: string[] = [];
     let completeCalls = 0;
     await page.route("**/api/game/wheel/complete", async (route) => {
       completeCalls += 1;
+      const key =
+        route.request().headers()["idempotency-key"] ??
+        route.request().headers()["Idempotency-Key"] ??
+        "";
+      idempotencyKeys.push(key);
       if (completeCalls === 1) {
         await route.abort("failed");
         return;
@@ -440,12 +583,22 @@ test.describe("Wheel of Fortune public flow", () => {
     await expect(page.getByTestId("wheel-error-alert")).toBeVisible({
       timeout: 15_000,
     });
-    await page.unroute("**/api/game/wheel/complete");
+    expect(completeCalls).toBe(1);
+    expect(idempotencyKeys[0]?.length ?? 0).toBeGreaterThan(8);
+
+    // Keep the route so the second attempt is still observed and must reuse
+    // the same Idempotency-Key from sessionStorage.
     await page.getByTestId("wheel-complete-button").click();
     await expect(page.getByTestId("wheel-submitted")).toBeVisible({
       timeout: 30_000,
     });
     await expect(page.getByText("Спасибо!")).toBeVisible();
+    await expect(page.getByTestId("wheel-error-alert")).toHaveCount(0);
+
+    expect(completeCalls).toBe(2);
+    expect(idempotencyKeys).toHaveLength(2);
+    expect(idempotencyKeys[1]).toBe(idempotencyKeys[0]);
+    expect(idempotencyKeys[1]).toBeTruthy();
   });
 });
 
@@ -454,30 +607,57 @@ test.describe("Wheel promo gates", () => {
     if (!IS_ISOLATED && !WHEEL_DRAFT_SLUG) {
       test.skip(true, "WHEEL_E2E_DRAFT_SLUG not configured");
     }
-    await gotoPromo(page, WHEEL_DRAFT_SLUG);
+    expect(WHEEL_DRAFT_SLUG).not.toBe(WHEEL_SLUG);
+    expect(WHEEL_DRAFT_SLUG).not.toBe(WHEEL_INVALID_SLUG);
+
+    const response = await page.goto(`/promo/${WHEEL_DRAFT_SLUG}`);
+    expect(response).not.toBeNull();
+    expect(response!.status()).toBeLessThan(500);
+    await dismissCookieBanner(page);
+
     await expect(page.getByTestId("wheel-promo-unavailable")).toBeVisible();
+    await expect(page.getByTestId("wheel-promo-invalid-config")).toHaveCount(0);
     await expect(page.getByTestId("wheel-fortune-public")).toHaveCount(0);
+    await expect(page.getByTestId("wheel-start-button")).toHaveCount(0);
   });
 
   test("ACTIVE invalid config blocked", async ({ page }) => {
     if (!IS_ISOLATED && !WHEEL_INVALID_SLUG) {
       test.skip(true, "WHEEL_E2E_INVALID_SLUG not configured");
     }
-    await gotoPromo(page, WHEEL_INVALID_SLUG);
+    expect(WHEEL_INVALID_SLUG).not.toBe(WHEEL_SLUG);
+    expect(WHEEL_INVALID_SLUG).not.toBe(WHEEL_DRAFT_SLUG);
+
+    const response = await page.goto(`/promo/${WHEEL_INVALID_SLUG}`);
+    expect(response).not.toBeNull();
+    expect(response!.status()).toBeLessThan(500);
+    await dismissCookieBanner(page);
+
     await expect(page.getByTestId("wheel-promo-invalid-config")).toBeVisible();
+    await expect(page.getByTestId("wheel-promo-unavailable")).toHaveCount(0);
     await expect(page.getByTestId("wheel-fortune-public")).toHaveCount(0);
+    await expect(page.getByTestId("wheel-start-button")).toHaveCount(0);
   });
 
   test("ACTIVE valid config opens wheel", async ({ page }) => {
     await gotoActiveWheel(page);
     await expect(page.getByTestId("wheel-fortune-public")).toBeVisible();
+    await expect(page.getByTestId("wheel-start-button")).toBeVisible();
+    await expect(page.getByTestId("wheel-start-button")).toBeEnabled();
+    await expect(page.getByTestId("wheel-error-alert")).toHaveCount(0);
+    await expect(page.getByTestId("wheel-promo-unavailable")).toHaveCount(0);
+    await expect(page.getByTestId("wheel-promo-invalid-config")).toHaveCount(0);
   });
 });
 
 test.describe("Catch-Time regression", () => {
   test("procedure-gift page still loads", async ({ page }) => {
     const response = await page.goto("/promo/procedure-gift");
-    expect(response?.status()).toBeLessThan(500);
-    await expect(page.locator("body")).toBeVisible();
+    expect(response).not.toBeNull();
+    expect(response!.status()).toBe(200);
+    // Real Catch-Time marker — must not pass on a generic error/empty shell.
+    await expect(page.locator(".poimay-game")).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator("#screen-start")).toBeVisible();
+    await expect(page.getByTestId("wheel-fortune-public")).toHaveCount(0);
   });
 });

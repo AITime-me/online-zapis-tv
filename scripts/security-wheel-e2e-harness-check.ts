@@ -625,6 +625,96 @@ function assertWheelSpecNoSilentSkipInIsolatedMode(): void {
   assert.match(spec, /getByTestId\(["']wheel-prize-name["']\)/);
   assert.match(spec, /getByTestId\(["']wheel-submitted["']\)/);
   assert.match(spec, /startPostCount\)\.toBe\(1\)/);
+
+  // Test #4 — native HTML validation contract (not wheel-error-alert on empty submit).
+  assert.match(spec, /validity\.valid/);
+  assert.match(spec, /checkValidity/);
+  assert.match(
+    spec,
+    /Browser blocks the submit event before React onStart|native HTML constraint validation/,
+  );
+  assert.match(
+    spec,
+    /name, phone and consents are required[\s\S]*?startPostCount\)\.toBe\(0\)/,
+  );
+  assert.match(
+    spec,
+    /name, phone and consents are required[\s\S]*?wheel-error-alert[\s\S]*?toHaveCount\(0\)/,
+  );
+  assert.match(
+    spec,
+    /name, phone and consents are required[\s\S]*?toContainText\(\s*["']соглас["']/,
+  );
+  assert.doesNotMatch(
+    spec,
+    /name, phone and consents are required before start[\s\S]*?getByTestId\(["']wheel-start-button["']\)\.click\(\);\s*await expect\(page\.getByTestId\(["']wheel-error-alert["']\)\)\.toBeVisible\(\)/,
+    "empty-form click must not require wheel-error-alert (native validation blocks React)",
+  );
+
+  // Test #5 — exactly one start POST after dblclick.
+  assert.match(spec, /dblclick/);
+  assert.match(
+    spec,
+    /double-click start[\s\S]*?startPostCount\)\.toBe\(1\)/,
+  );
+
+  // Test #6 — result restore after reload + PII reset.
+  assert.match(
+    spec,
+    /refresh restores[\s\S]*?isWheelResultGet|refresh restores[\s\S]*?\/api\/game\/wheel\/result/,
+  );
+  assert.match(
+    spec,
+    /refresh restores[\s\S]*?toHaveValue\(["']["']\)/,
+  );
+
+  // Test #7/#9 — complete count / idempotency key reuse.
+  assert.match(
+    spec,
+    /retry complete[\s\S]*?completePostCount\)\.toBe\(1\)/,
+  );
+  assert.match(
+    spec,
+    /network retry on complete[\s\S]*?idempotencyKeys\[1\]\)\.toBe\(idempotencyKeys\[0\]\)/,
+  );
+  assert.match(
+    spec,
+    /network retry on complete[\s\S]*?completeCalls\)\.toBe\(2\)/,
+  );
+
+  // Test #8 — Origin + E164 + result prize lock.
+  assert.match(
+    spec,
+    /different interest after success[\s\S]*?Origin:\s*origin/,
+  );
+  assert.match(
+    spec,
+    /different interest after success[\s\S]*?phoneE164\(phone\)/,
+  );
+
+  // Test #10/#11 — distinct blocked states.
+  assert.match(
+    spec,
+    /DRAFT catalog blocked[\s\S]*?wheel-promo-unavailable[\s\S]*?wheel-promo-invalid-config[\s\S]*?toHaveCount\(0\)/,
+  );
+  assert.match(
+    spec,
+    /ACTIVE invalid config blocked[\s\S]*?wheel-promo-invalid-config[\s\S]*?wheel-promo-unavailable[\s\S]*?toHaveCount\(0\)/,
+  );
+
+  // Test #13 — real Catch-Time marker, not generic body/HTTP<500.
+  assert.match(spec, /\.poimay-game/);
+  assert.match(spec, /#screen-start/);
+  assert.match(
+    spec,
+    /procedure-gift page still loads[\s\S]*?status\(\)\)\.toBe\(200\)/,
+  );
+  assert.doesNotMatch(
+    spec,
+    /procedure-gift page still loads[\s\S]*?locator\(["']body["']\)/,
+    "Catch-Time must assert a real game marker, not only body visibility",
+  );
+
   assert.doesNotMatch(
     spec,
     /if \(\(await personal\.count\(\)\) > 0\)/,
@@ -638,6 +728,21 @@ function assertWheelSpecNoSilentSkipInIsolatedMode(): void {
   assert.doesNotMatch(
     spec,
     /desktop happy path[\s\S]*?test\.skip\(!\(await wheelAvailable/,
+  );
+  assert.doesNotMatch(
+    spec,
+    /getByRole\(["']alert["']\)[\s\S]{0,80}toBeVisible/,
+    "tests must not assert visibility via generic role=alert",
+  );
+
+  const phonesUsed = [
+    ...spec.matchAll(/phoneForTest\((\d+)\)/g),
+  ].map((match) => Number(match[1]));
+  assert.ok(phonesUsed.length >= 6, "independent tests must use phoneForTest");
+  assert.equal(
+    new Set(phonesUsed).size,
+    phonesUsed.length,
+    "phoneForTest numbers must be unique across the suite",
   );
 
   const testCount = (spec.match(/^\s*test\(/gm) ?? []).length;
@@ -655,11 +760,39 @@ function assertWheelSpecNoSilentSkipInIsolatedMode(): void {
   assert.match(wheelUi, /data-testid=["']wheel-submitted["']/);
   assert.match(wheelUi, /startRequestSerial/);
   assert.match(wheelUi, /startSucceededRef/);
+  assert.match(
+    wheelUi,
+    /onSubmit=\{\(event\) => \{\s*event\.preventDefault\(\);\s*void onStart\(\);/,
+  );
+  assert.match(
+    wheelUi,
+    /type=["']submit["'][\s\S]*?data-testid=["']wheel-start-button["']/,
+  );
+  assert.match(
+    wheelUi,
+    /<input[\s\S]*?autoComplete=["']name["'][\s\S]*?required/,
+  );
+  assert.match(
+    wheelUi,
+    /data-testid=["']wheel-phone-input["'][\s\S]*?required/,
+  );
   assert.doesNotMatch(
     wheelUi,
     /wheel_lead_draft_|writeLeadDraft|readLeadDraft/,
     "must not persist lead PII in sessionStorage",
   );
+
+  const legalFields = read("src/components/booking/booking-legal-links.tsx");
+  assert.match(legalFields, /type=["']checkbox["']/);
+  assert.doesNotMatch(
+    legalFields,
+    /type=["']checkbox["'][\s\S]{0,120}required/,
+    "consent checkboxes must remain React-validated (not native required)",
+  );
+
+  const catchTime = read("src/components/game/procedure-gift-game-vanilla.tsx");
+  assert.match(catchTime, /poimay-game/);
+  assert.match(catchTime, /id=["']screen-start["']/);
 
   const countrySelect = read("src/components/booking/phone-country-select.tsx");
   assert.match(countrySelect, /aria-label=["']Код страны["']/);
