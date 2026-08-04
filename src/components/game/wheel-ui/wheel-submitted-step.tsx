@@ -17,7 +17,6 @@ type WheelSubmittedStepProps = {
   shareMessage?: string;
   vkUrl?: string;
   maxUrl?: string;
-  onReset: () => void;
 };
 
 export function WheelSubmittedStep({
@@ -28,7 +27,6 @@ export function WheelSubmittedStep({
   shareMessage,
   vkUrl,
   maxUrl,
-  onReset,
 }: WheelSubmittedStepProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
 
@@ -55,10 +53,10 @@ export function WheelSubmittedStep({
       footer={
         <WheelButton
           variant="ghost"
-          onClick={onReset}
+          href="/"
           data-testid="submitted-reset"
         >
-          Вернуться в начало
+          Вернуться на главную
         </WheelButton>
       }
     >

@@ -10,7 +10,6 @@ type WheelRestoredStepProps = {
   result: WheelPrizeResult;
   claimStatus?: "pending" | "submitted" | null;
   onClaim?: () => void;
-  onReset: () => void;
   busy?: boolean;
   shareMessage?: string;
   vkUrl?: string;
@@ -22,7 +21,6 @@ export function WheelRestoredStep({
   result,
   claimStatus = null,
   onClaim,
-  onReset,
   busy,
   shareMessage,
   vkUrl,
@@ -65,10 +63,10 @@ export function WheelRestoredStep({
           ) : null}
           <WheelButton
             variant={isSubmitted ? "secondary" : "ghost"}
-            onClick={onReset}
+            href="/"
             data-testid="restored-reset"
           >
-            Вернуться
+            Вернуться на главную
           </WheelButton>
         </>
       }
