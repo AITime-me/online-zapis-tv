@@ -108,6 +108,9 @@
     "test:e2e:wheel": "playwright test tests/wheel-fortune-public.spec.ts",
     "test:e2e:wheel:isolated": "tsx scripts/run-wheel-e2e-isolated.ts",
     "test:security:wheel-e2e-harness": "tsx scripts/security-wheel-e2e-harness-check.ts",
+    "test:wheel-ui-presentation": "tsx --import ./scripts/lib/register-css-stub.ts scripts/wheel-ui-presentation-check.tsx",
+    "test:wheel-public-ui-adapter": "tsx scripts/wheel-public-ui-adapter-check.ts",
+    "test:wheel-public-controller": "tsx --import ./scripts/lib/register-css-stub.ts scripts/wheel-public-controller-check.ts",
     "test:e2e:catch-time-regression": "playwright test tests/wheel-fortune-public.spec.ts --grep \"procedure-gift\"",
     "test:e2e": "playwright test"
   },

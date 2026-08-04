@@ -10,7 +10,6 @@ if (!IS_ISOLATED) {
 const WHEEL_SLUG = process.env.WHEEL_E2E_CATALOG_SLUG ?? "permanent-wheel";
 const WHEEL_DRAFT_SLUG = process.env.WHEEL_E2E_DRAFT_SLUG ?? "";
 const WHEEL_INVALID_SLUG = process.env.WHEEL_E2E_INVALID_SLUG ?? "";
-const MOBILE = { width: 390, height: 844 };
 const TEST_NAME = "E2E Wheel";
 
 test.describe.configure({ mode: "serial" });
@@ -170,7 +169,11 @@ async function readUiPhaseHint(page: Page): Promise<string> {
     .getByTestId("wheel-complete-button")
     .isVisible()
     .catch(() => false);
-  const startVisible = await page
+  const spinVisible = await page
+    .getByTestId("wheel-spin-button")
+    .isVisible()
+    .catch(() => false);
+  const introVisible = await page
     .getByTestId("wheel-start-button")
     .isVisible()
     .catch(() => false);
@@ -178,10 +181,13 @@ async function readUiPhaseHint(page: Page): Promise<string> {
     return "submitted";
   }
   if (completeVisible) {
-    return "claim";
+    return "result-or-restored";
   }
-  if (startVisible) {
-    return "lead-or-spinning";
+  if (spinVisible) {
+    return "ready-or-spinning";
+  }
+  if (introVisible) {
+    return "intro";
   }
   return "unknown";
 }
@@ -227,7 +233,7 @@ async function assertWheelResultInPage(
         `cookieNames=${cookies.cookieNames.join(",")}`,
         `url=${page.url()}`,
         `uiPhaseHint=${phase}`,
-        `claimVisible=${String(phase === "claim")}`,
+        `claimVisible=${String(phase === "result-or-restored")}`,
       ].join("; "),
     );
   }
@@ -278,12 +284,30 @@ async function acceptConsents(page: Page) {
   await expect(offer).toBeChecked();
 }
 
-async function fillLeadForm(page: Page, phone: string) {
+async function choosePrimaryLipsPreferences(page: Page) {
+  await page.getByRole("button", { name: /Первый перманент/i }).click();
+  await page.getByRole("button", { name: /^Губы$/i }).click();
+  await page.getByTestId("preferences-continue").click();
+}
+
+async function fillContactForm(page: Page, phone: string) {
   await page.getByLabel("Имя").fill(TEST_NAME);
-  // Phone input: data-testid + aria-label «Номер телефона».
-  // Country code uses aria-label «Код страны» — do not use the bare «Телефон» label.
   await page.getByTestId("wheel-phone-input").fill(phone);
   await acceptConsents(page);
+}
+
+/** Fresh flow through intro → preferences → contact → ready. */
+async function reachReady(page: Page, phone: string) {
+  await expect(page.getByTestId("wheel-start-button")).toBeVisible({
+    timeout: 30_000,
+  });
+  await page.getByTestId("wheel-start-button").click();
+  await choosePrimaryLipsPreferences(page);
+  await fillContactForm(page, phone);
+  await page.getByTestId("contact-continue").click();
+  await expect(page.getByTestId("wheel-spin-button")).toBeVisible({
+    timeout: 15_000,
+  });
 }
 
 type WheelStartApiBody = {
@@ -333,14 +357,14 @@ async function assertNoWheelGameError(
     .getByTestId("wheel-complete-button")
     .isVisible()
     .catch(() => false);
-  const startVisible = await page
-    .getByTestId("wheel-start-button")
+  const spinVisible = await page
+    .getByTestId("wheel-spin-button")
     .isVisible()
     .catch(() => false);
   const phaseHint = completeVisible
-    ? "claim-or-later"
-    : startVisible
-      ? "lead-or-spinning"
+    ? "result-or-later"
+    : spinVisible
+      ? "ready-or-spinning"
       : "unknown";
 
   if (gameErrorCount > 0) {
@@ -368,10 +392,11 @@ async function assertNoWheelGameError(
 }
 
 /**
- * Fill lead form, POST /api/game/wheel/start, assert success, wait for claim UI.
+ * Fresh path: preferences + contact, POST /start, wait for result claim UI.
+ * Preferences are already mapped and held in React state — no post-spin form.
  */
 async function spinWheel(page: Page, phone: string) {
-  await fillLeadForm(page, phone);
+  await reachReady(page, phone);
 
   let startPostCount = 0;
   const onStartResponse = (response: Response) => {
@@ -384,7 +409,7 @@ async function spinWheel(page: Page, phone: string) {
   const startResponsePromise = page.waitForResponse(isWheelStartPost);
 
   try {
-    await page.getByTestId("wheel-start-button").click();
+    await page.getByTestId("wheel-spin-button").click();
 
     const startResponse = await startResponsePromise;
     let body: WheelStartApiBody = {};
@@ -404,6 +429,12 @@ async function spinWheel(page: Page, phone: string) {
       throw new Error(safeWheelStartFailureMessage(startResponse.status(), body));
     }
 
+    // Guard: /start request must not include preferences.
+    const startRequestText = startResponse.request().postData() ?? "";
+    expect(startRequestText).not.toMatch(/"interest"/i);
+    expect(startRequestText).not.toMatch(/"confirmedZone"/i);
+    expect(startRequestText).not.toMatch(/"selectedIntent"/i);
+
     const startMeta = {
       status: startResponse.status(),
       body,
@@ -413,7 +444,8 @@ async function spinWheel(page: Page, phone: string) {
     await expect(page.getByTestId("wheel-complete-button")).toBeVisible({
       timeout: 30_000,
     });
-    // Re-check after claim UI: catch late overlapping start failures.
+    // Fresh result: contact form must not reappear.
+    await expect(page.getByTestId("wheel-phone-input")).toHaveCount(0);
     await assertNoWheelGameError(page, {
       status: startMeta.status,
       body: startMeta.body,
@@ -428,24 +460,42 @@ test.describe("Wheel of Fortune public flow", () => {
   test("desktop happy path — form, spin, complete", async ({ page }) => {
     await gotoActiveWheel(page);
     const phone = phoneForTest(1);
+
+    let completeBodyInterest: string | undefined;
+    await page.route("**/api/game/wheel/complete", async (route) => {
+      const raw = route.request().postData() ?? "{}";
+      try {
+        const parsed = JSON.parse(raw) as { interest?: string };
+        completeBodyInterest = parsed.interest;
+      } catch {
+        completeBodyInterest = undefined;
+      }
+      await route.continue();
+    });
+
     await spinWheel(page, phone);
-    await page.getByRole("radio", { name: "Губы" }).check();
-    await acceptConsents(page);
     const completeResponsePromise = page.waitForResponse(isWheelCompletePost);
     await page.getByTestId("wheel-complete-button").click();
     const completeResponse = await completeResponsePromise;
     expect(completeResponse.ok()).toBeTruthy();
+    expect(completeBodyInterest).toBe("lips");
     await expect(page.getByTestId("wheel-submitted")).toBeVisible({
       timeout: 30_000,
     });
-    await expect(page.getByText("Спасибо!")).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Заявка отправлена" }),
+    ).toBeVisible();
   });
 
   test("mobile viewport shows wheel", async ({ page }) => {
-    await page.setViewportSize(MOBILE);
+    await page.setViewportSize({ width: 320, height: 720 });
     await gotoActiveWheel(page);
     await expect(page.getByTestId("wheel-fortune-public")).toBeVisible();
     await expect(page.getByTestId("wheel-start-button")).toBeVisible();
+    const hasHorizontalScroll = await page.evaluate(() => {
+      return document.documentElement.scrollWidth > window.innerWidth + 1;
+    });
+    expect(hasHorizontalScroll).toBe(false);
   });
 
   test("prefers-reduced-motion skips animation delay", async ({ page }) => {
@@ -458,12 +508,14 @@ test.describe("Wheel of Fortune public flow", () => {
     page,
   }) => {
     await gotoActiveWheel(page);
+    await page.getByTestId("wheel-start-button").click();
+    await choosePrimaryLipsPreferences(page);
 
     const nameInput = page.getByLabel("Имя");
     const phoneInput = page.getByTestId("wheel-phone-input");
     const personal = page.getByTestId("legal-personal-data-consent");
     const offer = page.getByTestId("legal-offer-acknowledgement");
-    const start = page.getByTestId("wheel-start-button");
+    const continueBtn = page.getByTestId("contact-continue");
 
     let startPostCount = 0;
     const onStartResponse = (response: Response) => {
@@ -474,46 +526,22 @@ test.describe("Wheel of Fortune public flow", () => {
     page.on("response", onStartResponse);
 
     try {
-      // Part A — native HTML constraint validation on empty required fields.
-      // Name/phone have `required`; submit button is type="submit".
-      // Browser blocks the submit event before React onStart() runs, so
-      // wheel-error-alert must NOT be required here.
-      await start.click();
-      await expect(nameInput).toHaveJSProperty("validity.valid", false);
-      await expect(phoneInput).toHaveJSProperty("validity.valid", false);
-      const nameCheckValidity = await nameInput.evaluate(
-        (element: HTMLInputElement) => element.checkValidity(),
-      );
-      const phoneCheckValidity = await phoneInput.evaluate(
-        (element: HTMLInputElement) => element.checkValidity(),
-      );
-      expect(nameCheckValidity).toBe(false);
-      expect(phoneCheckValidity).toBe(false);
+      await continueBtn.click();
+      await expect(page.getByText("Введите имя")).toBeVisible();
       expect(startPostCount).toBe(0);
-      await expect(page.getByTestId("wheel-error-alert")).toHaveCount(0);
-      await expect(start).toBeVisible();
-      await expect(page.getByTestId("wheel-complete-button")).toHaveCount(0);
-      await expect(page.getByTestId("wheel-fortune-public")).toBeVisible();
+      await expect(page.getByTestId("wheel-spin-button")).toHaveCount(0);
 
-      // Part B — consent checkboxes are NOT native-required; React onStart
-      // validates them after name/phone satisfy HTML constraints.
       await nameInput.fill(TEST_NAME);
       await phoneInput.fill(phoneForTest(4));
-      await expect(nameInput).toHaveJSProperty("validity.valid", true);
-      await expect(phoneInput).toHaveJSProperty("validity.valid", true);
       await expect(personal).not.toBeChecked();
       await expect(offer).not.toBeChecked();
 
-      await start.click();
-      await expect(page.getByTestId("wheel-error-alert")).toBeVisible({
+      await continueBtn.click();
+      await expect(page.getByText(/соглас/i).first()).toBeVisible({
         timeout: 5_000,
       });
-      await expect(page.getByTestId("wheel-error-alert")).toContainText(
-        "соглас",
-      );
       expect(startPostCount).toBe(0);
-      await expect(start).toBeVisible();
-      await expect(page.getByTestId("wheel-complete-button")).toHaveCount(0);
+      await expect(page.getByTestId("wheel-spin-button")).toHaveCount(0);
     } finally {
       page.off("response", onStartResponse);
     }
@@ -524,7 +552,7 @@ test.describe("Wheel of Fortune public flow", () => {
   }) => {
     await gotoActiveWheel(page);
     const phone = phoneForTest(5);
-    await fillLeadForm(page, phone);
+    await reachReady(page, phone);
 
     let startPostCount = 0;
     const onStartResponse = (response: Response) => {
@@ -537,7 +565,7 @@ test.describe("Wheel of Fortune public flow", () => {
     const startResponsePromise = page.waitForResponse(isWheelStartPost);
 
     try {
-      const start = page.getByTestId("wheel-start-button");
+      const start = page.getByTestId("wheel-spin-button");
       await expect(start).toBeEnabled();
       await start.dblclick();
 
@@ -563,8 +591,6 @@ test.describe("Wheel of Fortune public flow", () => {
         startPostCount,
       });
 
-      // Read result via in-page fetch so Secure session cookies on HTTP loopback
-      // are included (page.request Node jar is unreliable here).
       const resultBody = await assertWheelResultInPage(page, {
         startPostCount,
         startHTTP,
@@ -613,11 +639,13 @@ test.describe("Wheel of Fortune public flow", () => {
     await expect(page.getByTestId("wheel-complete-button")).toBeVisible({
       timeout: 30_000,
     });
-    await expect(page.getByTestId("wheel-start-button")).toHaveCount(0);
+    await expect(page.getByTestId("wheel-spin-button")).toHaveCount(0);
     const prizeAfter = await page.getByTestId("wheel-prize-name").textContent();
     expect(prizeAfter).toBe(prizeBefore);
 
-    // PII is not persisted in sessionStorage — claim fields reset after reload.
+    // PII is not in browser storage — reclaim contact is empty after reload.
+    await page.getByTestId("wheel-complete-button").click();
+    await choosePrimaryLipsPreferences(page);
     await expect(page.getByTestId("wheel-phone-input")).toHaveValue("");
     await expect(page.getByLabel("Имя")).toHaveValue("");
 
@@ -632,8 +660,6 @@ test.describe("Wheel of Fortune public flow", () => {
     await gotoActiveWheel(page);
     const phone = phoneForTest(7);
     await spinWheel(page, phone);
-    await page.getByRole("radio", { name: "Губы" }).check();
-    await acceptConsents(page);
 
     let completePostCount = 0;
     const onCompleteResponse = (response: Response) => {
@@ -655,7 +681,9 @@ test.describe("Wheel of Fortune public flow", () => {
         timeout: 30_000,
       });
       await expect(page.getByTestId("wheel-submitted")).toHaveCount(1);
-      await expect(page.getByText("Спасибо!")).toBeVisible();
+      await expect(
+      page.getByRole("heading", { name: "Заявка отправлена" }),
+    ).toBeVisible();
       expect(completePostCount).toBe(1);
 
       await page.reload();
@@ -684,8 +712,6 @@ test.describe("Wheel of Fortune public flow", () => {
     await gotoActiveWheel(page);
     const phone = phoneForTest(8);
     await spinWheel(page, phone);
-    await page.getByRole("radio", { name: "Губы" }).check();
-    await acceptConsents(page);
 
     const completeResponsePromise = page.waitForResponse(isWheelCompletePost);
     await page.getByTestId("wheel-complete-button").click();
@@ -704,8 +730,6 @@ test.describe("Wheel of Fortune public flow", () => {
     expect(typeof resultBefore.animation?.sectorIndex).toBe("number");
     expect(resultBefore.animation?.prizeDisplayName).toBeTruthy();
 
-    // Same-origin in-page fetch: browser sets Origin / Sec-Fetch-Site itself.
-    // Do not set Origin manually — it is a forbidden request header.
     const retry = await fetchJsonInPage<{
       ok?: boolean;
       error?: string;
@@ -778,8 +802,6 @@ test.describe("Wheel of Fortune public flow", () => {
     await gotoActiveWheel(page);
     const phone = phoneForTest(9);
     await spinWheel(page, phone);
-    await page.getByRole("radio", { name: "Брови" }).check();
-    await acceptConsents(page);
 
     const idempotencyKeys: string[] = [];
     let completeCalls = 0;
@@ -804,13 +826,13 @@ test.describe("Wheel of Fortune public flow", () => {
     expect(completeCalls).toBe(1);
     expect(idempotencyKeys[0]?.length ?? 0).toBeGreaterThan(8);
 
-    // Keep the route so the second attempt is still observed and must reuse
-    // the same Idempotency-Key from sessionStorage.
     await page.getByTestId("wheel-complete-button").click();
     await expect(page.getByTestId("wheel-submitted")).toBeVisible({
       timeout: 30_000,
     });
-    await expect(page.getByText("Спасибо!")).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Заявка отправлена" }),
+    ).toBeVisible();
     await expect(page.getByTestId("wheel-error-alert")).toHaveCount(0);
 
     expect(completeCalls).toBe(2);
