@@ -710,6 +710,7 @@ model GameCatalog {
   campaignKey     String?   @map("campaign_key")
   rulesVersion    String    @default("1") @map("rules_version")
   isPrimaryPublic Boolean   @default(false) @map("is_primary_public")
+  showOnHomepage  Boolean   @default(false) @map("show_on_homepage")
   publicPriority  Int       @default(0) @map("public_priority")
   activeFrom      DateTime? @map("active_from") @db.Timestamptz
   activeTo        DateTime? @map("active_to") @db.Timestamptz
@@ -725,6 +726,7 @@ model GameCatalog {
   @@index([status])
   @@index([type])
   @@index([status, isPrimaryPublic, publicPriority])
+  @@index([showOnHomepage, status])
   @@map("game_catalog")
 }
 

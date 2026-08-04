@@ -1,14 +1,20 @@
 import { prisma } from "@/lib/db";
 import { HOME_PROMO_ROUTES, type HomePromotion } from "@/components/home/home-data";
+import {
+  dedupeHomePromotionCards,
+  isGameCatalogEligibleForHomepage,
+  LEGACY_CATCH_TIME_HOME_PROMOTION_ID,
+  mapGameCatalogToHomePromotion,
+} from "@/lib/promotions/home-game-catalog";
 import { isPromotionEligibleForHomepageCarousel } from "@/lib/promotions/homepage-eligibility";
 import { getStudioNow } from "@/lib/datetime/date-layer";
 import { listHomepagePromotions } from "@/services/PromotionCrudService";
 import {
   ensureLegacyCatchTimeGameCatalog,
   isGameCatalogPubliclyAvailable,
+  listHomepageGameCatalogs,
 } from "@/services/GameCatalogService";
 
-const GAME_PROMOTION_ID = "procedure-gift-game";
 const DEFAULT_CONFIG_ID = "default";
 
 function mapPromotionToHomeCard(promotion: Awaited<
@@ -37,18 +43,30 @@ function mapPromotionToHomeCard(promotion: Awaited<
   };
 }
 
+function mapHomepageGameCatalogCards(
+  games: Awaited<ReturnType<typeof listHomepageGameCatalogs>>,
+): HomePromotion[] {
+  return games
+    .filter((game) => isGameCatalogEligibleForHomepage(game))
+    .map((game) => mapGameCatalogToHomePromotion(game));
+}
+
 export async function getHomePromotions(): Promise<HomePromotion[]> {
-  const [dbPromotions, config, catchTimeGame] = await Promise.all([
+  const [dbPromotions, config, catchTimeGame, homepageGames] = await Promise.all([
     listHomepagePromotions(),
     prisma.gameConfig.findUnique({ where: { id: DEFAULT_CONFIG_ID } }),
     ensureLegacyCatchTimeGameCatalog(),
+    listHomepageGameCatalogs(),
   ]);
 
   const promotionCards = dbPromotions
     .map(mapPromotionToHomeCard)
     .filter((card): card is HomePromotion => card !== null);
 
-  const dynamicPromotions: HomePromotion[] = [...promotionCards];
+  const dynamicPromotions: HomePromotion[] = [
+    ...promotionCards,
+    ...mapHomepageGameCatalogCards(homepageGames),
+  ];
 
   if (
     config?.isActive &&
@@ -59,7 +77,7 @@ export async function getHomePromotions(): Promise<HomePromotion[]> {
     })
   ) {
     dynamicPromotions.push({
-      id: GAME_PROMOTION_ID,
+      id: LEGACY_CATCH_TIME_HOME_PROMOTION_ID,
       kind: "game",
       title: config.title,
       description: config.description,
@@ -72,7 +90,7 @@ export async function getHomePromotions(): Promise<HomePromotion[]> {
     });
   }
 
-  return dynamicPromotions.sort(
+  return dedupeHomePromotionCards(dynamicPromotions).sort(
     (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0),
   );
 }

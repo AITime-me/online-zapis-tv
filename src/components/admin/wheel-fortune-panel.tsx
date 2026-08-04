@@ -48,6 +48,7 @@ export function WheelFortunePanel({
   initialSlug,
   initialDescription,
   initialStatus,
+  initialShowOnHomepage,
 }: {
   gameCatalogId: string;
   initialGifts: GameGiftDto[];
@@ -56,6 +57,7 @@ export function WheelFortunePanel({
   initialSlug: string;
   initialDescription: string | null;
   initialStatus: GameCatalogStatusDto;
+  initialShowOnHomepage: boolean;
 }) {
   const [gifts, setGifts] = useState(initialGifts);
   const [wheelConfig, setWheelConfig] = useState(initialWheelConfig);
@@ -64,6 +66,7 @@ export function WheelFortunePanel({
   const [description, setDescription] = useState(initialDescription ?? "");
   const [catalogStatus, setCatalogStatus] =
     useState<GameCatalogStatusDto>(initialStatus);
+  const [showOnHomepage, setShowOnHomepage] = useState(initialShowOnHomepage);
   const [status, setStatus] = useState<UiStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [editingGiftId, setEditingGiftId] = useState<string | null>(null);
@@ -149,6 +152,9 @@ export function WheelFortunePanel({
     ) {
       setDescription(snapshot.description ?? "");
     }
+    if (typeof (snapshot as { showOnHomepage?: unknown }).showOnHomepage === "boolean") {
+      setShowOnHomepage((snapshot as { showOnHomepage: boolean }).showOnHomepage);
+    }
   };
 
   const statusLabel =
@@ -187,6 +193,9 @@ export function WheelFortunePanel({
     setSlug(payload.slug);
     setDescription(payload.description ?? "");
     setCatalogStatus(parseCatalogStatus(payload.status));
+    if (typeof payload.showOnHomepage === "boolean") {
+      setShowOnHomepage(payload.showOnHomepage);
+    }
   };
 
   const saveCatalogMeta = async () => {
@@ -206,6 +215,7 @@ export function WheelFortunePanel({
             title: title.trim(),
             slug: slug.trim(),
             description: description.trim() || null,
+            showOnHomepage,
           }),
         },
       );
@@ -465,6 +475,15 @@ export function WheelFortunePanel({
               onChange={(event) => setDescription(event.target.value)}
               disabled={busy}
             />
+          </label>
+          <label className="flex items-center gap-2 md:col-span-2">
+            <input
+              type="checkbox"
+              checked={showOnHomepage}
+              onChange={(event) => setShowOnHomepage(event.target.checked)}
+              disabled={busy}
+            />
+            <span className={labelClass}>Показывать на главной странице</span>
           </label>
         </div>
 

@@ -69,6 +69,10 @@ export function mapSectorLabelsToWheelSectors(
 export function makeShortLabel(fullName: string): string {
   const trimmed = fullName.trim();
   if (!trimmed) return "Подарок";
+  const discountMatch = trimmed.match(/^Скидка\s+\d+%/u);
+  if (discountMatch) {
+    return discountMatch[0];
+  }
   const firstWord = trimmed.split(/\s+/)[0] ?? trimmed;
   if (firstWord.length <= 10) return firstWord;
   return `${firstWord.slice(0, 9)}…`;

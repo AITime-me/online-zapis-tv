@@ -116,6 +116,7 @@ function mapGameCatalog(
     campaignKey: row.campaignKey,
     rulesVersion: row.rulesVersion,
     isPrimaryPublic: row.isPrimaryPublic,
+    showOnHomepage: row.showOnHomepage,
     publicPriority: row.publicPriority,
     activeFrom: row.activeFrom?.toISOString() ?? null,
     activeTo: row.activeTo?.toISOString() ?? null,
@@ -197,6 +198,20 @@ export async function getGameCatalogBySlug(
   return mapGameCatalog(row, origin);
 }
 
+export async function listHomepageGameCatalogs(
+  origin?: string | null,
+): Promise<GameCatalogDto[]> {
+  const rows = await prisma.gameCatalog.findMany({
+    where: {
+      showOnHomepage: true,
+      legacyConfigId: null,
+    },
+    orderBy: [{ publicPriority: "asc" }, { title: "asc" }],
+  });
+
+  return rows.map((row) => mapGameCatalog(row, origin));
+}
+
 export async function createGameCatalog(
   input: GameCatalogWriteInput,
   origin?: string | null,
@@ -248,6 +263,7 @@ export async function createGameCatalog(
             : undefined,
       externalUrl: input.externalUrl?.trim() || null,
       legacyConfigId: null,
+      showOnHomepage: input.showOnHomepage ?? false,
       ...(type === "wheel_of_fortune"
         ? {
             campaignKey: "permanent-wheel",
@@ -325,6 +341,8 @@ export async function updateGameCatalog(
         input.externalUrl !== undefined
           ? input.externalUrl?.trim() || null
           : undefined,
+      showOnHomepage:
+        input.showOnHomepage !== undefined ? input.showOnHomepage : undefined,
     },
   });
 

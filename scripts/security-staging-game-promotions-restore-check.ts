@@ -145,7 +145,8 @@ function assertPromoEngineIsolation(): void {
 
   const home = read("src/services/HomePromotionsService.ts");
   assert.match(home, /listHomepagePromotions/);
-  assert.match(home, /procedure-gift-game/);
+  assert.match(home, /listHomepageGameCatalogs/);
+  assert.match(home, /LEGACY_CATCH_TIME_HOME_PROMOTION_ID|procedure-gift-game/);
   assert.doesNotMatch(home, /promo-engine|applyPromo|PROMO_RULES|calculatePromo/);
 
   const rulesEngine = read("src/lib/promo/rules-engine.ts");

@@ -299,7 +299,7 @@ function assertDefaultSectorLayout(): void {
   assert.equal(byKey[WHEEL_PRIZE_SYSTEM_KEYS.formulaShine], 1);
   assert.equal(byKey[WHEEL_PRIZE_SYSTEM_KEYS.coldPlasmaLips], 1);
   assert.equal(byKey[WHEEL_PRIZE_SYSTEM_KEYS.laserBiorevitalization], 1);
-  assert.equal(byKey[WHEEL_PRIZE_SYSTEM_KEYS.footMassage], 1);
+  assert.equal(byKey[WHEEL_PRIZE_SYSTEM_KEYS.discount15], 1);
   assert.equal(byKey[WHEEL_PRIZE_SYSTEM_KEYS.lipsBiorevitalizant], 1);
 
   const gifts = defaultGiftsAsSectorGifts();

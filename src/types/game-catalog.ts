@@ -31,6 +31,7 @@ export type GameCatalogDto = {
   campaignKey: string | null;
   rulesVersion: string;
   isPrimaryPublic: boolean;
+  showOnHomepage: boolean;
   publicPriority: number;
   activeFrom: string | null;
   activeTo: string | null;
@@ -47,6 +48,7 @@ export type GameCatalogWriteInput = {
   description?: string | null;
   settings?: Record<string, unknown> | null;
   externalUrl?: string | null;
+  showOnHomepage?: boolean;
 };
 
 export const GAME_CATALOG_TYPE_LABELS: Record<GameCatalogTypeDto, string> = {

@@ -16,7 +16,7 @@ export const WHEEL_PRIZE_SYSTEM_KEYS = {
   formulaShine: "formula_shine_gift",
   coldPlasmaLips: "cold_plasma_lips_gift",
   laserBiorevitalization: "laser_biorevitalization_gift",
-  footMassage: "foot_massage_gift",
+  discount15: "permanent_discount_15",
   lipsBiorevitalizant: "lips_biorevitalizant_upgrade",
 } as const;
 
@@ -77,6 +77,9 @@ const DISCOUNT_10_TERMS =
 
 const DISCOUNT_20_TERMS =
   "Скидка 20% действует на первичный перманент и перекрытие чужой работы. Не действует на рефреш, коррекцию и удаление. Не суммируется с другими акциями и скидками.";
+
+const DISCOUNT_15_TERMS =
+  "Скидка 15% на одну процедуру перманентного макияжа. Подтвердите запись в течение 7 дней после выигрыша, пройти процедуру можно в течение 30 дней. Скидка действует один раз, не суммируется с другими скидками и специальными предложениями и не обменивается на деньги.";
 
 const GIFT_SERVICE_TERMS =
   "Подарочная процедура предоставляется при прохождении оплачиваемой участвующей процедуры перманентного макияжа, перекрытия или рефреша. Не действует при одной только коррекции. Не выдаётся деньгами. Возможность и время проведения определяются студией с учётом совместимости процедур.";
@@ -220,16 +223,37 @@ export const DEFAULT_WHEEL_PRIZE_DEFINITIONS: readonly DefaultWheelPrizeDefiniti
       },
     },
     {
-      systemKey: WHEEL_PRIZE_SYSTEM_KEYS.footMassage,
-      prizeType: "GIFT_SERVICE",
-      name: "Массаж ног в подарок",
-      shortDescription: "Массаж ног при участвующей процедуре",
+      systemKey: WHEEL_PRIZE_SYSTEM_KEYS.discount15,
+      prizeType: "PERCENT_DISCOUNT",
+      name: "Скидка 15% на перманентный макияж",
+      shortDescription: "Скидка 15%",
       sectorCount: 1,
       sortOrder: 70,
       isActive: true,
-      activationConditionText: GIFT_SERVICE_TERMS,
+      activationConditionText: DISCOUNT_15_TERMS,
       prizeRules: {
-        ...baseGiftRules(WHEEL_PRIZE_SYSTEM_KEYS.footMassage, GIFT_SERVICE_TERMS),
+        version: 1,
+        prizeType: "PERCENT_DISCOUNT",
+        systemKey: WHEEL_PRIZE_SYSTEM_KEYS.discount15,
+        discountPercent: 15,
+        applicableProcedures: [
+          "permanent_primary",
+          "cover",
+          "refresh",
+          "lips_permanent_primary",
+          "lips_cover",
+          "lips_refresh",
+        ],
+        excludedProcedures: [...COMMON_GIFT_EXCLUSIONS],
+        upgradeSurcharge: null,
+        stackingWithOtherDiscounts: false,
+        stackingWithOtherGifts: false,
+        cashRedemptionForbidden: true,
+        zoneRestriction: null,
+        replacement: null,
+        termsText: DISCOUNT_15_TERMS,
+        confirmWindowDays: null,
+        procedureWindowDays: null,
       },
     },
     {

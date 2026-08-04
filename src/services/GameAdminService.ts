@@ -170,6 +170,7 @@ export async function getWheelAdminPageData(gameCatalogId: string): Promise<{
   slug: string;
   description: string | null;
   status: GameCatalogStatusDto;
+  showOnHomepage: boolean;
 }> {
   const catalogId = await requireGameCatalogId(gameCatalogId);
   const catalog = await prisma.gameCatalog.findUnique({
@@ -182,6 +183,7 @@ export async function getWheelAdminPageData(gameCatalogId: string): Promise<{
       status: true,
       type: true,
       settings: true,
+      showOnHomepage: true,
     },
   });
   if (!catalog || catalog.type !== "WHEEL_OF_FORTUNE") {
@@ -205,6 +207,7 @@ export async function getWheelAdminPageData(gameCatalogId: string): Promise<{
     slug: catalog.slug,
     description: catalog.description,
     status: mapWheelAdminStatusDto(catalog.status),
+    showOnHomepage: catalog.showOnHomepage,
   };
 }
 
