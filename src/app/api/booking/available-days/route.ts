@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { formatStudioDateKey, getStudioNow, isValidDateKey, normalizeMonthKey } from "@/lib/datetime/date-layer";
+import { withPublicAvailabilityErrors } from "@/lib/booking/public-availability-route";
+import {
+  formatStudioDateKey,
+  getStudioNow,
+  normalizeMonthKey,
+} from "@/lib/datetime/date-layer";
 import { enforceRequestRateLimit } from "@/lib/security/rate-limit/enforce-policy";
 import { getAvailableDaysInMonth } from "@/services/BookingService";
 
@@ -25,12 +30,11 @@ export async function GET(request: Request) {
   }
 
   const studioToday = formatStudioDateKey(getStudioNow());
-  const dateKeys = await getAvailableDaysInMonth(
-    masterId,
-    serviceId,
-    monthKey,
-    studioToday,
-  );
 
-  return NextResponse.json({ ok: true, dateKeys, month: monthKey, studioToday });
+  return withPublicAvailabilityErrors(
+    "booking/available-days",
+    () => getAvailableDaysInMonth(masterId, serviceId, monthKey, studioToday),
+    (dateKeys) =>
+      NextResponse.json({ ok: true, dateKeys, month: monthKey, studioToday }),
+  );
 }
