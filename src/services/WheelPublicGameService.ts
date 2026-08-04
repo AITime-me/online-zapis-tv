@@ -877,6 +877,7 @@ export async function completeWheelPublicGame(input: {
       idempotencyKey: input.idempotencyKey.trim(),
       request: input.request,
       db: tx,
+      now,
     });
 
     return {

@@ -1026,7 +1026,9 @@ async function assertFakePrismaPublicFlow(): Promise<void> {
     now,
     db: completeFake.db,
     env: TEST_ENV,
-    createBookingRequestFn: async () => {
+    createBookingRequestFn: async (bookingInput) => {
+      assert.ok(bookingInput.now instanceof Date);
+      assert.equal(bookingInput.now.getTime(), now.getTime());
       bookingCreates += 1;
       completeFake.bookings.set(bookingId, { id: bookingId });
       const session = completeFake.sessions[0]!;

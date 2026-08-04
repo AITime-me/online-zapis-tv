@@ -64,6 +64,18 @@ function assertBookingRequestPassesDbThroughCompleteFlow(): void {
   const wheel = read("src/services/WheelPublicGameService.ts");
   assert.match(wheel, /clientPhone: phoneCheck\.bookingPhone/);
   assert.doesNotMatch(wheel, /clientPhone: phoneCheck\.canonicalPhone/);
+  assert.match(
+    wheel,
+    /bookingFn\(\{[\s\S]*?\bnow,/,
+    "completeWheelPublicGame must pass the same now into createBookingRequest",
+  );
+
+  assert.match(booking, /now\?:\s*Date/);
+  assert.match(
+    booking,
+    /const now = input\.now \?\? new Date\(\)/,
+    "createBookingRequest must use injectable now with wall-clock fallback",
+  );
 }
 
 function assertPgProofLegalAcceptanceInvariant(): void {

@@ -111,6 +111,11 @@ export type CreateBookingRequestInput = {
   request?: Request;
   /** When set, game booking persistence runs on this client (e.g. wheel complete tx). */
   db?: Prisma.TransactionClient;
+  /**
+   * Optional injectable clock for the whole booking create (tests / in-tx callers).
+   * Production API callers omit this and use server wall clock.
+   */
+  now?: Date;
 };
 
 type ResolvedBookingRequestService = {
@@ -876,7 +881,7 @@ export async function createBookingRequest(
   const clientName = input.clientName.trim();
   const clientPhone = input.clientPhone.trim();
   const resolvedGamePlayId = resolvePublicGamePlayId(input.gamePlayId);
-  const now = new Date();
+  const now = input.now ?? new Date();
 
   await assertRequiredLegalDocumentsPublished(input.db);
 
