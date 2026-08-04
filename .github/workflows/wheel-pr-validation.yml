@@ -1,0 +1,160 @@
+name: Wheel PR validation
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/wheel-pr-validation.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "next.config.*"
+      - "playwright.config.*"
+      - "prisma/**"
+      - "scripts/run-wheel-e2e-isolated.ts"
+      - "scripts/lib/ephemeral-postgres.ts"
+      - "scripts/lib/wheel-isolated-*.ts"
+      - "scripts/security-wheel-*.ts"
+      - "src/app/promo/**"
+      - "src/app/api/game/wheel/**"
+      - "src/components/game/wheel-*.tsx"
+      - "src/components/game/wheel-*.ts"
+      - "src/components/game/wheel-ui/**"
+      - "src/lib/game/wheel/**"
+      - "src/services/WheelPublicGameService.ts"
+      - "tests/wheel-fortune-public.spec.ts"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wheel-pr-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  wheel-validation:
+    name: Wheel E2E and PostgreSQL proofs
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    env:
+      CI: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+      PLAYWRIGHT_BROWSERS_PATH: /home/runner/.cache/ms-playwright
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Docker preflight
+        run: |
+          docker version
+          docker info
+
+      - name: Run Wheel server validation
+        id: wheel_validation
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          mkdir -p test-results
+
+          echo "::group::Isolated Wheel Playwright E2E"
+          npm run test:e2e:wheel:isolated 2>&1 | tee test-results/wheel-ci-e2e.log
+          E2E_EXIT=${PIPESTATUS[0]}
+          echo "::endgroup::"
+
+          echo "::group::Phone-attempt PostgreSQL proof"
+          npm run test:security:wheel-phone-attempt-db 2>&1 | tee test-results/wheel-ci-phone-attempt.log
+          PHONE_EXIT=${PIPESTATUS[0]}
+
+          if grep -Eiq '(^|[^A-Za-z])SKIP([^A-Za-z]|$)|(^|[^A-Za-z])skipped([^A-Za-z]|$)' test-results/wheel-ci-phone-attempt.log; then
+            echo "Phone-attempt PostgreSQL proof reported SKIP"
+            PHONE_EXIT=1
+          fi
+
+          echo "::endgroup::"
+
+          echo "::group::Public-complete PostgreSQL proof"
+          npm run test:security:wheel-public-complete-db 2>&1 | tee test-results/wheel-ci-public-complete.log
+          COMPLETE_EXIT=${PIPESTATUS[0]}
+
+          if grep -Eiq '(^|[^A-Za-z])SKIP([^A-Za-z]|$)|(^|[^A-Za-z])skipped([^A-Za-z]|$)' test-results/wheel-ci-public-complete.log; then
+            echo "Public-complete PostgreSQL proof reported SKIP"
+            COMPLETE_EXIT=1
+          fi
+
+          echo "::endgroup::"
+
+          {
+            echo "## Wheel PR validation"
+            echo ""
+            echo "| Проверка | Exit code | Результат |"
+            echo "|---|---:|---|"
+
+            if [ "$E2E_EXIT" -eq 0 ]; then
+              echo "| Isolated Playwright E2E | $E2E_EXIT | PASS |"
+            else
+              echo "| Isolated Playwright E2E | $E2E_EXIT | FAIL |"
+            fi
+
+            if [ "$PHONE_EXIT" -eq 0 ]; then
+              echo "| Phone-attempt PostgreSQL proof | $PHONE_EXIT | PASS |"
+            else
+              echo "| Phone-attempt PostgreSQL proof | $PHONE_EXIT | FAIL |"
+            fi
+
+            if [ "$COMPLETE_EXIT" -eq 0 ]; then
+              echo "| Public-complete PostgreSQL proof | $COMPLETE_EXIT | PASS |"
+            else
+              echo "| Public-complete PostgreSQL proof | $COMPLETE_EXIT | FAIL |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "E2E_EXIT=$E2E_EXIT"
+          echo "PHONE_EXIT=$PHONE_EXIT"
+          echo "COMPLETE_EXIT=$COMPLETE_EXIT"
+
+          if [ "$E2E_EXIT" -ne 0 ] || [ "$PHONE_EXIT" -ne 0 ] || [ "$COMPLETE_EXIT" -ne 0 ]; then
+            exit 1
+          fi
+
+          exit 0
+
+      - name: Show Docker resources after validation
+        if: always()
+        shell: bash
+        run: |
+          echo "=== docker ps -a ==="
+          docker ps -a
+          echo "=== docker networks ==="
+          docker network ls
+          echo "=== docker volumes ==="
+          docker volume ls
+
+      - name: Upload failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-pr-validation-${{ github.run_id }}
+          path: |
+            test-results/**
+            playwright-report/**
+          if-no-files-found: warn
+          retention-days: 7

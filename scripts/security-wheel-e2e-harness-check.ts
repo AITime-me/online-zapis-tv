@@ -625,29 +625,31 @@ function assertWheelSpecNoSilentSkipInIsolatedMode(): void {
   assert.match(spec, /getByTestId\(["']wheel-submitted["']\)/);
   assert.match(spec, /startPostCount\)\.toBe\(1\)/);
 
-  // Test #4 — native HTML validation contract (not wheel-error-alert on empty submit).
-  assert.match(spec, /validity\.valid/);
-  assert.match(spec, /checkValidity/);
-  assert.match(
-    spec,
-    /Browser blocks the submit event before React onStart|native HTML constraint validation/,
-  );
+  // Test #4 — contact validation before spin (React contact step, not native HTML submit).
+  assert.match(spec, /contact-continue/);
+  assert.match(spec, /Введите имя|Укажите имя/);
   assert.match(
     spec,
     /name, phone and consents are required[\s\S]*?startPostCount\)\.toBe\(0\)/,
   );
   assert.match(
     spec,
-    /name, phone and consents are required[\s\S]*?wheel-error-alert[\s\S]*?toHaveCount\(0\)/,
+    /name, phone and consents are required[\s\S]*?wheel-spin-button[\s\S]*?toHaveCount\(0\)/,
   );
   assert.match(
     spec,
-    /name, phone and consents are required[\s\S]*?toContainText\(\s*["']соглас["']/,
+    /name, phone and consents are required[\s\S]*?getByText\(\/соглас/,
   );
-  assert.doesNotMatch(
+  assert.match(spec, /reachReady|choosePrimaryLipsPreferences|fillContactForm/);
+  assert.match(spec, /wheel-spin-button/);
+  assert.match(spec, /preferences-continue/);
+  assert.match(
     spec,
-    /name, phone and consents are required before start[\s\S]*?getByTestId\(["']wheel-start-button["']\)\.click\(\);\s*await expect\(page\.getByTestId\(["']wheel-error-alert["']\)\)\.toBeVisible\(\)/,
-    "empty-form click must not require wheel-error-alert (native validation blocks React)",
+    /startResponse\.request\(\)\.postData\(\)|startRequestText/,
+  );
+  assert.match(
+    spec,
+    /startRequestText[\s\S]*?interest[\s\S]*?confirmedZone|postData\(\)[\s\S]*?interest[\s\S]*?confirmedZone/,
   );
 
   // Session API must use in-page fetch (Secure cookies on HTTP loopback).
@@ -873,31 +875,34 @@ function assertWheelSpecNoSilentSkipInIsolatedMode(): void {
   assert.match(wheelUi, /data-testid=["']wheel-phone-input["']/);
   assert.match(wheelUi, /aria-label=["']Номер телефона["']/);
   assert.match(wheelUi, /type=["']tel["']/);
-  assert.match(wheelUi, /data-testid=["']wheel-prize-name["']/);
-  assert.match(wheelUi, /data-testid=["']wheel-submitted["']/);
+  assert.match(wheelUi, /WheelFortuneView/);
+  assert.match(wheelUi, /mapUiPreferencesToCompletePayload/);
   assert.match(wheelUi, /startRequestSerial/);
   assert.match(wheelUi, /startSucceededRef/);
-  assert.match(
-    wheelUi,
-    /onSubmit=\{\(event\) => \{\s*event\.preventDefault\(\);\s*void onStart\(\);/,
-  );
-  assert.match(
-    wheelUi,
-    /type=["']submit["'][\s\S]*?data-testid=["']wheel-start-button["']/,
-  );
-  assert.match(
-    wheelUi,
-    /<input[\s\S]*?autoComplete=["']name["'][\s\S]*?required/,
-  );
-  assert.match(
-    wheelUi,
-    /data-testid=["']wheel-phone-input["'][\s\S]*?required/,
-  );
+  assert.match(wheelUi, /spinningLock/);
+  assert.match(wheelUi, /\/api\/game\/wheel\/start/);
+  assert.match(wheelUi, /\/api\/game\/wheel\/complete/);
   assert.doesNotMatch(
     wheelUi,
     /wheel_lead_draft_|writeLeadDraft|readLeadDraft/,
     "must not persist lead PII in sessionStorage",
   );
+
+  const wheelResultStep = read(
+    "src/components/game/wheel-ui/wheel-result-step.tsx",
+  );
+  assert.match(wheelResultStep, /data-testid=["']wheel-prize-name["']/);
+  assert.match(wheelResultStep, /data-testid=["']wheel-complete-button["']/);
+
+  const wheelSubmittedStep = read(
+    "src/components/game/wheel-ui/wheel-submitted-step.tsx",
+  );
+  assert.match(wheelSubmittedStep, /data-testid=["']wheel-submitted["']/);
+
+  const wheelIntroStep = read(
+    "src/components/game/wheel-ui/wheel-intro-step.tsx",
+  );
+  assert.match(wheelIntroStep, /data-testid=["']wheel-start-button["']/);
 
   const legalFields = read("src/components/booking/booking-legal-links.tsx");
   assert.match(legalFields, /type=["']checkbox["']/);

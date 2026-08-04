@@ -171,6 +171,8 @@ export default async function PromoGamePage({ params }: PromoGamePageProps) {
         catalogSlug={game.slug}
         title={game.title}
         sectorLabels={sectorLabels}
+        vkUrl={studioSettings.vkUrl || undefined}
+        maxUrl={studioSettings.maxUrl || undefined}
       />
     );
   }

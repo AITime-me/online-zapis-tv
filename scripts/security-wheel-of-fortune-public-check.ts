@@ -260,9 +260,13 @@ function assertPublicContracts(): void {
   assert.match(client, /prefers-reduced-motion/);
   assert.match(client, /aria-live/);
   assert.match(client, /spinningLock/);
-  assert.match(client, /WHEEL_PUBLIC_INTEREST_KEYS/);
-  assert.match(client, /phase.*lead|setPhase\("lead"\)/);
-  assert.match(client, /setPhase\("claim"\)|setPhase\("submitted"\)/);
+  assert.match(client, /mapUiPreferencesToCompletePayload/);
+  assert.match(client, /WheelFortuneView/);
+  assert.match(
+    client,
+    /setPhase\("intro"\)|setPhase\("ready"\)|setPhase\("result"\)/,
+  );
+  assert.match(client, /setPhase\("submitted"\)|setPhase\("restored"\)/);
   assert.match(client, /\/api\/game\/wheel\/start/);
   assert.match(client, /\/api\/game\/wheel\/complete/);
   assert.match(client, /\/api\/game\/wheel\/result/);
@@ -272,6 +276,11 @@ function assertPublicContracts(): void {
   assert.match(client, /data-testid=["']wheel-error-alert["']/);
   assert.match(client, /startRequestSerial|startSucceededRef/);
   assert.doesNotMatch(client, /wheel_lead_|persistLead|sessionStorage\.setItem\([^)]*phone|sessionStorage\.setItem\([^)]*name/i);
+
+  const adapter = read("src/components/game/wheel-public-ui-adapter.ts");
+  assert.match(adapter, /interest:\s*zone/);
+  assert.match(adapter, /interest:\s*"undecided"/);
+  assert.doesNotMatch(adapter, /interest:\s*"primary"/);
 
   const countrySelect = read("src/components/booking/phone-country-select.tsx");
   assert.match(countrySelect, /aria-label=["']Код страны["']/);
