@@ -63,12 +63,19 @@ const BOOKING_WINDOW_HOURS = 24;
 export class WheelPublicGameError extends Error {
   readonly code: string;
   readonly status: number;
+  readonly retryAt?: string;
 
-  constructor(code: string, message: string, status = 400) {
+  constructor(
+    code: string,
+    message: string,
+    status = 400,
+    details?: { retryAt?: string },
+  ) {
     super(message);
     this.name = "WheelPublicGameError";
     this.code = code;
     this.status = status;
+    this.retryAt = details?.retryAt;
   }
 }
 
@@ -85,8 +92,13 @@ type WheelCatalogRow = {
   activeTo: Date | null;
 };
 
-function throwWheel(code: string, message: string, status = 400): never {
-  throw new WheelPublicGameError(code, message, status);
+function throwWheel(
+  code: string,
+  message: string,
+  status = 400,
+  details?: { retryAt?: string },
+): never {
+  throw new WheelPublicGameError(code, message, status, details);
 }
 
 async function loadWheelCatalogBySlug(
@@ -316,11 +328,12 @@ export async function startWheelPublicGame(input: {
   });
 
   if (!registered.ok) {
-    if (registered.error === "PHONE_ATTEMPT_EXISTS") {
+    if (registered.error === "WHEEL_COOLDOWN_ACTIVE") {
       throwWheel(
-        "WHEEL_ATTEMPT_EXISTS",
-        "Этот номер уже участвовал в данной кампании",
+        "WHEEL_COOLDOWN_ACTIVE",
+        registered.message,
         409,
+        registered.retryAt ? { retryAt: registered.retryAt } : undefined,
       );
     }
     if (registered.error === "INVALID_INPUT") {

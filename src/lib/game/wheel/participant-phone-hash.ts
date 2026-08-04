@@ -8,8 +8,10 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { resolveWheelHmacSecret } from "@/lib/game/wheel/wheel-env-contract";
 
 export const WHEEL_PHONE_ATTEMPT_HASH_VERSION = "v1" as const;
+/** @deprecated Lifetime unique index removed; kept for P2002 / migration checks. */
 export const GAME_SESSION_PHONE_CAMPAIGN_UNIQUE_INDEX =
   "game_sessions_catalog_campaign_phone_hash_uidx";
+export { GAME_SESSION_PHONE_CAMPAIGN_STARTED_INDEX } from "@/lib/game/wheel/wheel-replay-cooldown";
 
 /**
  * Stable non-empty campaign snapshot for uniqueness.

@@ -1,7 +1,7 @@
 /**
  * Atomic phone+campaign attempt helpers for Wheel of Fortune.
- * Production registration lives in WheelGameSessionService (Prisma INSERT first).
- * InMemory registry remains for pure concurrent semantics unit tests.
+ * Production registration lives in WheelGameSessionService (Prisma + advisory lock).
+ * InMemory registry remains for pure concurrent cooldown semantics unit tests.
  */
 
 import { Prisma } from "@prisma/client";
@@ -11,6 +11,11 @@ import {
   isWheelPhoneCampaignUniqueTarget,
   type PhoneAttemptUniqueKey,
 } from "@/lib/game/wheel/participant-phone-hash";
+import {
+  computeWheelReplayRetryAt,
+  formatWheelCooldownMessage,
+  isWheelReplayCooldownActive,
+} from "@/lib/game/wheel/wheel-replay-cooldown";
 
 export type WheelPhoneAttemptSessionRow = {
   id: string;
@@ -33,19 +38,20 @@ export type RegisterWheelPhoneAttemptInput = {
 };
 
 /**
- * In-memory unique registry for concurrent INSERT semantics in unit tests.
+ * In-memory registry for concurrent cooldown semantics in unit tests.
  * Does not replace the Prisma production path.
  */
 export class InMemoryPhoneAttemptRegistry {
   private readonly rows = new Map<
     string,
-    {
+    Array<{
       sessionId: string;
       browserVisitorHash: string;
       attemptIdHash: string;
       assignment: unknown;
       sessionToken: string;
-    }
+      startedAt: Date;
+    }>
   >();
 
   private keyOf(unique: PhoneAttemptUniqueKey): string {
@@ -59,6 +65,7 @@ export class InMemoryPhoneAttemptRegistry {
     attemptIdHash: string;
     assignment: unknown;
     sessionToken: string;
+    now?: Date;
   }):
     | { ok: true; kind: "created" }
     | {
@@ -68,38 +75,62 @@ export class InMemoryPhoneAttemptRegistry {
         assignment: unknown;
         sessionToken: string;
       }
-    | { ok: false; error: "PHONE_ATTEMPT_EXISTS" } {
+    | {
+        ok: false;
+        error: "WHEEL_COOLDOWN_ACTIVE";
+        retryAt: string;
+        message: string;
+      } {
+    const now = input.now ?? new Date();
     const key = this.keyOf(input.uniqueKey);
-    const existing = this.rows.get(key);
-    if (!existing) {
-      this.rows.set(key, {
-        sessionId: input.sessionId,
-        browserVisitorHash: input.browserVisitorHash,
-        attemptIdHash: input.attemptIdHash,
-        assignment: input.assignment,
-        sessionToken: input.sessionToken,
-      });
-      return { ok: true, kind: "created" };
-    }
+    const existing = this.rows.get(key) ?? [];
 
-    if (
-      existing.browserVisitorHash === input.browserVisitorHash &&
-      existing.attemptIdHash === input.attemptIdHash
-    ) {
+    const sameAttempt = existing.find(
+      (row) =>
+        row.browserVisitorHash === input.browserVisitorHash &&
+        row.attemptIdHash === input.attemptIdHash,
+    );
+    if (sameAttempt) {
       return {
         ok: true,
         kind: "idempotent_reuse",
-        sessionId: existing.sessionId,
-        assignment: existing.assignment,
-        sessionToken: existing.sessionToken,
+        sessionId: sameAttempt.sessionId,
+        assignment: sameAttempt.assignment,
+        sessionToken: sameAttempt.sessionToken,
       };
     }
 
-    return { ok: false, error: "PHONE_ATTEMPT_EXISTS" };
+    const latest = existing
+      .slice()
+      .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())[0];
+    if (latest && isWheelReplayCooldownActive(latest.startedAt, now)) {
+      const retryAt = computeWheelReplayRetryAt(latest.startedAt);
+      return {
+        ok: false,
+        error: "WHEEL_COOLDOWN_ACTIVE",
+        retryAt: retryAt.toISOString(),
+        message: formatWheelCooldownMessage(retryAt),
+      };
+    }
+
+    existing.push({
+      sessionId: input.sessionId,
+      browserVisitorHash: input.browserVisitorHash,
+      attemptIdHash: input.attemptIdHash,
+      assignment: input.assignment,
+      sessionToken: input.sessionToken,
+      startedAt: now,
+    });
+    this.rows.set(key, existing);
+    return { ok: true, kind: "created" };
   }
 
   size(): number {
-    return this.rows.size;
+    let total = 0;
+    for (const list of this.rows.values()) {
+      total += list.length;
+    }
+    return total;
   }
 }
 
@@ -178,7 +209,7 @@ export function planWheelPhoneAttemptRegistration(
 }
 
 /**
- * Pure concurrent semantics helper for unit tests (not the Prisma production path).
+ * Pure concurrent cooldown semantics helper for unit tests (not Prisma path).
  */
 export function registerWheelPhoneAttemptConcurrentSafe(input: {
   registry: InMemoryPhoneAttemptRegistry;
@@ -191,6 +222,7 @@ export function registerWheelPhoneAttemptConcurrentSafe(input: {
   sessionToken: string;
   assignment: unknown;
   env?: NodeJS.ProcessEnv;
+  now?: Date;
 }):
   | {
       ok: true;
@@ -207,9 +239,10 @@ export function registerWheelPhoneAttemptConcurrentSafe(input: {
     }
   | {
       ok: false;
-      error: "PHONE_ATTEMPT_EXISTS";
+      error: "WHEEL_COOLDOWN_ACTIVE";
       uniqueKey: PhoneAttemptUniqueKey;
       message: string;
+      retryAt: string;
     } {
   const planned = planWheelPhoneAttemptRegistration({
     normalizedPhone: input.normalizedPhone,
@@ -227,6 +260,7 @@ export function registerWheelPhoneAttemptConcurrentSafe(input: {
     attemptIdHash: input.attemptIdHash,
     assignment: input.assignment,
     sessionToken: input.sessionToken,
+    now: input.now,
   });
 
   if (inserted.ok && inserted.kind === "created") {
@@ -250,8 +284,9 @@ export function registerWheelPhoneAttemptConcurrentSafe(input: {
 
   return {
     ok: false,
-    error: "PHONE_ATTEMPT_EXISTS",
+    error: "WHEEL_COOLDOWN_ACTIVE",
     uniqueKey: planned.uniqueKey,
-    message: "Этот номер уже участвовал в данной кампании",
+    message: inserted.message,
+    retryAt: inserted.retryAt,
   };
 }

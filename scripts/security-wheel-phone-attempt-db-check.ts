@@ -32,6 +32,11 @@ import {
 } from "../src/lib/game/wheel/default-prizes";
 import { normalizeGameBookingPhoneKey } from "../src/lib/game/game-open-request-policy";
 import { normalizePhone } from "../src/lib/phone/normalize-phone";
+import {
+  WHEEL_REPLAY_COOLDOWN_MS,
+  buildWheelPhoneParticipantLockKey,
+  computeWheelReplayRetryAt,
+} from "../src/lib/game/wheel/wheel-replay-cooldown";
 
 const ROOT = process.cwd();
 const TEST_ENV = {
@@ -103,8 +108,10 @@ function assertServiceSourceContracts(): void {
   const source = fs.readFileSync(implPath, "utf8");
   assert.match(source, /import "server-only"/);
   assert.match(source, /normalizeGameBookingPhoneKey|normalizePhone/);
+  assert.match(source, /\$transaction|pg_advisory_xact_lock/);
+  assert.match(source, /\$executeRawUnsafe|pg_advisory_xact_lock/);
   assert.match(source, /gameSession\.create/);
-  assert.match(source, /isPrismaUniqueViolation|P2002/);
+  assert.match(source, /WHEEL_COOLDOWN_ACTIVE|isWheelReplayCooldownActive/);
   assert.match(source, /attemptIdHash/);
   assert.match(source, /participantPhoneHash/);
   assert.match(source, /RESULT_UNAVAILABLE/);
@@ -116,10 +123,38 @@ function assertServiceSourceContracts(): void {
   assertNoHardcodedProductionWheelFallback(source);
   assert.doesNotMatch(source, /gameSession\.update/);
 
-  const createIndex = source.indexOf("gameSession.create");
-  const findIndex = source.indexOf("gameSession.findFirst");
-  assert.ok(createIndex > 0, "must call gameSession.create");
-  assert.ok(findIndex > createIndex, "INSERT must appear before conflict lookup");
+  assert.ok(
+    source.includes("pg_advisory_xact_lock") ||
+      source.includes("buildWheelPhoneParticipantLockKey"),
+    "must take advisory lock before create",
+  );
+
+  const cooldown = fs.readFileSync(
+    path.join(ROOT, "src/lib/game/wheel/wheel-replay-cooldown.ts"),
+    "utf8",
+  );
+  assert.match(cooldown, /WHEEL_REPLAY_COOLDOWN_MS\s*=\s*14\s*\*\s*24/);
+  assert.match(
+    cooldown,
+    /game_sessions_catalog_campaign_phone_started_idx/,
+  );
+
+  const migrationCooldown = fs.readFileSync(
+    path.join(
+      ROOT,
+      "prisma/migrations/20260804180000_wheel_phone_replay_cooldown/migration.sql",
+    ),
+    "utf8",
+  );
+  assert.match(
+    migrationCooldown,
+    /DROP INDEX IF EXISTS "game_sessions_catalog_campaign_phone_hash_uidx"/,
+  );
+  assert.match(
+    migrationCooldown,
+    /CREATE INDEX IF NOT EXISTS "game_sessions_catalog_campaign_phone_started_idx"/,
+  );
+  assert.doesNotMatch(migrationCooldown, /DELETE FROM|TRUNCATE|UPDATE "game_sessions"/);
 
   for (const relative of [
     "src/lib/game/wheel/participant-phone-hash.ts",
@@ -184,6 +219,7 @@ type FakeRow = {
   campaignKeySnapshot: string;
   attemptIdHash: string;
   playExpiresAt: Date;
+  startedAt: Date;
   serverAssignment: unknown;
   createOrder: number;
 };
@@ -193,6 +229,47 @@ function createFakePrisma() {
   let createOrder = 0;
   let createCalls = 0;
   let updateCalls = 0;
+  let lockCalls = 0;
+
+  function matchesWhere(
+    row: FakeRow,
+    where: Record<string, unknown>,
+  ): boolean {
+    if (where.tokenHash) {
+      return row.tokenHash === where.tokenHash;
+    }
+    if (where.gameCatalogId && row.gameCatalogId !== where.gameCatalogId) {
+      return false;
+    }
+    if (
+      where.campaignKeySnapshot &&
+      row.campaignKeySnapshot !== where.campaignKeySnapshot
+    ) {
+      return false;
+    }
+    if (
+      where.participantPhoneHash &&
+      row.participantPhoneHash !== where.participantPhoneHash
+    ) {
+      return false;
+    }
+    if (where.attemptIdHash && row.attemptIdHash !== where.attemptIdHash) {
+      return false;
+    }
+    if (
+      where.browserVisitorHash &&
+      row.browserVisitorHash !== where.browserVisitorHash
+    ) {
+      return false;
+    }
+    return Boolean(
+      where.gameCatalogId ||
+        where.campaignKeySnapshot ||
+        where.participantPhoneHash ||
+        where.attemptIdHash ||
+        where.browserVisitorHash,
+    );
+  }
 
   const gameSession = {
     async create(args: {
@@ -204,6 +281,7 @@ function createFakePrisma() {
         campaignKeySnapshot: string;
         attemptIdHash: string;
         playExpiresAt: Date;
+        startedAt?: Date;
         serverAssignment: unknown;
       };
       select: Record<string, boolean>;
@@ -211,26 +289,6 @@ function createFakePrisma() {
       createCalls += 1;
       createOrder += 1;
       const data = args.data;
-
-      const phoneConflict = rows.find(
-        (row) =>
-          row.gameCatalogId === data.gameCatalogId &&
-          row.campaignKeySnapshot === data.campaignKeySnapshot &&
-          row.participantPhoneHash === data.participantPhoneHash,
-      );
-      if (phoneConflict) {
-        throw new Prisma.PrismaClientKnownRequestError("Unique constraint", {
-          code: "P2002",
-          clientVersion: "test",
-          meta: {
-            target: [
-              "game_catalog_id",
-              "campaign_key_snapshot",
-              "participant_phone_hash",
-            ],
-          },
-        });
-      }
 
       const tokenConflict = rows.find((row) => row.tokenHash === data.tokenHash);
       if (tokenConflict) {
@@ -250,6 +308,7 @@ function createFakePrisma() {
         campaignKeySnapshot: data.campaignKeySnapshot,
         attemptIdHash: data.attemptIdHash,
         playExpiresAt: data.playExpiresAt,
+        startedAt: data.startedAt ?? new Date(),
         serverAssignment: data.serverAssignment,
         createOrder,
       };
@@ -264,25 +323,15 @@ function createFakePrisma() {
     async findFirst(args: {
       where: Record<string, unknown>;
       select: Record<string, boolean>;
+      orderBy?: { startedAt?: "asc" | "desc" };
     }) {
-      const where = args.where;
-      const found = rows.find((row) => {
-        if (
-          where.gameCatalogId &&
-          where.campaignKeySnapshot &&
-          where.participantPhoneHash
-        ) {
-          return (
-            row.gameCatalogId === where.gameCatalogId &&
-            row.campaignKeySnapshot === where.campaignKeySnapshot &&
-            row.participantPhoneHash === where.participantPhoneHash
-          );
-        }
-        if (where.tokenHash) {
-          return row.tokenHash === where.tokenHash;
-        }
-        return false;
-      });
+      const matches = rows.filter((row) => matchesWhere(row, args.where));
+      if (args.orderBy?.startedAt === "desc") {
+        matches.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
+      } else if (args.orderBy?.startedAt === "asc") {
+        matches.sort((a, b) => a.startedAt.getTime() - b.startedAt.getTime());
+      }
+      const found = matches[0];
       return found
         ? {
             id: found.id,
@@ -293,6 +342,7 @@ function createFakePrisma() {
             playExpiresAt: found.playExpiresAt,
             serverAssignment: found.serverAssignment,
             tokenHash: found.tokenHash,
+            startedAt: found.startedAt,
           }
         : null;
     },
@@ -303,11 +353,29 @@ function createFakePrisma() {
     },
   };
 
+  const tx = {
+    gameSession,
+    $executeRaw: async () => {
+      lockCalls += 1;
+      return 1;
+    },
+    $executeRawUnsafe: async () => {
+      lockCalls += 1;
+      return 1;
+    },
+  };
+
   return {
-    db: { gameSession } as unknown as PrismaClient,
+    db: {
+      gameSession,
+      $transaction: async (fn: (client: typeof tx) => Promise<unknown>) =>
+        fn(tx),
+      $executeRaw: tx.$executeRaw,
+    } as unknown as PrismaClient,
     rows,
     getCreateCalls: () => createCalls,
     getUpdateCalls: () => updateCalls,
+    getLockCalls: () => lockCalls,
   };
 }
 
@@ -399,7 +467,7 @@ async function assertFakePrismaRegistration(): Promise<void> {
     3,
   );
   assert.equal(fake.rows.length, 1);
-  assert.equal(fake.getCreateCalls(), 2);
+  assert.equal(fake.getCreateCalls(), 1);
   assert.equal(fake.getUpdateCalls(), 0);
 
   // Third format still same phone unique key
@@ -416,10 +484,12 @@ async function assertFakePrismaRegistration(): Promise<void> {
   });
   assert.equal(thirdFormat.ok, false);
   if (thirdFormat.ok) {
-    throw new Error("expected PHONE_ATTEMPT_EXISTS");
+    throw new Error("expected WHEEL_COOLDOWN_ACTIVE");
   }
-  assert.equal(thirdFormat.error, "PHONE_ATTEMPT_EXISTS");
+  assert.equal(thirdFormat.error, "WHEEL_COOLDOWN_ACTIVE");
+  assert.ok(thirdFormat.retryAt);
   assert.equal(fake.rows.length, 1);
+  assert.ok(fake.getLockCalls() >= 1);
 
   // Invalid / empty / short phone rejected before INSERT
   for (const badPhone of ["", "123", "abc", "999"]) {
@@ -517,6 +587,203 @@ async function assertFakePrismaRegistration(): Promise<void> {
   });
   assert.equal(otherCatalog.ok, true);
   assert.equal(fake.rows.length, 3);
+
+  // Browser change does not bypass cooldown for same phone
+  const otherBrowser = await registerWheelPhoneBoundSession({
+    gameCatalogId: CATALOG_A,
+    campaignKey: "permanent-wheel",
+    phone: PHONE_FORMATS[0],
+    browserVisitorHash: VISITOR_B,
+    attemptId: createWheelAttemptId(),
+    serverAssignment: assignment(5),
+    playExpiresAt,
+    now: new Date("2026-08-03T10:00:00.000Z"),
+    env: TEST_ENV,
+    db: fake.db,
+  });
+  assert.equal(otherBrowser.ok, false);
+  if (otherBrowser.ok) {
+    throw new Error("expected WHEEL_COOLDOWN_ACTIVE");
+  }
+  assert.equal(otherBrowser.error, "WHEEL_COOLDOWN_ACTIVE");
+  assert.equal(fake.rows.length, 3);
+
+  // Another phone is allowed
+  const otherPhone = await registerWheelPhoneBoundSession({
+    gameCatalogId: CATALOG_A,
+    campaignKey: "permanent-wheel",
+    phone: "79990001122",
+    browserVisitorHash: VISITOR_A,
+    attemptId: createWheelAttemptId(),
+    serverAssignment: assignment(6),
+    playExpiresAt,
+    now: new Date("2026-08-03T10:00:00.000Z"),
+    env: TEST_ENV,
+    db: fake.db,
+  });
+  assert.equal(otherPhone.ok, true);
+  assert.equal(fake.rows.length, 4);
+
+  // Cooldown boundary on a dedicated phone (no intervening plays)
+  const boundaryPhone = "79995556677";
+  const boundaryStart = new Date("2026-08-04T12:00:00.000Z");
+  const boundaryFirst = await registerWheelPhoneBoundSession({
+    gameCatalogId: CATALOG_A,
+    campaignKey: "permanent-wheel",
+    phone: boundaryPhone,
+    browserVisitorHash: VISITOR_A,
+    attemptId: createWheelAttemptId(),
+    serverAssignment: assignment(7),
+    playExpiresAt: new Date(boundaryStart.getTime() + 60_000),
+    now: boundaryStart,
+    env: TEST_ENV,
+    db: fake.db,
+  });
+  assert.equal(boundaryFirst.ok, true);
+  assert.equal(fake.rows.length, 5);
+
+  const justBefore = new Date(
+    boundaryStart.getTime() + WHEEL_REPLAY_COOLDOWN_MS - 1,
+  );
+  const exactlyAt = new Date(
+    boundaryStart.getTime() + WHEEL_REPLAY_COOLDOWN_MS,
+  );
+  const after = new Date(
+    boundaryStart.getTime() + WHEEL_REPLAY_COOLDOWN_MS + 1,
+  );
+
+  const beforeRetry = await registerWheelPhoneBoundSession({
+    gameCatalogId: CATALOG_A,
+    campaignKey: "permanent-wheel",
+    phone: boundaryPhone,
+    browserVisitorHash: VISITOR_A,
+    attemptId: createWheelAttemptId(),
+    serverAssignment: assignment(8),
+    playExpiresAt: new Date(justBefore.getTime() + 60_000),
+    now: justBefore,
+    env: TEST_ENV,
+    db: fake.db,
+  });
+  assert.equal(beforeRetry.ok, false);
+  if (beforeRetry.ok) {
+    throw new Error("expected cooldown before 14d");
+  }
+  assert.equal(beforeRetry.error, "WHEEL_COOLDOWN_ACTIVE");
+  assert.equal(
+    beforeRetry.retryAt,
+    computeWheelReplayRetryAt(boundaryStart).toISOString(),
+  );
+  assert.match(beforeRetry.message, /уже участвовали/i);
+
+  // Exactly at startedAt + 14d allowed
+  const exactRetry = await registerWheelPhoneBoundSession({
+    gameCatalogId: CATALOG_A,
+    campaignKey: "permanent-wheel",
+    phone: boundaryPhone,
+    browserVisitorHash: VISITOR_A,
+    attemptId: createWheelAttemptId(),
+    serverAssignment: assignment(9),
+    playExpiresAt: new Date(exactlyAt.getTime() + 60_000),
+    now: exactlyAt,
+    env: TEST_ENV,
+    db: fake.db,
+  });
+  assert.equal(exactRetry.ok, true);
+  if (!exactRetry.ok) {
+    throw new Error(exactRetry.message);
+  }
+  assert.equal(exactRetry.session.created, true);
+  assert.equal(fake.rows.length, 6);
+
+  // Later than 14d from a fresh single-session phone is allowed
+  const laterPhone = "79998887766";
+  const laterStart = new Date("2026-07-01T09:00:00.000Z");
+  const laterFirst = await registerWheelPhoneBoundSession({
+    gameCatalogId: CATALOG_A,
+    campaignKey: "permanent-wheel",
+    phone: laterPhone,
+    browserVisitorHash: VISITOR_A,
+    attemptId: createWheelAttemptId(),
+    serverAssignment: assignment(10),
+    playExpiresAt: new Date(laterStart.getTime() + 60_000),
+    now: laterStart,
+    env: TEST_ENV,
+    db: fake.db,
+  });
+  assert.equal(laterFirst.ok, true);
+  const laterRetry = await registerWheelPhoneBoundSession({
+    gameCatalogId: CATALOG_A,
+    campaignKey: "permanent-wheel",
+    phone: laterPhone,
+    browserVisitorHash: VISITOR_A,
+    attemptId: createWheelAttemptId(),
+    serverAssignment: assignment(11),
+    playExpiresAt: new Date(after.getTime() + 60_000),
+    now: new Date(laterStart.getTime() + WHEEL_REPLAY_COOLDOWN_MS + 1),
+    env: TEST_ENV,
+    db: fake.db,
+  });
+  assert.equal(laterRetry.ok, true);
+  if (!laterRetry.ok) {
+    throw new Error(laterRetry.message);
+  }
+  assert.equal(laterRetry.session.created, true);
+
+  // Latest startedAt wins when multiple historical rows exist
+  const multiPhone = "79990000001";
+  const oldPlay = new Date("2026-01-01T00:00:00.000Z");
+  const midPlay = new Date("2026-02-01T00:00:00.000Z");
+  const newestPlay = new Date("2026-03-01T00:00:00.000Z");
+  for (const when of [oldPlay, midPlay, newestPlay]) {
+    const seeded = await registerWheelPhoneBoundSession({
+      gameCatalogId: CATALOG_A,
+      campaignKey: "permanent-wheel",
+      phone: multiPhone,
+      browserVisitorHash: VISITOR_A,
+      attemptId: createWheelAttemptId(),
+      serverAssignment: assignment(0),
+      playExpiresAt: new Date(when.getTime() + 60_000),
+      now: when,
+      env: TEST_ENV,
+      db: fake.db,
+    });
+    assert.equal(seeded.ok, true);
+  }
+  const blockedByLatest = await registerWheelPhoneBoundSession({
+    gameCatalogId: CATALOG_A,
+    campaignKey: "permanent-wheel",
+    phone: multiPhone,
+    browserVisitorHash: VISITOR_A,
+    attemptId: createWheelAttemptId(),
+    serverAssignment: assignment(1),
+    playExpiresAt: new Date(newestPlay.getTime() + 60_000),
+    now: new Date(newestPlay.getTime() + WHEEL_REPLAY_COOLDOWN_MS - 1),
+    env: TEST_ENV,
+    db: fake.db,
+  });
+  assert.equal(blockedByLatest.ok, false);
+  if (!blockedByLatest.ok) {
+    assert.equal(blockedByLatest.error, "WHEEL_COOLDOWN_ACTIVE");
+    assert.equal(
+      blockedByLatest.retryAt,
+      computeWheelReplayRetryAt(newestPlay).toISOString(),
+    );
+  }
+  const allowedByLatest = await registerWheelPhoneBoundSession({
+    gameCatalogId: CATALOG_A,
+    campaignKey: "permanent-wheel",
+    phone: multiPhone,
+    browserVisitorHash: VISITOR_A,
+    attemptId: createWheelAttemptId(),
+    serverAssignment: assignment(2),
+    playExpiresAt: new Date(newestPlay.getTime() + WHEEL_REPLAY_COOLDOWN_MS + 60_000),
+    now: new Date(newestPlay.getTime() + WHEEL_REPLAY_COOLDOWN_MS),
+    env: TEST_ENV,
+    db: fake.db,
+  });
+  assert.equal(allowedByLatest.ok, true);
+
+  assert.doesNotMatch(JSON.stringify(fake.rows), /79991234567|79995556677|79998887766|79990000001/);
 
   // Deterministic tokens
   const key = buildPhoneAttemptUniqueKey({
@@ -634,7 +901,7 @@ async function resolveEphemeralPostgresUrl(): Promise<{
   );
   if (run.status !== 0) {
     console.log(
-      "wheel-phone-attempt-db: PG unique proof SKIP (docker postgres start failed)",
+      "wheel-phone-attempt-db: PG cooldown proof SKIP (docker postgres start failed)",
     );
     return null;
   }
@@ -663,11 +930,11 @@ async function resolveEphemeralPostgresUrl(): Promise<{
   return null;
 }
 
-async function assertPostgresUniqueIndexProof(): Promise<void> {
+async function assertPostgresCooldownConcurrencyProof(): Promise<void> {
   const ephemeral = await resolveEphemeralPostgresUrl();
   if (!ephemeral) {
     console.log(
-      "wheel-phone-attempt-db: PG unique proof SKIP (no reachable non-prod Postgres; fake Prisma P2002 path still ran)",
+      "wheel-phone-attempt-db: PG cooldown proof SKIP (no reachable non-prod Postgres; fake Prisma path still ran)",
     );
     return;
   }
@@ -675,7 +942,7 @@ async function assertPostgresUniqueIndexProof(): Promise<void> {
   const prisma = new PrismaClient({
     datasources: { db: { url: ephemeral.databaseUrl } },
   });
-  const schema = `wheel_attempt_proof_${Date.now()}`;
+  const schema = `wheel_cooldown_proof_${Date.now()}`;
 
   try {
     await prisma.$executeRawUnsafe(`CREATE SCHEMA "${schema}"`);
@@ -687,12 +954,36 @@ async function assertPostgresUniqueIndexProof(): Promise<void> {
         participant_phone_hash varchar(64),
         attempt_id_hash varchar(64),
         browser_visitor_hash varchar(64),
+        started_at timestamptz NOT NULL DEFAULT now(),
         server_assignment jsonb
       )
     `);
     await prisma.$executeRawUnsafe(`
-      CREATE UNIQUE INDEX attempt_rows_catalog_campaign_phone_uidx
+      CREATE INDEX attempt_rows_catalog_campaign_phone_started_idx
       ON "${schema}".attempt_rows (
+        game_catalog_id,
+        campaign_key_snapshot,
+        participant_phone_hash,
+        started_at DESC
+      )
+      WHERE participant_phone_hash IS NOT NULL
+        AND campaign_key_snapshot IS NOT NULL
+    `);
+
+    // Apply cooldown migration DDL against a table shaped like game_sessions
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE "${schema}".game_sessions (
+        id uuid PRIMARY KEY,
+        game_catalog_id uuid NOT NULL,
+        campaign_key_snapshot varchar(64),
+        participant_phone_hash varchar(64),
+        started_at timestamptz NOT NULL DEFAULT now(),
+        token_hash varchar(64) UNIQUE
+      )
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE UNIQUE INDEX "game_sessions_catalog_campaign_phone_hash_uidx"
+      ON "${schema}".game_sessions (
         game_catalog_id,
         campaign_key_snapshot,
         participant_phone_hash
@@ -700,128 +991,207 @@ async function assertPostgresUniqueIndexProof(): Promise<void> {
       WHERE participant_phone_hash IS NOT NULL
         AND campaign_key_snapshot IS NOT NULL
     `);
+    const historyId = randomUUID();
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "${schema}".game_sessions (
+        id, game_catalog_id, campaign_key_snapshot, participant_phone_hash, started_at, token_hash
+      ) VALUES ($1::uuid, $2::uuid, $3, $4, $5::timestamptz, $6)`,
+      historyId,
+      CATALOG_A,
+      "permanent-wheel",
+      "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+      new Date("2026-08-01T10:00:00.000Z").toISOString(),
+      createHash("sha256").update("history-token").digest("hex"),
+    );
+
+    // Apply the same DDL as the cooldown migration (schema-qualified).
+    await prisma.$executeRawUnsafe(
+      `DROP INDEX IF EXISTS "${schema}"."game_sessions_catalog_campaign_phone_hash_uidx"`,
+    );
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "game_sessions_catalog_campaign_phone_started_idx"
+      ON "${schema}".game_sessions (
+        "game_catalog_id",
+        "campaign_key_snapshot",
+        "participant_phone_hash",
+        "started_at" DESC
+      )
+      WHERE "participant_phone_hash" IS NOT NULL
+        AND "campaign_key_snapshot" IS NOT NULL
+    `);
+
+    const migrationSql = fs.readFileSync(
+      path.join(
+        ROOT,
+        "prisma/migrations/20260804180000_wheel_phone_replay_cooldown/migration.sql",
+      ),
+      "utf8",
+    );
+    assert.match(
+      migrationSql,
+      /DROP INDEX IF EXISTS "game_sessions_catalog_campaign_phone_hash_uidx"/,
+    );
+    assert.match(
+      migrationSql,
+      /CREATE INDEX IF NOT EXISTS "game_sessions_catalog_campaign_phone_started_idx"/,
+    );
+
+    const indexes = await prisma.$queryRawUnsafe<
+      Array<{ indexname: string }>
+    >(
+      `SELECT indexname FROM pg_indexes
+       WHERE schemaname = $1 AND tablename = 'game_sessions'`,
+      schema,
+    );
+    const indexNames = indexes.map((row) => row.indexname);
+    assert.ok(
+      !indexNames.includes("game_sessions_catalog_campaign_phone_hash_uidx"),
+      "lifetime unique index must be dropped",
+    );
+    assert.ok(
+      indexNames.includes("game_sessions_catalog_campaign_phone_started_idx"),
+      "lookup index must exist",
+    );
+    const preserved = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
+      `SELECT id::text AS id FROM "${schema}".game_sessions WHERE id = $1::uuid`,
+      historyId,
+    );
+    assert.equal(preserved.length, 1, "historical rows must be preserved");
+
+    // token_hash unique must remain
+    await assert.rejects(async () => {
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO "${schema}".game_sessions (
+          id, game_catalog_id, campaign_key_snapshot, participant_phone_hash, token_hash
+        ) VALUES ($1::uuid, $2::uuid, $3, $4, $5)`,
+        randomUUID(),
+        CATALOG_A,
+        "permanent-wheel",
+        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        createHash("sha256").update("history-token").digest("hex"),
+      );
+    });
 
     const catalogId = CATALOG_A;
     const campaign = "permanent-wheel";
-    const phoneHashes = PHONE_FORMATS.map((phone) =>
-      hashParticipantPhone({
-        normalizedPhone: normalizeGameBookingPhoneKey(phone)!,
-        gameCatalogId: catalogId,
-        campaignKeySnapshot: campaign,
-        env: TEST_ENV,
-      }),
-    );
-    assert.equal(phoneHashes[0], phoneHashes[1]);
-    assert.equal(phoneHashes[0], phoneHashes[2]);
+    const phoneHash = hashParticipantPhone({
+      normalizedPhone: "79991234567",
+      gameCatalogId: catalogId,
+      campaignKeySnapshot: campaign,
+      env: TEST_ENV,
+    });
+    const lockKey = buildWheelPhoneParticipantLockKey({
+      gameCatalogId: catalogId,
+      campaignKeySnapshot: campaign,
+      participantPhoneHash: phoneHash,
+    });
 
-    const insertSql = `
-      INSERT INTO "${schema}".attempt_rows (
-        id, game_catalog_id, campaign_key_snapshot, participant_phone_hash,
-        attempt_id_hash, browser_visitor_hash, server_assignment
-      ) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::jsonb)
-    `;
-
-    // Concurrent inserts with same phone hash from three formats → one row
-    const winners = { count: 0 };
-    const losers = { count: 0 };
-    const winnerSector = { value: -1 };
-
-    await Promise.all(
-      PHONE_FORMATS.map(async (phone, index) => {
-        try {
-          await prisma.$executeRawUnsafe(
-            insertSql,
-            randomUUID(),
-            catalogId,
-            campaign,
-            phoneHashes[index],
-            `attempt-format-${index}`,
-            `visitor-format-${index}`,
-            JSON.stringify(assignment(index === 0 ? 3 : 11)),
-          );
-          winners.count += 1;
-          winnerSector.value = index === 0 ? 3 : 11;
-        } catch {
-          losers.count += 1;
+    const insertWithLock = async (attemptId: string, sector: number) => {
+      return prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(
+          `SELECT pg_advisory_xact_lock($1::bigint)`,
+          lockKey.toString(),
+        );
+        const latest = await tx.$queryRawUnsafe<
+          Array<{ started_at: Date }>
+        >(
+          `SELECT started_at FROM "${schema}".attempt_rows
+           WHERE game_catalog_id = $1::uuid
+             AND campaign_key_snapshot = $2
+             AND participant_phone_hash = $3
+           ORDER BY started_at DESC
+           LIMIT 1`,
+          catalogId,
+          campaign,
+          phoneHash,
+        );
+        const now = new Date();
+        if (
+          latest[0] &&
+          now.getTime() <
+            latest[0].started_at.getTime() + WHEEL_REPLAY_COOLDOWN_MS
+        ) {
+          return { created: false as const, sector: null };
         }
-      }),
-    );
+        await tx.$executeRawUnsafe(
+          `INSERT INTO "${schema}".attempt_rows (
+            id, game_catalog_id, campaign_key_snapshot, participant_phone_hash,
+            attempt_id_hash, browser_visitor_hash, started_at, server_assignment
+          ) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::timestamptz, $8::jsonb)`,
+          randomUUID(),
+          catalogId,
+          campaign,
+          phoneHash,
+          attemptId,
+          `visitor-${attemptId}`,
+          now.toISOString(),
+          JSON.stringify({ sectorIndex: sector }),
+        );
+        return { created: true as const, sector };
+      });
+    };
 
-    assert.equal(winners.count, 1, "formatted phones must collide on unique index");
-    assert.equal(losers.count, 2);
-
-    const stored = await prisma.$queryRawUnsafe<
-      Array<{ server_assignment: WheelServerAssignmentV1; count: bigint }>
-    >(
-      `SELECT server_assignment, COUNT(*)::bigint AS count
-       FROM "${schema}".attempt_rows
-       WHERE participant_phone_hash = $1
-       GROUP BY server_assignment`,
-      phoneHashes[0],
-    );
-    assert.equal(stored.length, 1);
-    assert.equal(Number(stored[0]?.count ?? 0), 1);
-    assert.equal(stored[0]?.server_assignment.sectorIndex, winnerSector.value);
-    assert.ok(
-      stored[0]?.server_assignment.sectorIndex === 3 ||
-        stored[0]?.server_assignment.sectorIndex === 11,
-    );
-
-    // Race many identical hashes
-    const racePhoneHash = "b".repeat(64);
-    const raceWinners = { count: 0 };
-    const raceLosers = { count: 0 };
-    await Promise.all(
-      Array.from({ length: 12 }, async (_, index) => {
-        try {
-          await prisma.$executeRawUnsafe(
-            insertSql,
-            randomUUID(),
-            catalogId,
-            "race-campaign",
-            racePhoneHash,
-            `attempt-${index}`,
-            `visitor-${index}`,
-            JSON.stringify({ sectorIndex: index }),
-          );
-          raceWinners.count += 1;
-        } catch {
-          raceLosers.count += 1;
-        }
-      }),
-    );
-    assert.equal(raceWinners.count, 1);
-    assert.equal(raceLosers.count, 11);
-
-    // NULL phone hash rows (Catch-Time style) are not constrained by partial index
+    // Seed an expired session so cooldown has ended
+    const past = new Date(Date.now() - WHEEL_REPLAY_COOLDOWN_MS - 1000);
     await prisma.$executeRawUnsafe(
-      `
-      INSERT INTO "${schema}".attempt_rows (
+      `INSERT INTO "${schema}".attempt_rows (
+        id, game_catalog_id, campaign_key_snapshot, participant_phone_hash,
+        attempt_id_hash, browser_visitor_hash, started_at, server_assignment
+      ) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::timestamptz, $8::jsonb)`,
+      randomUUID(),
+      catalogId,
+      campaign,
+      phoneHash,
+      "seed-attempt",
+      "seed-visitor",
+      past.toISOString(),
+      JSON.stringify({ sectorIndex: 0 }),
+    );
+
+    const results = await Promise.all([
+      insertWithLock("attempt-a", 3),
+      insertWithLock("attempt-b", 11),
+    ]);
+    const created = results.filter((row) => row.created);
+    const blocked = results.filter((row) => !row.created);
+    assert.equal(created.length, 1, "exactly one concurrent winner after cooldown");
+    assert.equal(blocked.length, 1, "loser must see cooldown");
+
+    const countRows = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>(
+      `SELECT COUNT(*)::bigint AS count FROM "${schema}".attempt_rows
+       WHERE participant_phone_hash = $1 AND attempt_id_hash <> 'seed-attempt'`,
+      phoneHash,
+    );
+    assert.equal(Number(countRows[0]?.count ?? 0), 1);
+
+    // Historical seed row must still exist
+    const history = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>(
+      `SELECT COUNT(*)::bigint AS count FROM "${schema}".attempt_rows
+       WHERE attempt_id_hash = 'seed-attempt'`,
+    );
+    assert.equal(Number(history[0]?.count ?? 0), 1);
+
+    // Catch-Time style NULL phone hashes unrestricted
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "${schema}".attempt_rows (
         id, game_catalog_id, campaign_key_snapshot, participant_phone_hash,
         attempt_id_hash, browser_visitor_hash, server_assignment
-      ) VALUES (
-        $1::uuid, $2::uuid, $3, NULL, NULL, NULL, '{}'::jsonb
-      )
-    `,
+      ) VALUES ($1::uuid, $2::uuid, $3, NULL, NULL, NULL, '{}'::jsonb)`,
       randomUUID(),
       catalogId,
       campaign,
     );
     await prisma.$executeRawUnsafe(
-      `
-      INSERT INTO "${schema}".attempt_rows (
+      `INSERT INTO "${schema}".attempt_rows (
         id, game_catalog_id, campaign_key_snapshot, participant_phone_hash,
         attempt_id_hash, browser_visitor_hash, server_assignment
-      ) VALUES (
-        $1::uuid, $2::uuid, $3, NULL, NULL, NULL, '{}'::jsonb
-      )
-    `,
+      ) VALUES ($1::uuid, $2::uuid, $3, NULL, NULL, NULL, '{}'::jsonb)`,
       randomUUID(),
       catalogId,
       campaign,
     );
 
-    console.log("wheel-phone-attempt-db: PG unique proof PASS");
+    console.log("wheel-phone-attempt-db: PG cooldown proof PASS");
   } finally {
     try {
       await prisma.$executeRawUnsafe(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
@@ -838,7 +1208,7 @@ async function main(): Promise<void> {
   assertPhoneNormalization();
   assertSecretPolicy();
   await assertFakePrismaRegistration();
-  await assertPostgresUniqueIndexProof();
+  await assertPostgresCooldownConcurrencyProof();
   console.log("security-wheel-phone-attempt-db-check: OK");
 }
 
