@@ -15,7 +15,26 @@ export function isValidMonthKey(monthKey: string): boolean {
 }
 
 export function isValidDateKey(dateKey: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(dateKey);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+    return false;
+  }
+
+  const year = Number(dateKey.slice(0, 4));
+  const month = Number(dateKey.slice(5, 7));
+  const day = Number(dateKey.slice(8, 10));
+
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day) ||
+    month < 1 ||
+    month > 12
+  ) {
+    return false;
+  }
+
+  const daysInMonth = getDaysInMonthCount(year, month);
+  return day >= 1 && day <= daysInMonth;
 }
 
 export function safeTimestamp(date: Date | null | undefined): number | null {
@@ -195,7 +214,17 @@ export function parseStudioDateKey(dateKey: string, time = "12:00"): Date | null
     return null;
   }
 
-  return normalizeDate(new Date(`${dateKey}T${time}:00${STUDIO_OFFSET}`));
+  const parsed = normalizeDate(new Date(`${dateKey}T${time}:00${STUDIO_OFFSET}`));
+  if (!parsed) {
+    return null;
+  }
+
+  // Защита от engine overflow: calendar day должен совпасть с исходным ключом.
+  if (formatStudioDateKey(parsed) !== dateKey) {
+    return null;
+  }
+
+  return parsed;
 }
 
 export function parseStudioDateKeyEndOfDay(dateKey: string): Date | null {

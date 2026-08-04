@@ -27,12 +27,14 @@ export async function GET(request: Request) {
     );
   }
 
-  const studioToday = formatStudioDateKey(getStudioNow());
+  const now = getStudioNow();
+  const studioToday = formatStudioDateKey(now);
   const slots = await getAvailableTimeSlots(
     masterId,
     serviceId,
     dateKey,
     studioToday,
+    { now },
   );
 
   return NextResponse.json({ ok: true, slots, studioToday });

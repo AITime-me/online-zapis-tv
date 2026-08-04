@@ -32,7 +32,12 @@ import {
   onlinePublicMasterServiceWhere,
 } from "@/lib/booking/online-public-master-service";
 import {
+  assertPublicMorningSlotAllowed,
+  isPublicMorningSlotBlocked,
+} from "@/lib/booking/public-morning-slot-cutoff";
+import {
   addMinutesSafe,
+  formatStudioDateKey,
   formatStudioTimeInput,
   getEpochDate,
   getStudioNow,
@@ -129,6 +134,16 @@ export type PublicSlotCalculationOptions = {
    * Defaults to DEFAULT_BOOKING_POLICY_RUNTIME.
    */
   bookingPolicyRuntime?: BookingPolicyRuntime;
+  /**
+   * Единый момент запроса для past-filter и public morning cutoff.
+   * Routes / createOnlineBooking передают один now на весь flow.
+   */
+  now?: Date;
+};
+
+export type CreateOnlineBookingOptions = {
+  /** Единый момент серверного flow (тесты / DI). */
+  now?: Date;
 };
 
 export class OnlineServiceUnavailableError extends AppointmentValidationError {
@@ -886,8 +901,9 @@ export async function getAvailableTimeSlots(
   );
   const slotStep = Math.max(5, context.master.slotMinutes);
   const slots: string[] = [];
+  const now = options.now ?? getStudioNow();
   const minStartTime =
-    dateKey === studioToday ? formatStudioTimeInput(getStudioNow()) : "00:00";
+    dateKey === studioToday ? formatStudioTimeInput(now) : "00:00";
 
   let current = rangeStart;
   while (
@@ -908,6 +924,11 @@ export async function getAvailableTimeSlots(
     if (fitsHours) {
       if (
         compareTimeStrings(current, minStartTime) >= 0 &&
+        !isPublicMorningSlotBlocked({
+          slotDateKey: dateKey,
+          startTime: current,
+          now,
+        }) &&
         isSlotAvailable(
           dateKey,
           current,
@@ -1004,6 +1025,7 @@ export async function getAvailableDaysInMonth(
         preloadedOnlineTimings,
         loadOnlineFillTimings: options.loadOnlineFillTimings,
         bookingPolicyRuntime: monthRuntime,
+        now: options.now,
       },
     );
     if (slots.length > 0) {
@@ -1014,11 +1036,12 @@ export async function getAvailableDaysInMonth(
   return availableDays;
 }
 
-export async function createOnlineBooking(input: OnlineBookingInput) {
+export async function createOnlineBooking(
+  input: OnlineBookingInput,
+  options: CreateOnlineBookingOptions = {},
+) {
   const name = input.name.trim();
   const phone = input.phone.trim();
-
-  await assertRequiredLegalDocumentsPublished();
 
   if (!isClientConsentGiven(input.personalDataConsent)) {
     throw new AppointmentValidationError(
@@ -1041,19 +1064,26 @@ export async function createOnlineBooking(input: OnlineBookingInput) {
     throw new AppointmentValidationError(fieldErrors.phone);
   }
 
+  await assertRequiredLegalDocumentsPublished();
   const timing = await assertOnlineBookable(input.masterId, input.serviceId);
 
-  const studioToday = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Yekaterinburg",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(getStudioNow());
+  // Единый now фиксируется сразу перед cutoff / slots — после read-only validation.
+  const now = options.now ?? getStudioNow();
+
+  // Явная cutoff-проверка до client/lead и Appointment (stale submit после 21:00).
+  assertPublicMorningSlotAllowed({
+    slotDateKey: input.date,
+    startTime: input.startTime,
+    now,
+  });
+
+  const studioToday = formatStudioDateKey(now);
   const availableSlots = await getAvailableTimeSlots(
     input.masterId,
     input.serviceId,
     input.date,
     studioToday,
+    { now },
   );
   if (!availableSlots.includes(input.startTime)) {
     throw new AppointmentConflictError(

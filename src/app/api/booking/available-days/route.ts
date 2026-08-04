@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { formatStudioDateKey, getStudioNow, isValidDateKey, normalizeMonthKey } from "@/lib/datetime/date-layer";
+import { formatStudioDateKey, getStudioNow, normalizeMonthKey } from "@/lib/datetime/date-layer";
 import { enforceRequestRateLimit } from "@/lib/security/rate-limit/enforce-policy";
 import { getAvailableDaysInMonth } from "@/services/BookingService";
 
@@ -24,12 +24,14 @@ export async function GET(request: Request) {
     );
   }
 
-  const studioToday = formatStudioDateKey(getStudioNow());
+  const now = getStudioNow();
+  const studioToday = formatStudioDateKey(now);
   const dateKeys = await getAvailableDaysInMonth(
     masterId,
     serviceId,
     monthKey,
     studioToday,
+    { now },
   );
 
   return NextResponse.json({ ok: true, dateKeys, month: monthKey, studioToday });
