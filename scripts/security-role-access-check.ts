@@ -341,6 +341,7 @@ function testMasterDtoAndScheduleOptions(): void {
     status: "NEW",
     type: "MANAGER_REQUEST",
     isFromGame: false,
+    gameDisplay: null,
     masterName: "Мастер",
     serviceId: null,
     serviceNameSnapshot: null,
