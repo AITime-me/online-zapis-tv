@@ -170,7 +170,6 @@ export function WheelFortuneView(props: WheelFortuneViewProps) {
           shareMessage={shareMessage}
           vkUrl={vkUrl}
           maxUrl={maxUrl}
-          onReset={onReset}
         />
       );
 
@@ -190,7 +189,6 @@ export function WheelFortuneView(props: WheelFortuneViewProps) {
           result={result}
           claimStatus={claimStatus}
           onClaim={onClaim}
-          onReset={onReset}
           busy={busy}
           shareMessage={shareMessage}
           vkUrl={vkUrl}
