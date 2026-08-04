@@ -4,7 +4,7 @@
 DO $$
 DECLARE
   discount_terms CONSTANT text := 'Скидка 15% на одну процедуру перманентного макияжа. Подтвердите запись в течение 7 дней после выигрыша, пройти процедуру можно в течение 30 дней. Скидка действует один раз, не суммируется с другими скидками и специальными предложениями и не обменивается на деньги.';
-  prize_rules CONSTANT jsonb := jsonb_build_object(
+  v_prize_rules CONSTANT jsonb := jsonb_build_object(
     'version', 1,
     'prizeType', 'PERCENT_DISCOUNT',
     'systemKey', 'permanent_discount_15',
@@ -64,7 +64,7 @@ BEGIN
     prize_type = 'PERCENT_DISCOUNT',
     system_key = 'permanent_discount_15',
     activation_condition_text = discount_terms,
-    prize_rules = prize_rules,
+    prize_rules = v_prize_rules,
     sort_order = 70,
     priority = 'standard',
     updated_at = CURRENT_TIMESTAMP
