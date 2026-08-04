@@ -21,6 +21,7 @@ import {
   createOnlineBooking,
   OnlineServiceUnavailableError,
 } from "@/services/BookingService";
+import { PublicMorningSlotCutoffError } from "@/lib/booking/public-morning-slot-cutoff";
 import { buildManageUrl } from "@/lib/booking/manage-token";
 import { LegalDocumentsNotReadyError } from "@/services/LegalDocumentService";
 
@@ -180,6 +181,9 @@ export async function POST(request: Request) {
         code: "LEGAL_DOCUMENTS_NOT_READY",
         missingSlugs: error.missingSlugs,
       });
+    }
+    if (error instanceof PublicMorningSlotCutoffError) {
+      return errorResponse(error.message, 409, { code: error.name });
     }
     if (error instanceof AppointmentConflictError) {
       return errorResponse(error.message, 409, { code: error.name });

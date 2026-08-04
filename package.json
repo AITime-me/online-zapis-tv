@@ -76,6 +76,7 @@
     "test:security:extra-work-online-slots": "tsx scripts/security-extra-work-online-slots-check.ts",
     "test:security:online-booking-slot-chains": "tsx scripts/security-online-booking-slot-chains-check.ts",
     "test:security:public-booking-conservative-busy": "tsx scripts/security-public-booking-conservative-busy-check.ts",
+    "test:security:public-morning-slot-cutoff": "tsx scripts/security-public-morning-slot-cutoff-check.ts",
     "test:security:appointment-full-busy-compat-phase1": "tsx scripts/security-appointment-full-busy-compat-phase1-check.ts",
     "test:security:appointment-full-busy-rollback": "tsx scripts/security-appointment-full-busy-rollback-check.ts",
     "test:security:appointment-full-busy-runtime-marker": "tsx scripts/security-appointment-full-busy-runtime-marker-check.ts",

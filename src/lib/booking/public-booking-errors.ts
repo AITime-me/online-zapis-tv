@@ -12,6 +12,7 @@ export type PublicBookingCreateErrorCode =
   | "INVALID_DATE"
   | "AppointmentConflictError"
   | "AppointmentValidationError"
+  | "PUBLIC_MORNING_SLOT_CUTOFF"
   | "MANAGE_TOKEN_MISSING";
 
 export type PublicBookingCreateErrorResponse = {
