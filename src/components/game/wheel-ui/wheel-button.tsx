@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 
 type WheelButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   children: ReactNode;
-  variant?: "primary" | "secondary" | "ghost";
+  variant?: "primary" | "secondary" | "secondaryLight" | "ghost";
   fullWidth?: boolean;
 };
 
@@ -14,6 +14,8 @@ const VARIANT_CLASS: Record<
     "bg-[var(--wheel-gold)] text-[var(--wheel-deep)] hover:bg-[var(--wheel-gold-soft)] active:scale-[0.98] shadow-[0_8px_24px_rgba(198,161,91,0.28)]",
   secondary:
     "bg-transparent text-[var(--wheel-cream)] border border-[var(--wheel-gold)]/55 hover:border-[var(--wheel-gold)] hover:bg-[var(--wheel-gold)]/10",
+  secondaryLight:
+    "bg-transparent text-[var(--wheel-deep)] border border-[var(--wheel-gold)]/70 hover:text-[var(--wheel-deep)] hover:border-[var(--wheel-gold)] hover:bg-[var(--wheel-gold)]/12",
   ghost:
     "bg-transparent text-[var(--wheel-muted)] hover:text-[var(--wheel-cream)]",
 };

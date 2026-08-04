@@ -54,7 +54,7 @@ export function WheelCopySendActions({
       ) : null}
       {hasVk ? (
         <WheelButton
-          variant="secondary"
+          variant="secondaryLight"
           onClick={() => {
             void handleCopyOpen(vkUrl!, "VK");
           }}
@@ -65,7 +65,7 @@ export function WheelCopySendActions({
       ) : null}
       {hasMax ? (
         <WheelButton
-          variant="secondary"
+          variant="secondaryLight"
           onClick={() => {
             void handleCopyOpen(maxUrl!, "MAX");
           }}
