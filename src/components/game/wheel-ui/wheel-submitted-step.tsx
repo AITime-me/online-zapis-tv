@@ -102,10 +102,11 @@ export function WheelSubmittedStep({
         {(vkUrl || maxUrl) && (
           <div className="rounded-[1.75rem] border border-[var(--wheel-gold)]/25 bg-[var(--wheel-cream)]/95 p-5 sm:p-6">
             <p className="text-[15px] font-semibold text-[var(--wheel-ink)]">
-              Хотите написать нам сами?
+              Хотите связаться с нами прямо сейчас?
             </p>
             <p className="mt-2 text-[13px] text-[var(--wheel-ink-soft)]">
-              Это необязательно. Заявка уже отправлена.
+              Напишите в VK или MAX — поможем с записью. Или дождитесь нашего
+              сообщения: заявка уже у нас.
             </p>
             <pre
               className="mt-4 max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-2xl bg-[var(--wheel-deep)]/[0.04] p-3 font-[family-name:var(--font-ui)] text-[12px] leading-relaxed text-[var(--wheel-ink-soft)]"
