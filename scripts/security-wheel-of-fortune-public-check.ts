@@ -361,7 +361,8 @@ function assertPublicContracts(): void {
   assert.equal(replaced.replaced, true);
 
   const schema = read("prisma/schema.prisma");
-  assert.match(schema, /game_sessions_catalog_campaign_phone_hash_uidx/);
+  assert.match(schema, /game_sessions_catalog_campaign_phone_started_idx/);
+  assert.match(schema, /14-day cooldown|cooldown/i);
 
   const service = read("src/services/WheelPublicGameService.ts");
   assert.match(service, /import "server-only"/);
@@ -403,6 +404,7 @@ type FakeSession = {
   campaignKeySnapshot: string;
   attemptIdHash: string;
   playExpiresAt: Date;
+  startedAt: Date;
   claimExpiresAt: Date | null;
   status: string;
   serverAssignment: unknown;
@@ -490,29 +492,11 @@ function createPublicFlowFakePrisma(options?: {
         campaignKeySnapshot: string;
         attemptIdHash: string;
         playExpiresAt: Date;
+        startedAt?: Date;
         serverAssignment: unknown;
       };
       select: Record<string, boolean>;
     }) {
-      const phoneConflict = sessions.find(
-        (row) =>
-          row.gameCatalogId === args.data.gameCatalogId &&
-          row.campaignKeySnapshot === args.data.campaignKeySnapshot &&
-          row.participantPhoneHash === args.data.participantPhoneHash,
-      );
-      if (phoneConflict) {
-        throw new Prisma.PrismaClientKnownRequestError("Unique constraint", {
-          code: "P2002",
-          clientVersion: "test",
-          meta: {
-            target: [
-              "game_catalog_id",
-              "campaign_key_snapshot",
-              "participant_phone_hash",
-            ],
-          },
-        });
-      }
       const tokenConflict = sessions.find(
         (row) => row.tokenHash === args.data.tokenHash,
       );
@@ -533,6 +517,7 @@ function createPublicFlowFakePrisma(options?: {
         campaignKeySnapshot: args.data.campaignKeySnapshot,
         attemptIdHash: args.data.attemptIdHash,
         playExpiresAt: args.data.playExpiresAt,
+        startedAt: args.data.startedAt ?? new Date(),
         claimExpiresAt: null,
         status: "ACTIVE",
         serverAssignment: args.data.serverAssignment,
@@ -549,32 +534,53 @@ function createPublicFlowFakePrisma(options?: {
     async findFirst(args: {
       where: Record<string, unknown>;
       select?: Record<string, unknown>;
+      orderBy?: { startedAt?: "asc" | "desc" };
     }) {
       const where = args.where;
-      const found = sessions.find((row) => {
+      const matches = sessions.filter((row) => {
         if (where.id && row.id === where.id) {
           return true;
         }
-        if (
-          where.gameCatalogId &&
-          where.campaignKeySnapshot &&
-          where.participantPhoneHash
-        ) {
-          return (
-            row.gameCatalogId === where.gameCatalogId &&
-            row.campaignKeySnapshot === where.campaignKeySnapshot &&
-            row.participantPhoneHash === where.participantPhoneHash
-          );
-        }
         if (where.tokenHash) {
           return (
-            row.gameCatalogId === where.gameCatalogId &&
+            (!where.gameCatalogId || row.gameCatalogId === where.gameCatalogId) &&
             row.tokenHash === where.tokenHash
           );
         }
-        return false;
+        if (where.gameCatalogId && row.gameCatalogId !== where.gameCatalogId) {
+          return false;
+        }
+        if (
+          where.campaignKeySnapshot &&
+          row.campaignKeySnapshot !== where.campaignKeySnapshot
+        ) {
+          return false;
+        }
+        if (
+          where.participantPhoneHash &&
+          row.participantPhoneHash !== where.participantPhoneHash
+        ) {
+          return false;
+        }
+        if (where.attemptIdHash && row.attemptIdHash !== where.attemptIdHash) {
+          return false;
+        }
+        if (
+          where.browserVisitorHash &&
+          row.browserVisitorHash !== where.browserVisitorHash
+        ) {
+          return false;
+        }
+        return Boolean(
+          where.gameCatalogId ||
+            where.campaignKeySnapshot ||
+            where.participantPhoneHash,
+        );
       });
-      return found ?? null;
+      if (args.orderBy?.startedAt === "desc") {
+        matches.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
+      }
+      return matches[0] ?? null;
     },
 
     async updateMany(args: {
@@ -727,6 +733,9 @@ function createPublicFlowFakePrisma(options?: {
       return fn(db);
     },
     async $executeRaw() {
+      return 0;
+    },
+    async $executeRawUnsafe() {
       return 0;
     },
   } as unknown as PrismaClient;
@@ -889,7 +898,10 @@ async function assertFakePrismaPublicFlow(): Promise<void> {
       }),
     (error: unknown) =>
       error instanceof WheelPublicGameError &&
-      error.code === "WHEEL_ATTEMPT_EXISTS",
+      error.code === "WHEEL_COOLDOWN_ACTIVE" &&
+      error.status === 409 &&
+      typeof error.retryAt === "string" &&
+      /уже участвовали/i.test(error.message),
   );
   void otherAttempt;
 
@@ -1014,7 +1026,9 @@ async function assertFakePrismaPublicFlow(): Promise<void> {
     now,
     db: completeFake.db,
     env: TEST_ENV,
-    createBookingRequestFn: async () => {
+    createBookingRequestFn: async (bookingInput) => {
+      assert.ok(bookingInput.now instanceof Date);
+      assert.equal(bookingInput.now.getTime(), now.getTime());
       bookingCreates += 1;
       completeFake.bookings.set(bookingId, { id: bookingId });
       const session = completeFake.sessions[0]!;

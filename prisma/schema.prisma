@@ -738,14 +738,15 @@ model GameSession {
   /**
    * Irreversible HMAC of normalized phone, scoped to catalog+campaign.
    * Null for Catch-Time and unbound sessions. Never store plaintext phone here.
-   * Partial unique index is migration-only — see game_sessions_catalog_campaign_phone_hash_uidx.
-   * Do not add @@unique here; Prisma would emit a full unique index and break Catch-Time NULLs.
+   * Replay cooldown uses a non-unique partial lookup index
+   * (game_sessions_catalog_campaign_phone_started_idx) — migration-only.
+   * Do not add @@unique here; lifetime uniqueness was removed for 14-day cooldown.
    */
   participantPhoneHash String? @map("participant_phone_hash") @db.VarChar(64)
   /**
    * Resolved non-empty campaign key snapshot at attempt registration.
-   * Paired with participantPhoneHash for unique participation.
-   * Partial unique index is migration-only — see game_sessions_catalog_campaign_phone_hash_uidx.
+   * Paired with participantPhoneHash for cooldown-scoped participation.
+   * Lookup index is migration-only — see game_sessions_catalog_campaign_phone_started_idx.
    */
   campaignKeySnapshot String? @map("campaign_key_snapshot") @db.VarChar(64)
   /**

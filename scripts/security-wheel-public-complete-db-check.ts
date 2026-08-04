@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import { PrismaClient } from "@prisma/client";
 import { createWheelAttemptId } from "../src/lib/game/wheel/client-attempt-id";
 import {
@@ -10,6 +12,7 @@ import {
 import { hashOpaqueToken } from "../src/lib/game/session/game-session-token";
 import { hashParticipantPhone } from "../src/lib/game/wheel/participant-phone-hash";
 import { normalizeGameBookingPhoneKey } from "../src/lib/game/game-open-request-policy";
+import { validateGameBookingForFirstSubmit } from "../src/lib/game/game-booking-consume-rules";
 import {
   completeWheelPublicGame,
   startWheelPublicGame,
@@ -19,6 +22,113 @@ import { REQUIRED_PUBLISHED_LEGAL_SLUGS, LEGAL_DOCUMENT_SEED_METADATA } from "..
 import { hashLegalDocumentContent } from "../src/lib/legal-document/content-hash";
 import { buildCatalogSessionCookieName } from "../src/lib/game/session/game-session-cookie";
 import { LegalDocumentVersionStatus, type LegalAcceptanceType } from "@prisma/client";
+
+const ROOT = process.cwd();
+
+function assertUnifiedClockContracts(): void {
+  const booking = fs.readFileSync(
+    path.join(ROOT, "src/services/BookingRequestService.ts"),
+    "utf8",
+  );
+  assert.match(booking, /now\?:\s*Date/);
+  assert.match(booking, /const now = input\.now \?\? new Date\(\)/);
+
+  const wheel = fs.readFileSync(
+    path.join(ROOT, "src/services/WheelPublicGameService.ts"),
+    "utf8",
+  );
+  assert.match(
+    wheel,
+    /bookingFn\(\{[\s\S]*?\bnow,/,
+    "completeWheelPublicGame must forward injected now to createBookingRequest",
+  );
+
+  // Expiry guard remains strict: claim window end is exclusive (>=).
+  const expired = validateGameBookingForFirstSubmit(
+    {
+      id: "11111111-1111-4111-8111-111111111111",
+      gameDirection: "wheel",
+      gameCatalogId: CATALOG_ID,
+      gameSessionId: "22222222-2222-4222-8222-222222222222",
+      selectedGiftId: "33333333-3333-4333-8333-333333333333",
+      leadId: null,
+      consumedAt: null,
+      giftSnapshot: {
+        giftId: "33333333-3333-4333-8333-333333333333",
+        name: "Prize",
+        shortDescription: "Desc",
+        image: null,
+        priority: "standard",
+        cardStyle: "default",
+        assignedAt: "2026-08-03T11:00:00.000Z",
+        activationConditionText: "once",
+        validityDays: 30,
+      },
+      rulesSnapshot: null,
+      selectedGift: { name: "Prize", shortDescription: "Desc" },
+      gameCatalog: {
+        id: CATALOG_ID,
+        slug: CATALOG_SLUG,
+        title: "Wheel",
+      },
+      gameSession: {
+        id: "22222222-2222-4222-8222-222222222222",
+        gameCatalogId: CATALOG_ID,
+        tokenHash: hashOpaqueToken("clock-proof-token"),
+        status: "COMPLETED",
+        claimExpiresAt: new Date("2026-08-03T12:00:00.000Z"),
+        consumedAt: null,
+      },
+    },
+    "clock-proof-token",
+    new Date("2026-08-03T12:00:00.000Z"),
+  );
+  assert.equal(expired.ok, false);
+  if (!expired.ok) {
+    assert.equal(expired.code, "GAME_SESSION_EXPIRED");
+  }
+
+  const active = validateGameBookingForFirstSubmit(
+    {
+      id: "11111111-1111-4111-8111-111111111111",
+      gameDirection: "wheel",
+      gameCatalogId: CATALOG_ID,
+      gameSessionId: "22222222-2222-4222-8222-222222222222",
+      selectedGiftId: "33333333-3333-4333-8333-333333333333",
+      leadId: null,
+      consumedAt: null,
+      giftSnapshot: {
+        giftId: "33333333-3333-4333-8333-333333333333",
+        name: "Prize",
+        shortDescription: "Desc",
+        image: null,
+        priority: "standard",
+        cardStyle: "default",
+        assignedAt: "2026-08-03T11:00:00.000Z",
+        activationConditionText: "once",
+        validityDays: 30,
+      },
+      rulesSnapshot: null,
+      selectedGift: { name: "Prize", shortDescription: "Desc" },
+      gameCatalog: {
+        id: CATALOG_ID,
+        slug: CATALOG_SLUG,
+        title: "Wheel",
+      },
+      gameSession: {
+        id: "22222222-2222-4222-8222-222222222222",
+        gameCatalogId: CATALOG_ID,
+        tokenHash: hashOpaqueToken("clock-proof-token"),
+        status: "COMPLETED",
+        claimExpiresAt: new Date("2026-08-04T12:00:00.000Z"),
+        consumedAt: null,
+      },
+    },
+    "clock-proof-token",
+    new Date("2026-08-03T12:00:00.000Z"),
+  );
+  assert.equal(active.ok, true);
+}
 
 const TEST_ENV = {
   NODE_ENV: "test",
@@ -569,6 +679,7 @@ async function assertPostgresCompleteProof(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  assertUnifiedClockContracts();
   await assertPostgresCompleteProof();
   console.log("security-wheel-public-complete-db-check: OK");
 }

@@ -13,7 +13,12 @@ export const revalidate = 0;
 function handleWheelError(scope: string, error: unknown) {
   if (error instanceof WheelPublicGameError) {
     return NextResponse.json(
-      { ok: false, error: error.message, code: error.code },
+      {
+        ok: false,
+        error: error.message,
+        code: error.code,
+        ...(error.retryAt ? { retryAt: error.retryAt } : {}),
+      },
       { status: error.status },
     );
   }

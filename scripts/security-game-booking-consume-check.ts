@@ -650,6 +650,11 @@ function assertGamePlayIdInputPolicy(): void {
   assert.ok(createStart >= 0 && createEnd > createStart);
   const createBlock = serviceSource.slice(createStart, createEnd);
   assert.match(createBlock, /resolvePublicGamePlayId\(input\.gamePlayId\)/);
+  assert.match(
+    createBlock,
+    /const now = input\.now \?\? new Date\(\)/,
+    "createBookingRequest must accept optional injectable now",
+  );
 
   const resolveIndex = createBlock.indexOf("resolvePublicGamePlayId(input.gamePlayId)");
   const idempotencyIndex = createBlock.indexOf("findIdempotentBookingRequest");

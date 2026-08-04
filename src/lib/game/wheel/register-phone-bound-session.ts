@@ -1,6 +1,10 @@
 /**
  * Prisma-backed atomic phone+campaign wheel session registration.
  * Prefer importing via WheelGameSessionService (server-only) from app code.
+ *
+ * Registration uses a transaction-scoped PostgreSQL advisory lock so that
+ * concurrent requests after cooldown cannot create two prizes. Lifetime
+ * unique index was replaced by a 14-day replay cooldown.
  */
 import "server-only";
 
@@ -25,6 +29,12 @@ import { parseWheelServerAssignment } from "@/lib/game/wheel/parse-wheel-assignm
 import { WheelSecretError } from "@/lib/game/wheel/wheel-env-contract";
 import type { WheelServerAssignmentV1 } from "@/lib/game/wheel/wheel-assignment-contract";
 import { normalizeGameBookingPhoneKey } from "@/lib/game/game-open-request-policy";
+import {
+  buildWheelPhoneParticipantLockKey,
+  computeWheelReplayRetryAt,
+  formatWheelCooldownMessage,
+  isWheelReplayCooldownActive,
+} from "@/lib/game/wheel/wheel-replay-cooldown";
 
 export type WheelSessionPublicDto = {
   sessionId: string;
@@ -65,14 +75,17 @@ export type RegisterWheelPhoneBoundSessionResult =
   | {
       ok: false;
       error:
-        | "PHONE_ATTEMPT_EXISTS"
+        | "WHEEL_COOLDOWN_ACTIVE"
         | "INVALID_INPUT"
         | "SECRET_UNAVAILABLE"
         | "SESSION_TOKEN_CONFLICT"
         | "SESSION_CREATE_CONFLICT"
         | "RESULT_UNAVAILABLE";
       message: string;
+      retryAt?: string;
     };
+
+type TxClient = Prisma.TransactionClient;
 
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -167,10 +180,30 @@ function requireStoredAssignment(
   return { ok: true, assignment: stored };
 }
 
+function cooldownFailure(startedAt: Date): RegisterWheelPhoneBoundSessionResult {
+  const retryAt = computeWheelReplayRetryAt(startedAt);
+  return {
+    ok: false,
+    error: "WHEEL_COOLDOWN_ACTIVE",
+    message: formatWheelCooldownMessage(retryAt),
+    retryAt: retryAt.toISOString(),
+  };
+}
+
+async function acquireParticipantLock(
+  tx: TxClient,
+  lockKey: bigint,
+): Promise<void> {
+  // Bind as text → bigint so signed lock keys stay portable across Prisma adapters.
+  await tx.$executeRawUnsafe(
+    `SELECT pg_advisory_xact_lock($1::bigint)`,
+    lockKey.toString(),
+  );
+}
+
 /**
- * Atomically register a phone-bound wheel session.
- * INSERT is always attempted first; P2002 drives idempotent reuse / reject.
- * Public activation of WHEEL_OF_FORTUNE remains blocked elsewhere until stage 2.
+ * Atomically register a phone-bound wheel session under advisory lock.
+ * Idempotent same attemptId+visitor reuse; new attempts respect 14-day cooldown.
  */
 export async function registerWheelPhoneBoundSession(
   input: RegisterWheelPhoneBoundSessionInput,
@@ -216,148 +249,226 @@ export async function registerWheelPhoneBoundSession(
   }
 
   const now = input.now ?? new Date();
-  const assignmentJson = input.serverAssignment as unknown as Prisma.InputJsonValue;
+  const assignmentJson =
+    input.serverAssignment as unknown as Prisma.InputJsonValue;
+  const visitorHash = input.browserVisitorHash.trim();
+  const lockKey = buildWheelPhoneParticipantLockKey(uniqueKey);
 
   try {
-    const created = await db.gameSession.create({
-      data: {
-        gameCatalogId: uniqueKey.gameCatalogId,
-        tokenHash,
-        browserVisitorHash: input.browserVisitorHash.trim(),
-        participantPhoneHash: uniqueKey.participantPhoneHash,
-        campaignKeySnapshot: uniqueKey.campaignKeySnapshot,
-        attemptIdHash,
-        status: "ACTIVE",
-        startedAt: now,
-        playExpiresAt: input.playExpiresAt,
-        serverAssignment: assignmentJson,
-      },
-      select: {
-        id: true,
-        playExpiresAt: true,
-        serverAssignment: true,
-      },
-    });
+    return await db.$transaction(async (tx) => {
+      await acquireParticipantLock(tx, lockKey);
 
-    const stored = requireStoredAssignment(created.serverAssignment);
-    if (!stored.ok) {
-      return stored;
-    }
-
-    return {
-      ok: true,
-      session: toPublicDto({
-        sessionId: created.id,
-        sessionToken,
-        playExpiresAt: created.playExpiresAt,
-        created: true,
-        serverAssignment: stored.assignment,
-      }),
-    };
-  } catch (error) {
-    if (!isPrismaUniqueViolation(error)) {
-      throw error;
-    }
-
-    const conflictKind = classifyWheelSessionP2002(
-      readPrismaUniqueTarget(error),
-    );
-
-    const existingByPhone = await db.gameSession.findFirst({
-      where: {
-        gameCatalogId: uniqueKey.gameCatalogId,
-        campaignKeySnapshot: uniqueKey.campaignKeySnapshot,
-        participantPhoneHash: uniqueKey.participantPhoneHash,
-      },
-      select: {
-        id: true,
-        browserVisitorHash: true,
-        attemptIdHash: true,
-        participantPhoneHash: true,
-        campaignKeySnapshot: true,
-        playExpiresAt: true,
-        serverAssignment: true,
-        tokenHash: true,
-      },
-    });
-
-    if (existingByPhone) {
-      const sameAttempt =
-        attemptIdHashesEqual(existingByPhone.attemptIdHash, attemptIdHash) &&
-        existingByPhone.browserVisitorHash === input.browserVisitorHash.trim() &&
-        participantPhoneHashesEqual(
-          existingByPhone.participantPhoneHash,
-          uniqueKey.participantPhoneHash,
-        );
-
-      if (sameAttempt) {
-        const stored = requireStoredAssignment(existingByPhone.serverAssignment);
-        if (!stored.ok) {
-          return stored;
-        }
-        return {
-          ok: true,
-          session: toPublicDto({
-            sessionId: existingByPhone.id,
-            sessionToken,
-            playExpiresAt: existingByPhone.playExpiresAt,
-            created: false,
-            serverAssignment: stored.assignment,
-          }),
-        };
-      }
-
-      return {
-        ok: false,
-        error: "PHONE_ATTEMPT_EXISTS",
-        message: "Этот номер уже участвовал в данной кампании",
-      };
-    }
-
-    if (conflictKind === "token_hash") {
-      const existingByToken = await db.gameSession.findFirst({
-        where: { tokenHash },
+      const sameAttempt = await tx.gameSession.findFirst({
+        where: {
+          gameCatalogId: uniqueKey.gameCatalogId,
+          campaignKeySnapshot: uniqueKey.campaignKeySnapshot,
+          participantPhoneHash: uniqueKey.participantPhoneHash,
+          attemptIdHash,
+          browserVisitorHash: visitorHash,
+        },
+        orderBy: { startedAt: "desc" },
         select: {
           id: true,
           browserVisitorHash: true,
           attemptIdHash: true,
+          participantPhoneHash: true,
           playExpiresAt: true,
           serverAssignment: true,
+          startedAt: true,
         },
       });
 
-      if (
-        existingByToken &&
-        attemptIdHashesEqual(existingByToken.attemptIdHash, attemptIdHash) &&
-        existingByToken.browserVisitorHash === input.browserVisitorHash.trim()
-      ) {
-        const stored = requireStoredAssignment(existingByToken.serverAssignment);
+      if (sameAttempt) {
+        const same =
+          attemptIdHashesEqual(sameAttempt.attemptIdHash, attemptIdHash) &&
+          sameAttempt.browserVisitorHash === visitorHash &&
+          participantPhoneHashesEqual(
+            sameAttempt.participantPhoneHash,
+            uniqueKey.participantPhoneHash,
+          );
+        if (same) {
+          const stored = requireStoredAssignment(sameAttempt.serverAssignment);
+          if (!stored.ok) {
+            return stored;
+          }
+          return {
+            ok: true as const,
+            session: toPublicDto({
+              sessionId: sameAttempt.id,
+              sessionToken,
+              playExpiresAt: sameAttempt.playExpiresAt,
+              created: false,
+              serverAssignment: stored.assignment,
+            }),
+          };
+        }
+      }
+
+      const latest = await tx.gameSession.findFirst({
+        where: {
+          gameCatalogId: uniqueKey.gameCatalogId,
+          campaignKeySnapshot: uniqueKey.campaignKeySnapshot,
+          participantPhoneHash: uniqueKey.participantPhoneHash,
+        },
+        orderBy: { startedAt: "desc" },
+        select: {
+          id: true,
+          startedAt: true,
+        },
+      });
+
+      if (latest && isWheelReplayCooldownActive(latest.startedAt, now)) {
+        return cooldownFailure(latest.startedAt);
+      }
+
+      try {
+        const created = await tx.gameSession.create({
+          data: {
+            gameCatalogId: uniqueKey.gameCatalogId,
+            tokenHash,
+            browserVisitorHash: visitorHash,
+            participantPhoneHash: uniqueKey.participantPhoneHash,
+            campaignKeySnapshot: uniqueKey.campaignKeySnapshot,
+            attemptIdHash,
+            status: "ACTIVE",
+            startedAt: now,
+            playExpiresAt: input.playExpiresAt,
+            serverAssignment: assignmentJson,
+          },
+          select: {
+            id: true,
+            playExpiresAt: true,
+            serverAssignment: true,
+          },
+        });
+
+        const stored = requireStoredAssignment(created.serverAssignment);
         if (!stored.ok) {
           return stored;
         }
+
         return {
-          ok: true,
+          ok: true as const,
           session: toPublicDto({
-            sessionId: existingByToken.id,
+            sessionId: created.id,
             sessionToken,
-            playExpiresAt: existingByToken.playExpiresAt,
-            created: false,
+            playExpiresAt: created.playExpiresAt,
+            created: true,
             serverAssignment: stored.assignment,
           }),
         };
+      } catch (error) {
+        if (!isPrismaUniqueViolation(error)) {
+          throw error;
+        }
+
+        const conflictKind = classifyWheelSessionP2002(
+          readPrismaUniqueTarget(error),
+        );
+
+        if (conflictKind === "token_hash") {
+          const existingByToken = await tx.gameSession.findFirst({
+            where: { tokenHash },
+            select: {
+              id: true,
+              browserVisitorHash: true,
+              attemptIdHash: true,
+              playExpiresAt: true,
+              serverAssignment: true,
+            },
+          });
+
+          if (
+            existingByToken &&
+            attemptIdHashesEqual(existingByToken.attemptIdHash, attemptIdHash) &&
+            existingByToken.browserVisitorHash === visitorHash
+          ) {
+            const stored = requireStoredAssignment(
+              existingByToken.serverAssignment,
+            );
+            if (!stored.ok) {
+              return stored;
+            }
+            return {
+              ok: true as const,
+              session: toPublicDto({
+                sessionId: existingByToken.id,
+                sessionToken,
+                playExpiresAt: existingByToken.playExpiresAt,
+                created: false,
+                serverAssignment: stored.assignment,
+              }),
+            };
+          }
+
+          return {
+            ok: false as const,
+            error: "SESSION_TOKEN_CONFLICT" as const,
+            message: "Не удалось создать игровую сессию",
+          };
+        }
+
+        // Legacy unique index may still exist briefly during rolling deploy.
+        if (conflictKind === "phone_campaign_unique") {
+          const existingByPhone = await tx.gameSession.findFirst({
+            where: {
+              gameCatalogId: uniqueKey.gameCatalogId,
+              campaignKeySnapshot: uniqueKey.campaignKeySnapshot,
+              participantPhoneHash: uniqueKey.participantPhoneHash,
+            },
+            orderBy: { startedAt: "desc" },
+            select: {
+              id: true,
+              browserVisitorHash: true,
+              attemptIdHash: true,
+              participantPhoneHash: true,
+              playExpiresAt: true,
+              serverAssignment: true,
+              startedAt: true,
+            },
+          });
+
+          if (existingByPhone) {
+            const same =
+              attemptIdHashesEqual(
+                existingByPhone.attemptIdHash,
+                attemptIdHash,
+              ) &&
+              existingByPhone.browserVisitorHash === visitorHash &&
+              participantPhoneHashesEqual(
+                existingByPhone.participantPhoneHash,
+                uniqueKey.participantPhoneHash,
+              );
+            if (same) {
+              const stored = requireStoredAssignment(
+                existingByPhone.serverAssignment,
+              );
+              if (!stored.ok) {
+                return stored;
+              }
+              return {
+                ok: true as const,
+                session: toPublicDto({
+                  sessionId: existingByPhone.id,
+                  sessionToken,
+                  playExpiresAt: existingByPhone.playExpiresAt,
+                  created: false,
+                  serverAssignment: stored.assignment,
+                }),
+              };
+            }
+            return cooldownFailure(existingByPhone.startedAt);
+          }
+        }
+
+        return {
+          ok: false as const,
+          error: "SESSION_CREATE_CONFLICT" as const,
+          message: "Не удалось создать игровую сессию",
+        };
       }
-
-      return {
-        ok: false,
-        error: "SESSION_TOKEN_CONFLICT",
-        message: "Не удалось создать игровую сессию",
-      };
-    }
-
-    return {
-      ok: false,
-      error: "SESSION_CREATE_CONFLICT",
-      message: "Не удалось создать игровую сессию",
-    };
+    });
+  } catch (error) {
+    throw error;
   }
 }

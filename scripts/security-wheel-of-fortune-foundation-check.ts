@@ -23,6 +23,7 @@ import {
   InMemoryPhoneAttemptRegistry,
   registerWheelPhoneAttemptConcurrentSafe,
 } from "../src/lib/game/wheel/phone-attempt-registration";
+import { WHEEL_REPLAY_COOLDOWN_MS } from "../src/lib/game/wheel/wheel-replay-cooldown";
 import { phoneAttemptAllowed } from "../src/lib/game/wheel/phone-campaign-isolation";
 import { isPrizeAllowedForProcedure } from "../src/lib/game/wheel/prize-eligibility";
 import { resolvePrizeReplacement } from "../src/lib/game/wheel/prize-replacement";
@@ -561,6 +562,9 @@ function assertPhoneCampaignInMemoryIsolation(): void {
     env: TEST_ENV,
   });
   assert.equal(concurrentOtherVisitor.ok, false);
+  if (!concurrentOtherVisitor.ok) {
+    assert.equal(concurrentOtherVisitor.error, "WHEEL_COOLDOWN_ACTIVE");
+  }
   assert.equal(registry.size(), 1);
 
   const idempotentSameVisitor = registerWheelPhoneAttemptConcurrentSafe({
@@ -639,6 +643,35 @@ function assertPhoneCampaignInMemoryIsolation(): void {
   assert.equal(created.length, 1);
   assert.equal(blocked.length, 19);
   assert.equal(raceRegistry.size(), 1);
+  for (const row of blocked) {
+    assert.equal(row.ok, false);
+    if (!row.ok) {
+      assert.equal(row.error, "WHEEL_COOLDOWN_ACTIVE");
+    }
+  }
+
+  // After cooldown window, a new attempt is allowed
+  const afterCooldown = registerWheelPhoneAttemptConcurrentSafe({
+    registry,
+    normalizedPhone: "79991234567",
+    gameCatalogId: "wheel-catalog",
+    campaignKey: "permanent-wheel",
+    browserVisitorHash: "visitor-after",
+    attemptIdHash: hashWheelAttemptId(
+      "44444444-4444-4444-8444-444444444444",
+      TEST_ENV,
+    ),
+    sessionId: "session-after",
+    sessionToken: "token-after",
+    assignment: { sectorIndex: 2 },
+    env: TEST_ENV,
+    now: new Date(Date.now() + WHEEL_REPLAY_COOLDOWN_MS),
+  });
+  assert.equal(afterCooldown.ok, true);
+  if (afterCooldown.ok) {
+    assert.equal(afterCooldown.kind, "created");
+  }
+  assert.equal(registry.size(), 4);
 
   const migrationSql = fs.readFileSync(
     path.join(
@@ -652,6 +685,22 @@ function assertPhoneCampaignInMemoryIsolation(): void {
   assert.match(
     migrationSql,
     new RegExp(GAME_SESSION_PHONE_CAMPAIGN_UNIQUE_INDEX),
+  );
+
+  const cooldownMigration = fs.readFileSync(
+    path.join(
+      process.cwd(),
+      "prisma/migrations/20260804180000_wheel_phone_replay_cooldown/migration.sql",
+    ),
+    "utf8",
+  );
+  assert.match(
+    cooldownMigration,
+    /DROP INDEX IF EXISTS "game_sessions_catalog_campaign_phone_hash_uidx"/,
+  );
+  assert.match(
+    cooldownMigration,
+    /game_sessions_catalog_campaign_phone_started_idx/,
   );
   assert.match(migrationSql, /WHERE "participant_phone_hash" IS NOT NULL/);
   assert.match(
