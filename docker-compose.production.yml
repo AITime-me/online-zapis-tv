@@ -49,6 +49,9 @@ services:
       AUTH_SECRET: ${AUTH_SECRET}
       AUTH_URL: ${AUTH_URL}
       SCHEDULE_VIEW_TOKEN: ${SCHEDULE_VIEW_TOKEN}
+      # S2S Bearer for /api/internal/bot/v1/* (optional; empty → internal API fail-closed 401).
+      # Provision a host-local value only — never commit. Recreate app after set/rotate.
+      BOT_INTERNAL_API_TOKEN: ${BOT_INTERNAL_API_TOKEN:-}
       EXPORT_STORAGE: ${EXPORT_STORAGE:-local}
       EXPORT_LOCAL_DIR: /app/exports/emergency
       TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}

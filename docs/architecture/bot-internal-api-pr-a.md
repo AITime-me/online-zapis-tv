@@ -32,9 +32,18 @@ bot-TV → Authorization: Bearer <BOT_INTERNAL_API_TOKEN>
 ## Env: `BOT_INTERNAL_API_TOKEN`
 
 - Header: `Authorization: Bearer <token>`
-- Min length: 32
+- Min length: 32 printable ASCII bytes
 - Optional in global `env.ts`; fail-closed in auth helper
-- `.env.example`: `BOT_INTERNAL_API_TOKEN=` (name only)
+- `.env.example` / `.env.production.example`: `BOT_INTERNAL_API_TOKEN=` (name only — never commit a value)
+- Server-only; never `NEXT_PUBLIC_*`
+- Use a distinct value per environment (staging ≠ production)
+- Compose (`docker-compose.staging.yml` / `docker-compose.production.yml`) maps the key into the **app** service only as:
+  `BOT_INTERNAL_API_TOKEN: ${BOT_INTERNAL_API_TOKEN:-}`
+- Not passed to postgres, migrator, build args, or Dockerfile
+- Missing/empty/short token: public app starts; `/api/internal/bot/v1/*` returns 401
+- After set or rotation on a host: recreate **only** the app container (no postgres restart)
+- Do not set `WHEEL_E2E_ISOLATED` outside isolated wheel E2E (it bypasses endpoint rate limits)
+- Real `bot-TV` integration requires a separate acceptance gate and owner authorization
 
 ## Public catalog studio kill-switch
 
@@ -111,6 +120,7 @@ Reason codes include `STUDIO_ONLINE_DISABLED` when studio self-booking is off (i
 
 ```bash
 npm run test:security:bot-internal-api-pr-a
+npm run test:security:bot-internal-compose-wiring
 npm run test:security:bot-internal-route-coverage
 npx tsx scripts/security-csrf-coverage-check.ts
 npx tsx scripts/security-master-service-access-rules-check.ts
