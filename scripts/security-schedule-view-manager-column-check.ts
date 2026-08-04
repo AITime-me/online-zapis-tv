@@ -40,6 +40,7 @@ function buildFullRequest(): FullScheduleBookingRequestDto {
     status: "NEW",
     type: "MANAGER_REQUEST",
     isFromGame: false,
+    gameDisplay: null,
     masterName: "Мастер",
     serviceId: "svc-1",
     serviceNameSnapshot: "Маникюр",

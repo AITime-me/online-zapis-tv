@@ -11,6 +11,7 @@ import {
   type GiftSnapshot,
   type RulesSnapshot,
 } from "@/lib/game/session/game-session-snapshot";
+import { formatWheelInterestZoneDisplay } from "@/lib/game/wheel/interest-zone-labels";
 import { hashOpaqueToken } from "@/lib/game/session/game-session-token";
 import { isCanonicalUuid } from "@/lib/booking-requests/idempotency-contract";
 
@@ -103,7 +104,7 @@ export function buildServerGameBookingComment(input: {
     input.play.gameCatalog?.title?.trim() ||
     "Поймай своё время";
 
-  const direction = resolveGameDirectionLabel(
+  const directionFromLabels = resolveGameDirectionLabel(
     {
       playId: input.play.id,
       giftId: input.gift.giftSnapshot?.giftId ?? input.play.selectedGiftId,
@@ -115,6 +116,12 @@ export function buildServerGameBookingComment(input: {
     },
     null,
   );
+
+  const wheelZone = resolveWheelDirectionFromGiftSnapshot(input.play.giftSnapshot);
+  const direction =
+    wheelZone ||
+    (directionFromLabels !== "—" ? directionFromLabels : null) ||
+    "—";
 
   const condition =
     input.gift.activationConditionText?.trim() ||
@@ -154,6 +161,22 @@ export function buildServerGameBookingComment(input: {
   }
 
   return lines.join("\n");
+}
+
+function resolveWheelDirectionFromGiftSnapshot(giftSnapshot: unknown): string | null {
+  if (!giftSnapshot || typeof giftSnapshot !== "object" || Array.isArray(giftSnapshot)) {
+    return null;
+  }
+
+  const raw = giftSnapshot as {
+    confirmedInterest?: unknown;
+    confirmedZone?: unknown;
+  };
+
+  return formatWheelInterestZoneDisplay({
+    confirmedInterest: raw.confirmedInterest,
+    confirmedZone: raw.confirmedZone,
+  });
 }
 
 export type GameBookingValidationContext = {
