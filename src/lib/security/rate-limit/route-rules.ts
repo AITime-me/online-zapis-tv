@@ -148,6 +148,8 @@ export const RATE_LIMITED_API_PATHS = API_RATE_LIMIT_RULES.flatMap((rule) => {
     case "botInternal":
       return [
         { method: "POST", pathname: "/api/internal/bot/v1/eligibility" },
+        { method: "POST", pathname: "/api/internal/bot/v1/available-days" },
+        { method: "POST", pathname: "/api/internal/bot/v1/slots" },
       ];
     default:
       return [];
