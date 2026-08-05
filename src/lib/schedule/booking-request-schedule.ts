@@ -1,6 +1,4 @@
 import type { BookingRequestType } from "@prisma/client";
-import type { GameBookingRequestDisplay } from "@/lib/schedule/game-booking-request-display-format";
-import { LEGACY_CATCH_TIME_GAME_TITLE } from "@/lib/schedule/game-booking-request-display-format";
 
 /**
  * Minimal public/view-only card fields: time, type/status, name, service.
@@ -13,8 +11,6 @@ export type SummaryScheduleBookingRequestDto = {
   status: "NEW" | "CONTACTED" | "CLOSED";
   type: BookingRequestType;
   isFromGame: boolean;
-  /** Compact game context for schedule cards/modals. Null for non-game leads. */
-  gameDisplay: GameBookingRequestDisplay | null;
   serviceNameSnapshot: string | null;
   appointmentServiceName: string | null;
 };
@@ -80,15 +76,6 @@ export function toMasterScheduleBookingRequest(
     status: request.status,
     type: request.type,
     isFromGame: request.isFromGame,
-    gameDisplay: request.gameDisplay
-      ? {
-          catalogTitle: request.gameDisplay.catalogTitle,
-          procedure: request.gameDisplay.procedure,
-          zone: request.gameDisplay.zone,
-          giftName: request.gameDisplay.giftName,
-          clientMessage: null,
-        }
-      : null,
     masterName: request.masterName,
     serviceId: request.serviceId,
     serviceNameSnapshot: request.serviceNameSnapshot,
@@ -108,7 +95,6 @@ export function toSummaryScheduleBookingRequest(
     | "status"
     | "type"
     | "isFromGame"
-    | "gameDisplay"
     | "serviceNameSnapshot"
     | "appointmentServiceName"
   >,
@@ -120,15 +106,6 @@ export function toSummaryScheduleBookingRequest(
     status: request.status,
     type: request.type,
     isFromGame: request.isFromGame,
-    gameDisplay: request.gameDisplay
-      ? {
-          catalogTitle: request.gameDisplay.catalogTitle,
-          procedure: request.gameDisplay.procedure,
-          zone: request.gameDisplay.zone,
-          giftName: request.gameDisplay.giftName,
-          clientMessage: null,
-        }
-      : null,
     serviceNameSnapshot: request.serviceNameSnapshot,
     appointmentServiceName: request.appointmentServiceName,
   };
@@ -141,15 +118,10 @@ export function collectForbiddenViewOnlyBookingRequestKeys(
 }
 
 export function getScheduleBookingRequestSourceLabel(
-  request: Pick<
-    ScheduleDayBookingRequest,
-    "type" | "isFromGame" | "gameDisplay"
-  >,
+  request: Pick<ScheduleDayBookingRequest, "type" | "isFromGame">,
 ): string {
   if (request.isFromGame) {
-    const title =
-      request.gameDisplay?.catalogTitle?.trim() || LEGACY_CATCH_TIME_GAME_TITLE;
-    return `Игра «${title}»`;
+    return "Игра «Поймай своё время»";
   }
   if (request.type === "CONSULTATION_REQUEST") {
     return "Консультация";
@@ -220,29 +192,14 @@ export function extractGiftFromBookingComment(comment: string | null): string | 
     return null;
   }
 
-  const markers = [
-    "Подарок (назначен сервером):",
-    "Итоговый приз:",
-    "Подарок:",
-    "Мой подарок:",
-  ] as const;
-
   const lines = comment.split("\n");
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]?.trim() ?? "";
-    for (const marker of markers) {
-      if (line === marker && lines[index + 1]) {
-        const next = lines[index + 1]!.trim();
-        if (next && next !== "—") {
-          return next;
-        }
-      }
-      if (line.startsWith(marker)) {
-        const inline = line.slice(marker.length).trim();
-        if (inline && inline !== "—") {
-          return inline;
-        }
-      }
+    if (line === "Подарок:" && lines[index + 1]) {
+      return lines[index + 1].trim();
+    }
+    if (line.startsWith("Подарок:")) {
+      return line.slice("Подарок:".length).trim() || null;
     }
   }
 

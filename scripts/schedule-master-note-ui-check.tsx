@@ -150,7 +150,6 @@ function makeBookingRequestSummary({
     status: "NEW",
     type: "MANAGER_REQUEST",
     isFromGame: false,
-    gameDisplay: null,
     serviceNameSnapshot: "Услуга",
     appointmentServiceName: null,
   };

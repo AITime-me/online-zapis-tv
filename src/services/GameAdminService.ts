@@ -7,12 +7,6 @@ import {
   rejectClientCatalogRebind,
 } from "@/lib/game/admin-gift-catalog-binding";
 import {
-  assertWheelGiftIdentityImmutable,
-  assertWheelGiftUpdateAllowlist,
-  isWheelIdentityGift,
-  serverAssignmentReferencesGiftId,
-} from "@/lib/game/admin-gift-update-policy";
-import {
   generateActivationConditionText,
   validateGiftActivationInput,
   type GameGiftActivationMode,
@@ -26,7 +20,6 @@ import {
   normalizePrizeType,
   normalizeSystemKey,
 } from "@/lib/game/wheel/wheel-admin";
-import { parsePrizeRules } from "@/lib/game/wheel/prize-rules-contract";
 import type {
   GameConfigDto,
   GameConfigWriteInput,
@@ -313,23 +306,6 @@ function toInt(value: unknown, fallback: number): number {
   return fallback;
 }
 
-function parseNonNegativeIntStrict(value: unknown, errorMessage: string): number {
-  if (typeof value === "number") {
-    if (!Number.isInteger(value) || value < 0) {
-      throw new GameAdminValidationError(errorMessage);
-    }
-    return value;
-  }
-  if (typeof value === "string" && value.trim()) {
-    const trimmed = value.trim();
-    if (!/^\d+$/.test(trimmed)) {
-      throw new GameAdminValidationError(errorMessage);
-    }
-    return Number(trimmed);
-  }
-  throw new GameAdminValidationError(errorMessage);
-}
-
 function wrapBindingError(error: unknown): never {
   if (error instanceof GameAdminValidationError || error instanceof GameAdminNotFoundError) {
     throw error;
@@ -444,41 +420,6 @@ export async function updateGameGift(
     wrapBindingError(error);
   }
 
-  if (isWheelIdentityGift(existing)) {
-    try {
-      assertWheelGiftUpdateAllowlist({
-        existing: {
-          image: existing.image,
-          priority: existing.priority,
-          cardStyle: existing.cardStyle,
-          allowedGameDirections: existing.allowedGameDirections,
-          allowedResultTypes: existing.allowedResultTypes,
-          requiredPremiumLevel: existing.requiredPremiumLevel,
-          activationMode: existing.activationMode,
-          minCourseSessions: existing.minCourseSessions,
-          sortOrder: existing.sortOrder,
-        },
-        patch: input as Record<string, unknown>,
-      });
-      assertWheelGiftIdentityImmutable({
-        existing: {
-          systemKey: existing.systemKey,
-          prizeType: existing.prizeType,
-          prizeRules: existing.prizeRules,
-        },
-        patch: {
-          systemKey: input.systemKey,
-          prizeType: input.prizeType,
-          prizeRules: input.prizeRules,
-        },
-      });
-    } catch (error) {
-      throw new GameAdminValidationError(
-        error instanceof Error ? error.message : "Некорректные поля приза",
-      );
-    }
-  }
-
   const name = input.name?.trim();
   const shortDescription = input.shortDescription?.trim();
   if (name !== undefined && !name) {
@@ -486,14 +427,6 @@ export async function updateGameGift(
   }
   if (shortDescription !== undefined && !shortDescription) {
     throw new GameAdminValidationError("Описание подарка не может быть пустым");
-  }
-
-  let nextProbability: number | undefined;
-  if (input.probability !== undefined) {
-    nextProbability = parseNonNegativeIntStrict(
-      input.probability,
-      "Количество секторов должно быть целым неотрицательным числом",
-    );
   }
 
   const nextMode =
@@ -542,80 +475,43 @@ export async function updateGameGift(
   let nextPrizeRules: Prisma.InputJsonValue | typeof Prisma.JsonNull | undefined;
   let nextSortOrder: number | undefined;
   try {
-    if (!isWheelIdentityGift(existing)) {
-      if (input.systemKey !== undefined) {
-        nextSystemKey = normalizeSystemKey(input.systemKey);
-        if (nextSystemKey !== existing.systemKey) {
-          throw new GameAdminValidationError(
-            "systemKey нельзя изменить у существующего подарка",
-          );
-        }
-        nextSystemKey = undefined;
-      }
-      if (input.prizeType !== undefined) {
-        nextPrizeType = normalizePrizeType(input.prizeType);
-        if (nextPrizeType !== existing.prizeType) {
-          throw new GameAdminValidationError(
-            "Тип приза нельзя изменить. Создайте новый подарок и отключите текущий.",
-          );
-        }
-        nextPrizeType = undefined;
-      }
-      if (input.prizeRules !== undefined) {
-        const existingParsed = parsePrizeRules(existing.prizeRules);
-        const nextParsed = parsePrizeRules(input.prizeRules);
-        if (JSON.stringify(nextParsed) !== JSON.stringify(existingParsed)) {
-          throw new GameAdminValidationError(
-            "prizeRules нельзя изменить через обычное редактирование",
-          );
-        }
-        nextPrizeRules = undefined;
-      }
-      if (input.sortOrder !== undefined) {
-        nextSortOrder = Math.max(0, toInt(input.sortOrder, existing.sortOrder ?? 0));
-      }
-    } else {
-      // Wheel identity gifts: identity/mechanic fields already validated as immutable.
-      // Never write systemKey / prizeType / prizeRules / sortOrder on update.
-      nextSystemKey = undefined;
-      nextPrizeType = undefined;
-      nextPrizeRules = undefined;
-      nextSortOrder = undefined;
+    if (input.systemKey !== undefined) {
+      nextSystemKey = normalizeSystemKey(input.systemKey);
+    }
+    if (input.prizeType !== undefined) {
+      nextPrizeType = normalizePrizeType(input.prizeType);
+    }
+    if (input.prizeRules !== undefined) {
+      nextPrizeRules = normalizePrizeRulesInput(input.prizeRules);
+    }
+    if (input.sortOrder !== undefined) {
+      nextSortOrder = Math.max(0, toInt(input.sortOrder, existing.sortOrder ?? 0));
     }
   } catch (error) {
-    if (error instanceof GameAdminValidationError) {
-      throw error;
-    }
     throw new GameAdminValidationError(
       error instanceof Error ? error.message : "Некорректные поля приза",
     );
   }
-
-  const wheelLocked = isWheelIdentityGift(existing);
 
   const updated = await prisma.gameGift.update({
     where: { id },
     data: {
       ...(name !== undefined ? { name } : {}),
       ...(shortDescription !== undefined ? { shortDescription } : {}),
-      ...(!wheelLocked && input.image !== undefined
-        ? { image: input.image || null }
-        : {}),
+      ...(input.image !== undefined ? { image: input.image || null } : {}),
       ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
-      ...(nextProbability !== undefined ? { probability: nextProbability } : {}),
-      ...(!wheelLocked && input.priority !== undefined
-        ? { priority: input.priority }
+      ...(input.probability !== undefined
+        ? { probability: Math.max(0, toInt(input.probability, existing.probability)) }
         : {}),
-      ...(!wheelLocked && input.cardStyle !== undefined
-        ? { cardStyle: input.cardStyle }
-        : {}),
-      ...(!wheelLocked && input.allowedGameDirections !== undefined
+      ...(input.priority !== undefined ? { priority: input.priority } : {}),
+      ...(input.cardStyle !== undefined ? { cardStyle: input.cardStyle } : {}),
+      ...(input.allowedGameDirections !== undefined
         ? { allowedGameDirections: normalizeStrings(input.allowedGameDirections) }
         : {}),
-      ...(!wheelLocked && input.allowedResultTypes !== undefined
+      ...(input.allowedResultTypes !== undefined
         ? { allowedResultTypes: normalizeStrings(input.allowedResultTypes) }
         : {}),
-      ...(!wheelLocked && input.requiredPremiumLevel !== undefined
+      ...(input.requiredPremiumLevel !== undefined
         ? {
             requiredPremiumLevel: Math.max(
               0,
@@ -625,8 +521,6 @@ export async function updateGameGift(
         : {}),
       ...(activationTouched || !existing.activationConditionText.trim()
         ? {
-            // Wheel: activationMode/minCourseSessions changes already rejected;
-            // condition text remains mutable.
             activationMode,
             minCourseSessions,
             activationConditionText,
@@ -663,31 +557,6 @@ export async function deleteGameGift(
     });
   } catch (error) {
     wrapBindingError(error);
-  }
-
-  const historicalPlayCount = await prisma.gamePlay.count({
-    where: { selectedGiftId: id },
-  });
-  if (historicalPlayCount > 0) {
-    throw new GameAdminValidationError(
-      "Подарок уже использовался в играх. Отключите его вместо удаления.",
-    );
-  }
-
-  // ACTIVE sessions freeze the prize in serverAssignment before GamePlay exists.
-  const activeSessions = await prisma.gameSession.findMany({
-    where: {
-      gameCatalogId: catalogId,
-      status: "ACTIVE",
-    },
-    select: { id: true, serverAssignment: true },
-  });
-  for (const session of activeSessions) {
-    if (serverAssignmentReferencesGiftId(session.serverAssignment, id)) {
-      throw new GameAdminValidationError(
-        "Подарок назначен в активной игровой сессии. Отключите его вместо удаления.",
-      );
-    }
   }
 
   await prisma.gameGift.delete({ where: { id } });
