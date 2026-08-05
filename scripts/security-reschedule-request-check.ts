@@ -100,7 +100,6 @@ function assertMasterSanitization(): void {
     status: "NEW",
     type: "RESCHEDULE_REQUEST",
     isFromGame: false,
-    gameDisplay: null,
     masterName: "Мастер",
     serviceId: null,
     serviceNameSnapshot: null,
