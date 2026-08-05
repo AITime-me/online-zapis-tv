@@ -227,6 +227,26 @@ export function parseStudioDateKey(dateKey: string, time = "12:00"): Date | null
   return parsed;
 }
 
+/**
+ * Timezone-aware ISO-8601 wall-clock in the studio offset (`+05:00`).
+ * Returns null when dateKey/time are not a real studio calendar instant.
+ */
+export function formatStudioOffsetDateTime(
+  dateKey: string,
+  time: string,
+): string | null {
+  if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(time)) {
+    return null;
+  }
+
+  const parsed = parseStudioDateKey(dateKey, time);
+  if (!parsed) {
+    return null;
+  }
+
+  return `${dateKey}T${time}:00${STUDIO_OFFSET}`;
+}
+
 export function parseStudioDateKeyEndOfDay(dateKey: string): Date | null {
   if (!isValidDateKey(dateKey)) {
     return null;
