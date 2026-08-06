@@ -72,7 +72,7 @@ export {
 
 export type { AppointmentClientLinkResult };
 
-/** Максимум повторов Serializable-транзакции при P2034. */
+/** Максимум попыток Serializable-транзакции при serialization failure. */
 export const APPOINTMENT_WRITE_SERIALIZABLE_RETRIES = 3;
 
 /** Минимальный Prisma client для проверки конфликтов внутри транзакции. */
@@ -133,10 +133,23 @@ function toBusyTimingSnapshot(
   };
 }
 
-function isAppointmentSerializationFailure(error: unknown): boolean {
-  return (
-    error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034"
-  );
+/**
+ * Retryable serialization conflicts for appointment Serializable writes.
+ * - P2034: Prisma write-conflict / serialization failure
+ * - P2010 + meta.code 40001: raw SQL serialization_failure (SQLSTATE)
+ * Does not use message text; other P2010 / unknown errors are not retryable.
+ */
+export function isAppointmentSerializationFailure(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
+    return false;
+  }
+  if (error.code === "P2034") {
+    return true;
+  }
+  if (error.code === "P2010") {
+    return error.meta?.code === "40001";
+  }
+  return false;
 }
 
 export async function runSerializableAppointmentWrite<T>(
