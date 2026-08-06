@@ -32,19 +32,20 @@
 | Компонент | Статус | Комментарий |
 | --- | --- | --- |
 | Public booking catalog/slots/create | `DONE` | Клиентский публичный API, не Internal Bot API |
-| Internal Bot API routes | `NOT DONE` | Нет dedicated internal bot surface |
-| S2S + HMAC + timestamp + nonce + replay | `NOT DONE` | |
-| `actionId` / payload hash / bot idempotency contract | `NOT DONE` | Есть idempotency у public booking *request*; это не bot write contract и не `actionId` |
-| Signed selection token | `NOT DONE` | |
-| Transactional outbox для bot write | `NOT DONE` | |
+| Internal Bot API read routes | `DONE` | eligibility, available-days, slots (CURSOR-15/21) |
+| Internal Bot API booking create | `DONE` | `POST /api/internal/bot/v1/bookings` (CURSOR-24), Bearer + persistent idempotency |
+| S2S Bearer auth | `DONE` | `BOT_INTERNAL_API_TOKEN`; HMAC/timestamp/nonce request signing ещё нет |
+| Bot booking idempotency store | `DONE` | `InternalBotBookingOperation` |
+| Signed selection token | `NOT DONE` | slotId `bs1` unsigned; create re-validates availability |
+| Transactional outbox для bot write | `NOT DONE` | Вне CURSOR-24 |
 | Reconciliation `UNKNOWN` для bot write | `NOT DONE` | |
 | Static double-book check | `PARTIAL` | `scripts/security-appointment-double-book-check.ts` |
-| Live concurrent race integration test | `NOT DONE` | `BOOKING-RACE-01` |
-| Serializable isolation на create appointment | `PARTIAL` | В коде create path; недостаточно без live race-test |
+| Live concurrent race integration test | `PARTIAL` | bot create DB harness opt-in; full `BOOKING-RACE-01` still open |
+| Serializable isolation на create appointment | `DONE` | Create path + bot create reuse |
 
 ## Порядок внедрения (backlog)
 
-1. `BOT-API-READ-01` — read-only Internal Bot API
-2. `BOT-AUTH-01` — S2S auth, HMAC, timestamp, nonce, replay
-3. `BOOKING-RACE-01` — concurrent integration test
-4. `BOT-API-WRITE-01` — write API записи (после gates)
+1. ~~`BOT-API-READ-01`~~ — read-only Internal Bot API
+2. `BOT-AUTH-01` — optional HMAC/timestamp/nonce beyond Bearer
+3. `BOOKING-RACE-01` — full concurrent integration fixture suite
+4. ~~`BOT-API-WRITE-01` (core create)~~ — CURSOR-24; remaining: outbox + channel reconciliation

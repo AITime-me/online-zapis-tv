@@ -9,6 +9,7 @@ export type RateLimitPolicyId =
   | "gameSessionRead"
   | "availabilityCatalog"
   | "botInternal"
+  | "botInternalBookingCreate"
   | "health"
   | "passwordResetRequest";
 

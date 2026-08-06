@@ -49,6 +49,9 @@ services:
       # S2S Bearer for /api/internal/bot/v1/* (optional; empty → internal API fail-closed 401).
       # Provision a host-local value only — never commit. Recreate app after set/rotate.
       BOT_INTERNAL_API_TOKEN: ${BOT_INTERNAL_API_TOKEN:-}
+      # Dedicated HMAC for bot booking idempotency fingerprints (CURSOR-24). Required for create.
+      BOT_INTERNAL_IDEMPOTENCY_HMAC_SECRET: ${BOT_INTERNAL_IDEMPOTENCY_HMAC_SECRET:-}
+      BOT_INTERNAL_IDEMPOTENCY_HMAC_PREVIOUS_SECRETS: ${BOT_INTERNAL_IDEMPOTENCY_HMAC_PREVIOUS_SECRETS:-}
       EXPORT_STORAGE: ${EXPORT_STORAGE:-local}
       EXPORT_LOCAL_DIR: /app/exports/emergency
       # Почта. MAIL_PROVIDER=disabled → приложение стартует без SMTP.

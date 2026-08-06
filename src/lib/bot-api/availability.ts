@@ -5,6 +5,7 @@ import {
   ONLINE_SERVICE_UNAVAILABLE_MESSAGE,
   SERVICE_UNAVAILABLE_CODE,
 } from "@/lib/booking/public-booking-errors";
+import { buildBotSlotId } from "@/lib/booking/bot-slot-id";
 import {
   formatStudioOffsetDateTime,
   isValidDateKey,
@@ -33,11 +34,10 @@ export const BOT_INTERNAL_MAX_AVAILABLE_DATE_KEYS = 31;
 /** Conservative hard cap: 24h × 12 five-minute grid steps. */
 export const BOT_INTERNAL_MAX_AVAILABLE_SLOTS = 288;
 
-/** Stable opaque slot-id version prefix (no PII / randomness). */
-const BOT_SLOT_ID_PREFIX = "bs1";
-
 const CANONICAL_LOWERCASE_UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+export { buildBotSlotId, parseBotSlotId } from "@/lib/booking/bot-slot-id";
 
 const STRICT_TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -185,26 +185,6 @@ export function parseBotSlotsBody(
       date,
     },
   };
-}
-
-/**
- * Opaque stable slot id — deterministic over canonical service/master/date/time.
- * Not accepted from clients; never includes PII, tokens, or randomness.
- */
-export function buildBotSlotId(input: {
-  serviceId: string;
-  masterId: string;
-  dateKey: string;
-  startTime: string;
-}): string {
-  const hhmm = input.startTime.replace(":", "");
-  return [
-    BOT_SLOT_ID_PREFIX,
-    input.serviceId,
-    input.masterId,
-    input.dateKey,
-    hhmm,
-  ].join(".");
 }
 
 function isStrictStudioTime(value: string): boolean {

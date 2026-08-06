@@ -1,0 +1,125 @@
+name: Internal Bot Booking Create PostgreSQL Gate
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/bot-internal-booking-create-pg-gate.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "prisma/**"
+      - "docker-compose.production.yml"
+      - "docker-compose.staging.yml"
+      - "src/app/api/internal/bot/v1/bookings/**"
+      - "src/lib/bot-api/booking-create*"
+      - "src/lib/bot-api/booking-create-idempotency*"
+      - "src/lib/booking/bot-slot-id.ts"
+      - "src/lib/auth/bot-internal-api.ts"
+      - "src/lib/auth/bot-internal-auth.ts"
+      - "src/services/BotBookingCreateService.ts"
+      - "src/services/AppointmentService.ts"
+      - "src/services/BookingService.ts"
+      - "src/lib/security/rate-limit/**"
+      - "scripts/security-bot-internal-booking-create*"
+      - "scripts/lib/bot-booking-create-*.ts"
+      - "docs/architecture/bot-internal-api-pr-a.md"
+  push:
+    branches:
+      - main
+      - "feat/cursor-24-*"
+    paths:
+      - ".github/workflows/bot-internal-booking-create-pg-gate.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "prisma/**"
+      - "docker-compose.production.yml"
+      - "docker-compose.staging.yml"
+      - "src/app/api/internal/bot/v1/bookings/**"
+      - "src/lib/bot-api/booking-create*"
+      - "src/lib/bot-api/booking-create-idempotency*"
+      - "src/lib/booking/bot-slot-id.ts"
+      - "src/lib/auth/bot-internal-api.ts"
+      - "src/lib/auth/bot-internal-auth.ts"
+      - "src/services/BotBookingCreateService.ts"
+      - "src/services/AppointmentService.ts"
+      - "src/services/BookingService.ts"
+      - "src/lib/security/rate-limit/**"
+      - "scripts/security-bot-internal-booking-create*"
+      - "scripts/lib/bot-booking-create-*.ts"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bot-booking-create-pg-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bot-booking-create-pg-gate:
+    name: Internal Bot Booking Create PostgreSQL Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: bot_booking_create_gate
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d bot_booking_create_gate"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      CI: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+      NODE_ENV: test
+      APP_TIMEZONE: Asia/Yekaterinburg
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/bot_booking_create_gate
+      AUTH_SECRET: ci-auth-secret-not-for-idempotency-hmac!!
+      BOT_INTERNAL_API_TOKEN: ci-bot-internal-api-token-32chars-min!
+      BOT_INTERNAL_IDEMPOTENCY_HMAC_SECRET: ci-bot-idempotency-hmac-secret-32b-minimum!
+      BOT_BOOKING_CREATE_ALLOW_TEST_DB_MUTATION: "true"
+      SCHEDULE_VIEW_TOKEN: ci-schedule-view-token-32-characters!
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Apply migrations
+        run: npx prisma migrate deploy
+
+      - name: CURSOR-24 unit and security checks
+        run: npm run test:security:bot-internal-booking-create
+
+      - name: CURSOR-24 required PostgreSQL Gate
+        run: npm run test:security:bot-internal-booking-create-db:required
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Appointment double-book security check
+        run: npm run test:security:appointment-double-book
+
+      - name: Availability security check
+        run: npm run test:security:bot-internal-availability
+
+      - name: Bot internal route coverage
+        run: npm run test:security:bot-internal-route-coverage

@@ -72,7 +72,7 @@ export {
 
 export type { AppointmentClientLinkResult };
 
-/** Максимум повторов Serializable-транзакции при P2034. */
+/** Максимум попыток Serializable-транзакции при serialization failure. */
 export const APPOINTMENT_WRITE_SERIALIZABLE_RETRIES = 3;
 
 /** Минимальный Prisma client для проверки конфликтов внутри транзакции. */
@@ -133,10 +133,23 @@ function toBusyTimingSnapshot(
   };
 }
 
-function isAppointmentSerializationFailure(error: unknown): boolean {
-  return (
-    error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034"
-  );
+/**
+ * Retryable serialization conflicts for appointment Serializable writes.
+ * - P2034: Prisma write-conflict / serialization failure
+ * - P2010 + meta.code 40001: raw SQL serialization_failure (SQLSTATE)
+ * Does not use message text; other P2010 / unknown errors are not retryable.
+ */
+export function isAppointmentSerializationFailure(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
+    return false;
+  }
+  if (error.code === "P2034") {
+    return true;
+  }
+  if (error.code === "P2010") {
+    return error.meta?.code === "40001";
+  }
+  return false;
 }
 
 export async function runSerializableAppointmentWrite<T>(
@@ -209,7 +222,10 @@ export type AppointmentWriteInput = {
   isManualTimeOverride?: boolean;
   appliedPromotions?: AppliedPromotionRecord[] | null;
   clientId?: string | null;
-  /** Только для публичной ONLINE-записи: писать LegalAcceptanceRecord в той же транзакции. */
+  /**
+   * Писать LegalAcceptanceRecord в той же транзакции.
+   * ONLINE → ONLINE_BOOKING; BOT → BOT. Не использовать для INTERNAL.
+   */
   recordPublicLegalAcceptances?: boolean;
 };
 
@@ -501,6 +517,38 @@ export async function createOnlineAppointment(
   };
 }
 
+/**
+ * Confirmed self-booking from internal bot S2S (CURSOR-24).
+ * Same PUBLIC_ONLINE policy / overlap / timing as online create;
+ * source=BOT, no manage token, legal source BOT.
+ */
+export async function createBotOnlineAppointment(
+  input: Omit<AppointmentWriteInput, "status" | "source"> & {
+    serviceId: string;
+  },
+  runtime: AppointmentServiceRuntime = DEFAULT_APPOINTMENT_SERVICE_RUNTIME,
+): Promise<{ appointment: AppointmentDto }> {
+  const result = await createAppointmentRecord(
+    {
+      ...input,
+      status: "SCHEDULED",
+      source: "BOT",
+      recordPublicLegalAcceptances: true,
+    },
+    null,
+    { servicePolicy: "PUBLIC_ONLINE" },
+    runtime,
+  );
+
+  if (result.issuedManageToken) {
+    throw new AppointmentValidationError(
+      "BOT booking must not issue manage token",
+    );
+  }
+
+  return { appointment: result.appointment };
+}
+
 type AppointmentCreateRecordResult = {
   appointment: AppointmentDto;
   issuedManageToken: string | null;
@@ -580,8 +628,15 @@ async function createAppointmentRecord(
       throw new AppointmentValidationError("Не удалось сгенерировать manage token");
     }
 
+    if (input.source === "BOT" && (issuedManageToken || manageTokenHash)) {
+      throw new AppointmentValidationError(
+        "BOT booking must not issue manage token",
+      );
+    }
+
     const publicRequestReference =
-      input.recordPublicLegalAcceptances && input.source === "ONLINE"
+      input.recordPublicLegalAcceptances &&
+      (input.source === "ONLINE" || input.source === "BOT")
         ? createPublicRequestReference()
         : null;
 
@@ -666,13 +721,22 @@ async function createAppointmentRecord(
         rethrowMasterServiceAssignment(error);
       }
 
-      if (input.recordPublicLegalAcceptances && input.source === "ONLINE") {
-        await runtime.recordPublicAcceptances(tx, {
-          source: "ONLINE_BOOKING",
-          appointmentId: created.id,
-          clientId: input.clientId ?? null,
-          requestReference: publicRequestReference,
-        });
+      if (input.recordPublicLegalAcceptances) {
+        if (input.source === "ONLINE") {
+          await runtime.recordPublicAcceptances(tx, {
+            source: "ONLINE_BOOKING",
+            appointmentId: created.id,
+            clientId: input.clientId ?? null,
+            requestReference: publicRequestReference,
+          });
+        } else if (input.source === "BOT") {
+          await runtime.recordPublicAcceptances(tx, {
+            source: "BOT",
+            appointmentId: created.id,
+            clientId: input.clientId ?? null,
+            requestReference: publicRequestReference,
+          });
+        }
       }
 
       return created;
@@ -684,6 +748,15 @@ async function createAppointmentRecord(
     ) {
       throw new AppointmentValidationError(
         "Запись создана без Phase A dual-write manage token — проверьте миграцию appointments.manage_token_hash",
+      );
+    }
+
+    if (
+      input.source === "BOT" &&
+      (appointment.manageTokenHash || appointment.manageToken)
+    ) {
+      throw new AppointmentValidationError(
+        "BOT booking must not persist manage token",
       );
     }
 

@@ -86,10 +86,17 @@ export const API_RATE_LIMIT_RULES: ApiRateLimitRouteRule[] = [
       method === "GET" && startsWithAny(pathname, AVAILABILITY_CATALOG_PREFIXES),
   },
   {
+    policyId: "botInternalBookingCreate",
+    match: (pathname, method) =>
+      method === "POST" &&
+      exactPath(pathname, "/api/internal/bot/v1/bookings"),
+  },
+  {
     policyId: "botInternal",
     match: (pathname, method) =>
       method === "POST" &&
-      pathname.startsWith("/api/internal/bot/v1/"),
+      pathname.startsWith("/api/internal/bot/v1/") &&
+      !exactPath(pathname, "/api/internal/bot/v1/bookings"),
   },
 ];
 
@@ -145,6 +152,10 @@ export const RATE_LIMITED_API_PATHS = API_RATE_LIMIT_RULES.flatMap((rule) => {
         method: "GET",
         pathname,
       }));
+    case "botInternalBookingCreate":
+      return [
+        { method: "POST", pathname: "/api/internal/bot/v1/bookings" },
+      ];
     case "botInternal":
       return [
         { method: "POST", pathname: "/api/internal/bot/v1/eligibility" },

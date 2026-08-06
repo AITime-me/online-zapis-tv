@@ -1163,8 +1163,15 @@ function testStaticContracts(): void {
   const wrapper = read("src/lib/auth/bot-internal-api.ts");
   assert.match(wrapper, /import "server-only"/);
   assert.match(wrapper, /enforceBotInternalAuth/);
-  assert.match(wrapper, /enforceEndpointRateLimit/);
+  assert.match(
+    wrapper,
+    /enforceEndpointRateLimit|checkRateLimitByPolicy/,
+  );
   assert.match(wrapper, /botInternal/);
+  assert.match(
+    wrapper,
+    /createBotInternalRateLimitResponse|enforceEndpointRateLimit/,
+  );
 
   const docs = read("docs/architecture/bot-internal-api-pr-a.md");
   assert.match(docs, /BOT_INTERNAL_API_TOKEN/);

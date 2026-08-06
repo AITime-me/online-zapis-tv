@@ -1,9 +1,17 @@
 /**
  * Статический аудит: атомарная запись appointment против TOCTOU double-booking.
  */
+process.env.SECURITY_BATCH_TEST = "1";
+process.env.DATABASE_URL ??=
+  "postgresql://postgres:postgres@127.0.0.1:5432/tvoe_vremya_security_batch";
+
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { Prisma } from "@prisma/client";
+import { installServerOnlyShimForSecurityScripts } from "./lib/stub-server-only";
+
+installServerOnlyShimForSecurityScripts();
 
 const ROOT = process.cwd();
 
@@ -15,6 +23,79 @@ function stripComments(source: string): string {
   return source
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/(^|[^:])\/\/.*$/gm, "$1");
+}
+
+function makeKnownRequestError(
+  code: string,
+  meta?: Record<string, unknown>,
+  message = "test prisma error",
+): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError(message, {
+    code,
+    clientVersion: "6.19.0",
+    meta,
+  });
+}
+
+async function testSerializationFailureClassifier(): Promise<void> {
+  const {
+    isAppointmentSerializationFailure,
+    APPOINTMENT_WRITE_SERIALIZABLE_RETRIES,
+  } = await import("../src/services/AppointmentService");
+
+  assert.equal(APPOINTMENT_WRITE_SERIALIZABLE_RETRIES, 3, "retry limit remains 3");
+
+  assert.equal(
+    isAppointmentSerializationFailure(makeKnownRequestError("P2034")),
+    true,
+    "P2034 is retryable",
+  );
+  assert.equal(
+    isAppointmentSerializationFailure(
+      makeKnownRequestError(
+        "P2010",
+        { code: "40001" },
+        "Raw query failed. Code: `40001`. Message: `could not serialize access due to read/write dependencies among transactions`",
+      ),
+    ),
+    true,
+    "P2010 + meta.code 40001 is retryable",
+  );
+
+  assert.equal(
+    isAppointmentSerializationFailure(
+      makeKnownRequestError("P2010", { code: "23505" }),
+    ),
+    false,
+    "P2010 + other SQLSTATE is not retryable",
+  );
+  assert.equal(
+    isAppointmentSerializationFailure(makeKnownRequestError("P2010")),
+    false,
+    "P2010 without meta.code is not retryable",
+  );
+  assert.equal(
+    isAppointmentSerializationFailure(
+      makeKnownRequestError("P2010", { message: "could not serialize access" }),
+    ),
+    false,
+    "P2010 with serialize text but no meta.code is not retryable",
+  );
+  assert.equal(
+    isAppointmentSerializationFailure(new Error("could not serialize access")),
+    false,
+    "plain Error is not retryable",
+  );
+  assert.equal(
+    isAppointmentSerializationFailure(makeKnownRequestError("P2002")),
+    false,
+    "unknown Prisma codes are not absorbed as retryable",
+  );
+  assert.equal(
+    isAppointmentSerializationFailure({ code: "P2034" }),
+    false,
+    "plain object is not a KnownRequestError",
+  );
 }
 
 function testSerializableTransactionWrapper(): void {
@@ -35,8 +116,23 @@ function testSerializableTransactionWrapper(): void {
   );
   assert.match(
     src,
-    /isAppointmentSerializationFailure[\s\S]*code === "P2034"/,
-    "retry только для P2034",
+    /export function isAppointmentSerializationFailure/,
+    "classifier exported for behavioral checks",
+  );
+  assert.match(
+    src,
+    /error\.code === "P2034"/,
+    "P2034 remains retryable",
+  );
+  assert.match(
+    src,
+    /error\.code === "P2010"[\s\S]*meta\?\.code === "40001"/,
+    "P2010+40001 classified by meta.code not message",
+  );
+  assert.doesNotMatch(
+    src,
+    /isAppointmentSerializationFailure[\s\S]{0,400}includes\(["']could not serialize/,
+    "classifier must not key off message text",
   );
   assert.match(
     src,
@@ -46,7 +142,7 @@ function testSerializableTransactionWrapper(): void {
   assert.match(
     src,
     /function runSerializableAppointmentWrite[\s\S]*?catch \(error\) \{[\s\S]*?isAppointmentSerializationFailure\(error\)[\s\S]*?continue[\s\S]*?throw error/,
-    "retry continue только после проверки P2034",
+    "retry continue только после classifier; иначе throw",
   );
 }
 
@@ -71,12 +167,12 @@ function testCreateUsesTransactionClient(): void {
 
   assert.match(
     src,
-    /runSerializableAppointmentWrite\(async \(tx\) => \{[\s\S]*assertNoBlockingConflict\(\s*tx,/,
+    /runtime\.runSerializableWrite\(async \(tx\) => \{[\s\S]*assertNoBlockingConflict\(\s*tx,/,
     "create: check внутри Serializable tx",
   );
   assert.match(
     src,
-    /runSerializableAppointmentWrite\(async \(tx\) => \{[\s\S]*tx\.appointment\.create/,
+    /runtime\.runSerializableWrite\(async \(tx\) => \{[\s\S]*createAppointmentWithValidatedServicePolicy\(\s*tx,/,
     "create: write через tx client",
   );
 }
@@ -91,7 +187,7 @@ function testUpdateUsesTransactionClientForBlockingStatus(): void {
   );
   assert.match(
     src,
-    /needsConflictCheck[\s\S]*runSerializableAppointmentWrite\(async \(tx\) => \{[\s\S]*assertNoBlockingConflict\(\s*tx,/,
+    /runtime\.runSerializableWrite\(async \(tx\) => \{[\s\S]*needsConflictCheck[\s\S]*assertNoBlockingConflict\(\s*tx,/,
     "update: check внутри Serializable tx",
   );
   assert.match(
@@ -101,8 +197,8 @@ function testUpdateUsesTransactionClientForBlockingStatus(): void {
   );
   assert.match(
     src,
-    /:\s*await prisma\.appointment\.update/,
-    "non-blocking update остаётся вне Serializable tx",
+    /const appointment = await tx\.appointment\.update/,
+    "update appointment write uses transaction client",
   );
 }
 
@@ -135,7 +231,8 @@ function testConflictStillThrowsDomainError(): void {
   );
 }
 
-function main(): void {
+async function main(): Promise<void> {
+  await testSerializationFailureClassifier();
   testSerializableTransactionWrapper();
   testCreateUsesTransactionClient();
   testUpdateUsesTransactionClientForBlockingStatus();
@@ -144,4 +241,7 @@ function main(): void {
   console.log("security-appointment-double-book-check: OK");
 }
 
-main();
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
