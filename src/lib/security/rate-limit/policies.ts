@@ -1,9 +1,10 @@
 import type { RateLimitPolicy, RateLimitPolicyId } from "./types";
 
 /**
- * Консервативные лимиты для single-instance staging.
- * In-memory store не распределяется между несколькими контейнерами —
- * для multi-instance нужен Redis/shared store и rate limit на reverse proxy.
+ * Консервативные лимиты для single-instance staging/production app process.
+ * In-memory store не распределяется между несколькими контейнерами/воркерами.
+ * SECURITY INVARIANT: app topology must remain single-instance (compose guard).
+ * Перед горизонтальным масштабированием обязателен shared limiter (Redis/proxy).
  */
 export const RATE_LIMIT_POLICIES: Record<RateLimitPolicyId, RateLimitPolicy> = {
   login: {
@@ -61,6 +62,15 @@ export const RATE_LIMIT_POLICIES: Record<RateLimitPolicyId, RateLimitPolicy> = {
     id: "botInternal",
     windowMs: 60 * 1000,
     maxRequests: 120,
+  },
+  /**
+   * Authenticated S2S bot confirmed booking create (CURSOR-24).
+   * Stricter than shared botInternal read bucket.
+   */
+  botInternalBookingCreate: {
+    id: "botInternalBookingCreate",
+    windowMs: 15 * 60 * 1000,
+    maxRequests: 30,
   },
   health: {
     id: "health",

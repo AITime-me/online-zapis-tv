@@ -1,0 +1,635 @@
+/**
+ * CURSOR-24 — confirmed bot booking create orchestration.
+ * Reuses BookingService availability / online-bookable / AppointmentService write.
+ */
+import "server-only";
+
+import type { Prisma as PrismaNs } from "@prisma/client";
+import {
+  BotIdempotencyHmacConfigError,
+  claimBotBookingIdempotency,
+  computeBotBookingRequestFingerprintCandidates,
+  buildSafeBotBookingResultSnapshot,
+  markBotBookingIdempotencyFailure,
+  toBotBookingSuccessBody,
+} from "@/lib/bot-api/booking-create-idempotency";
+import type {
+  BotBookingCreateErrorCode,
+  BotBookingCreateRequest,
+  BotBookingCreateSuccessBody,
+} from "@/lib/bot-api/booking-create-types";
+import { parseBotSlotId } from "@/lib/booking/bot-slot-id";
+import {
+  assertPublicMorningSlotAllowed,
+  PublicMorningSlotCutoffError,
+} from "@/lib/booking/public-morning-slot-cutoff";
+import {
+  addMinutesSafe,
+  formatStudioDateKey,
+  formatStudioOffsetDateTime,
+  formatStudioTimeInput,
+  getStudioNow,
+  parseStudioDateTime,
+} from "@/lib/datetime/date-layer";
+import { prisma } from "@/lib/db";
+import { safeLogError } from "@/lib/logging/redact";
+import {
+  normalizePhone,
+  resolveClientPhoneMatchKey,
+} from "@/lib/phone/normalize-phone";
+import {
+  AppointmentConflictError,
+  AppointmentValidationError,
+  createBotOnlineAppointment,
+  createAppointmentServiceRuntime,
+  runSerializableAppointmentWrite,
+} from "@/services/AppointmentService";
+import {
+  assertOnlineBookable,
+  getAvailableTimeSlots,
+  OnlineServiceUnavailableError,
+} from "@/services/BookingService";
+import {
+  getBotBookingCreateTestHooks,
+  setBotBookingCreateTestHooks,
+} from "@/lib/bot-api/booking-create-test-hooks";
+import { createClientFromLead } from "@/services/ClientLinkService";
+import { assertRequiredLegalDocumentsPublished } from "@/services/LegalDocumentService";
+
+export {
+  setBotBookingCreateTestHooks,
+  clearBotBookingCreateTestHooks,
+  createCountdownBarrier,
+  botBookingCreateTestHooksAllowed,
+} from "@/lib/bot-api/booking-create-test-hooks";
+
+/** @deprecated Prefer setBotBookingCreateTestHooks({ afterClientResolve }) */
+export function setBotBookingCreateTestAfterClientResolveHook(
+  hook: (() => void) | null,
+): void {
+  setBotBookingCreateTestHooks(hook ? { afterClientResolve: hook } : null);
+}
+
+export class BotBookingCreateError extends Error {
+  readonly code: BotBookingCreateErrorCode;
+  readonly httpStatus: number;
+  readonly retryable: boolean;
+  readonly finalForIdempotency: boolean;
+
+  constructor(
+    code: BotBookingCreateErrorCode,
+    message: string,
+    options?: {
+      httpStatus?: number;
+      retryable?: boolean;
+      finalForIdempotency?: boolean;
+    },
+  ) {
+    super(message);
+    this.name = "BotBookingCreateError";
+    this.code = code;
+    this.httpStatus = options?.httpStatus ?? defaultHttpStatus(code);
+    this.retryable = options?.retryable ?? code === "INTERNAL_ERROR";
+    this.finalForIdempotency =
+      options?.finalForIdempotency ??
+      (code !== "INTERNAL_ERROR" &&
+        code !== "IDEMPOTENCY_IN_PROGRESS" &&
+        code !== "RATE_LIMITED");
+  }
+}
+
+function defaultHttpStatus(code: BotBookingCreateErrorCode): number {
+  switch (code) {
+    case "UNAUTHORIZED":
+      return 401;
+    case "RATE_LIMITED":
+      return 429;
+    case "PAYLOAD_TOO_LARGE":
+      return 413;
+    case "IDEMPOTENCY_CONFLICT":
+    case "IDEMPOTENCY_IN_PROGRESS":
+    case "SLOT_NO_LONGER_AVAILABLE":
+    case "CLIENT_AMBIGUOUS":
+    case "BOOKING_REQUEST_CONFLICT":
+    case "BOOKING_CONFLICT":
+      return 409;
+    case "INTERNAL_ERROR":
+      return 500;
+    default:
+      return 400;
+  }
+}
+
+function fixedErrorMessage(code: BotBookingCreateErrorCode): string {
+  switch (code) {
+    case "SLOT_INVALID":
+      return "Invalid slot";
+    case "SLOT_NO_LONGER_AVAILABLE":
+      return "Slot no longer available";
+    case "SERVICE_UNAVAILABLE":
+      return "Service unavailable";
+    case "MASTER_UNAVAILABLE":
+      return "Master unavailable";
+    case "SERVICE_MASTER_MISMATCH":
+      return "Service and master mismatch";
+    case "CLIENT_AMBIGUOUS":
+      return "Client ambiguous";
+    case "BOOKING_CONFLICT":
+      return "Booking conflict";
+    case "IDEMPOTENCY_CONFLICT":
+      return "Idempotency conflict";
+    case "IDEMPOTENCY_IN_PROGRESS":
+      return "Idempotency in progress";
+    case "INTERNAL_ERROR":
+      return "Internal error";
+    default:
+      return "Invalid request";
+  }
+}
+
+async function classifyServiceMasterAvailability(
+  serviceId: string,
+  masterId: string,
+): Promise<void> {
+  const [service, master, masterService] = await Promise.all([
+    prisma.service.findUnique({
+      where: { id: serviceId },
+      select: {
+        id: true,
+        isActive: true,
+        isOnlineBookingEnabled: true,
+        isPublic: true,
+        category: { select: { isActive: true, isPublic: true } },
+      },
+    }),
+    prisma.master.findUnique({
+      where: { id: masterId },
+      select: {
+        id: true,
+        isActive: true,
+        isPublic: true,
+        isOnlineBookingEnabled: true,
+      },
+    }),
+    prisma.masterService.findUnique({
+      where: { masterId_serviceId: { masterId, serviceId } },
+      select: {
+        isEnabled: true,
+        isPublic: true,
+        isOnlineBookingEnabled: true,
+      },
+    }),
+  ]);
+
+  if (
+    !service ||
+    !service.isActive ||
+    !service.isOnlineBookingEnabled ||
+    !service.isPublic ||
+    !service.category?.isActive ||
+    !service.category?.isPublic
+  ) {
+    throw new BotBookingCreateError(
+      "SERVICE_UNAVAILABLE",
+      fixedErrorMessage("SERVICE_UNAVAILABLE"),
+      { finalForIdempotency: true },
+    );
+  }
+
+  if (
+    !master ||
+    !master.isActive ||
+    !master.isPublic ||
+    !master.isOnlineBookingEnabled
+  ) {
+    throw new BotBookingCreateError(
+      "MASTER_UNAVAILABLE",
+      fixedErrorMessage("MASTER_UNAVAILABLE"),
+      { finalForIdempotency: true },
+    );
+  }
+
+  if (
+    !masterService ||
+    !masterService.isEnabled ||
+    !masterService.isPublic ||
+    !masterService.isOnlineBookingEnabled
+  ) {
+    throw new BotBookingCreateError(
+      "SERVICE_MASTER_MISMATCH",
+      fixedErrorMessage("SERVICE_MASTER_MISMATCH"),
+      { finalForIdempotency: true },
+    );
+  }
+}
+
+function addMinutesToTime(
+  dateKey: string,
+  time: string,
+  minutes: number,
+): string {
+  const base = parseStudioDateTime(dateKey, time);
+  const result = addMinutesSafe(base, minutes);
+  return formatStudioTimeInput(result ?? base);
+}
+
+async function resolveBotClientId(
+  tx: PrismaNs.TransactionClient,
+  input: { fullName: string; phone: string },
+): Promise<string> {
+  const matchKey = resolveClientPhoneMatchKey(input.phone);
+  if (!matchKey) {
+    throw new BotBookingCreateError(
+      "VALIDATION_ERROR",
+      fixedErrorMessage("VALIDATION_ERROR"),
+      { finalForIdempotency: true },
+    );
+  }
+
+  // Test-only: sync before real advisory lock (Race E). Inert outside SECURITY_BATCH_TEST.
+  await getBotBookingCreateTestHooks().beforeClientResolve?.();
+
+  await tx.$executeRaw`
+    SELECT pg_advisory_xact_lock(hashtext(${matchKey}))
+  `;
+
+  const normalized = normalizePhone(input.phone);
+  const suffix = matchKey;
+  if (!normalized) {
+    throw new BotBookingCreateError(
+      "VALIDATION_ERROR",
+      fixedErrorMessage("VALIDATION_ERROR"),
+      { finalForIdempotency: true },
+    );
+  }
+
+  const matches = await tx.client.findMany({
+    where: {
+      isArchived: false,
+      mergedIntoClientId: null,
+      OR: [
+        { normalizedPhone: normalized },
+        { normalizedPhone: { endsWith: suffix } },
+      ],
+    },
+    select: { id: true },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  const unique = new Map(matches.map((row) => [row.id, row]));
+  if (unique.size > 1) {
+    throw new BotBookingCreateError(
+      "CLIENT_AMBIGUOUS",
+      fixedErrorMessage("CLIENT_AMBIGUOUS"),
+      { finalForIdempotency: true },
+    );
+  }
+
+  if (unique.size === 1) {
+    return [...unique.keys()][0]!;
+  }
+
+  await getBotBookingCreateTestHooks().beforeZeroClientCreate?.();
+
+  const created = await createClientFromLead(
+    {
+      fullName: input.fullName,
+      phone: input.phone,
+      source: "unknown",
+      tags: ["бот-запись"],
+    },
+    tx,
+  );
+
+  return created.id;
+}
+
+export type CreateBotConfirmedBookingResult =
+  | { ok: true; body: BotBookingCreateSuccessBody }
+  | {
+      ok: false;
+      code: BotBookingCreateErrorCode;
+      error: string;
+      httpStatus: number;
+    };
+
+function mapDomainFailure(error: unknown): BotBookingCreateError {
+  if (error instanceof BotBookingCreateError) {
+    return error;
+  }
+  if (error instanceof PublicMorningSlotCutoffError) {
+    return new BotBookingCreateError(
+      "SLOT_NO_LONGER_AVAILABLE",
+      fixedErrorMessage("SLOT_NO_LONGER_AVAILABLE"),
+      { finalForIdempotency: true },
+    );
+  }
+  if (error instanceof AppointmentConflictError) {
+    return new BotBookingCreateError(
+      "SLOT_NO_LONGER_AVAILABLE",
+      fixedErrorMessage("SLOT_NO_LONGER_AVAILABLE"),
+      { finalForIdempotency: true },
+    );
+  }
+  if (error instanceof OnlineServiceUnavailableError) {
+    return new BotBookingCreateError(
+      "SERVICE_UNAVAILABLE",
+      fixedErrorMessage("SERVICE_UNAVAILABLE"),
+      { finalForIdempotency: true },
+    );
+  }
+  if (error instanceof AppointmentValidationError) {
+    return new BotBookingCreateError(
+      "SERVICE_UNAVAILABLE",
+      fixedErrorMessage("SERVICE_UNAVAILABLE"),
+      { finalForIdempotency: true },
+    );
+  }
+  if (
+    error instanceof Error &&
+    error.message === "BOT_BOOKING_IDEMPOTENCY_SNAPSHOT_INVALID"
+  ) {
+    return new BotBookingCreateError(
+      "INTERNAL_ERROR",
+      fixedErrorMessage("INTERNAL_ERROR"),
+      { retryable: true, finalForIdempotency: false },
+    );
+  }
+
+  return new BotBookingCreateError(
+    "INTERNAL_ERROR",
+    fixedErrorMessage("INTERNAL_ERROR"),
+    { retryable: true, finalForIdempotency: false },
+  );
+}
+
+export async function createBotConfirmedBooking(
+  request: BotBookingCreateRequest,
+  options: { now?: Date } = {},
+): Promise<CreateBotConfirmedBookingResult> {
+  let fingerprint: string;
+  let matchFingerprints: string[];
+  try {
+    const computed = computeBotBookingRequestFingerprintCandidates({
+      slotId: request.slotId,
+      clientName: request.clientName,
+      phone: request.phone,
+      personalDataConsent: request.personalDataConsent,
+      offerAcknowledgement: request.offerAcknowledgement,
+    });
+    fingerprint = computed.current;
+    matchFingerprints = computed.candidates;
+  } catch (error) {
+    if (error instanceof BotIdempotencyHmacConfigError) {
+      safeLogError("bot-internal-booking-create-hmac-config", error);
+      return {
+        ok: false,
+        code: "INTERNAL_ERROR",
+        error: fixedErrorMessage("INTERNAL_ERROR"),
+        httpStatus: 500,
+      };
+    }
+    throw error;
+  }
+
+  await getBotBookingCreateTestHooks().beforeCreate?.();
+
+  const claim = await claimBotBookingIdempotency(prisma, {
+    idempotencyKey: request.idempotencyKey,
+    fingerprint,
+    matchFingerprints,
+    now: options.now,
+  });
+
+  if (claim.kind === "conflict") {
+    return {
+      ok: false,
+      code: "IDEMPOTENCY_CONFLICT",
+      error: fixedErrorMessage("IDEMPOTENCY_CONFLICT"),
+      httpStatus: 409,
+    };
+  }
+
+  if (claim.kind === "in_progress") {
+    return {
+      ok: false,
+      code: "IDEMPOTENCY_IN_PROGRESS",
+      error: fixedErrorMessage("IDEMPOTENCY_IN_PROGRESS"),
+      httpStatus: 409,
+    };
+  }
+
+  if (claim.kind === "replay_success") {
+    return {
+      ok: true,
+      body: toBotBookingSuccessBody(claim.snapshot, true),
+    };
+  }
+
+  if (claim.kind === "replay_failure") {
+    const code = (
+      [
+        "SLOT_INVALID",
+        "SLOT_NO_LONGER_AVAILABLE",
+        "SERVICE_UNAVAILABLE",
+        "MASTER_UNAVAILABLE",
+        "SERVICE_MASTER_MISMATCH",
+        "CLIENT_AMBIGUOUS",
+        "BOOKING_CONFLICT",
+        "VALIDATION_ERROR",
+        "INTERNAL_ERROR",
+      ] as BotBookingCreateErrorCode[]
+    ).includes(claim.code as BotBookingCreateErrorCode)
+      ? (claim.code as BotBookingCreateErrorCode)
+      : "INTERNAL_ERROR";
+    return {
+      ok: false,
+      code,
+      error: fixedErrorMessage(code),
+      httpStatus: defaultHttpStatus(code),
+    };
+  }
+
+  const { operationId, leaseOwner, persistedFingerprint } = claim;
+
+  await getBotBookingCreateTestHooks().afterClaim?.();
+
+  try {
+    const slot = parseBotSlotId(request.slotId);
+    if (!slot.ok) {
+      throw new BotBookingCreateError(
+        "SLOT_INVALID",
+        fixedErrorMessage("SLOT_INVALID"),
+        { finalForIdempotency: true },
+      );
+    }
+
+    await assertRequiredLegalDocumentsPublished();
+    await classifyServiceMasterAvailability(
+      slot.value.serviceId,
+      slot.value.masterId,
+    );
+
+    const timing = await assertOnlineBookable(
+      slot.value.masterId,
+      slot.value.serviceId,
+    );
+
+    const now = options.now ?? getStudioNow();
+    const studioToday = formatStudioDateKey(now);
+
+    assertPublicMorningSlotAllowed({
+      slotDateKey: slot.value.dateKey,
+      startTime: slot.value.startTime,
+      now,
+    });
+
+    const availableSlots = await getAvailableTimeSlots(
+      slot.value.masterId,
+      slot.value.serviceId,
+      slot.value.dateKey,
+      studioToday,
+      { now },
+    );
+
+    if (!availableSlots.includes(slot.value.startTime)) {
+      throw new BotBookingCreateError(
+        "SLOT_NO_LONGER_AVAILABLE",
+        fixedErrorMessage("SLOT_NO_LONGER_AVAILABLE"),
+        { finalForIdempotency: true },
+      );
+    }
+
+    const endTime = addMinutesToTime(
+      slot.value.dateKey,
+      slot.value.startTime,
+      timing.durationMinutes + timing.breakAfterMinutes,
+    );
+
+    const startsAt = formatStudioOffsetDateTime(
+      slot.value.dateKey,
+      slot.value.startTime,
+    );
+    if (!startsAt) {
+      throw new BotBookingCreateError(
+        "SLOT_INVALID",
+        fixedErrorMessage("SLOT_INVALID"),
+        { finalForIdempotency: true },
+      );
+    }
+
+    await getBotBookingCreateTestHooks().beforeSerializableWrite?.();
+
+    const snapshot = await runSerializableAppointmentWrite(async (tx) => {
+      const locked = await tx.$queryRaw<Array<{ id: string; state: string }>>`
+        SELECT id, state::text AS state
+        FROM internal_bot_booking_operations
+        WHERE id = ${operationId}::uuid
+        FOR UPDATE
+      `;
+
+      const op = locked[0];
+      if (!op || op.state !== "IN_PROGRESS") {
+        throw new BotBookingCreateError(
+          "IDEMPOTENCY_IN_PROGRESS",
+          fixedErrorMessage("IDEMPOTENCY_IN_PROGRESS"),
+          { finalForIdempotency: false, retryable: true },
+        );
+      }
+
+      const owned = await tx.internalBotBookingOperation.findFirst({
+        where: {
+          id: operationId,
+          leaseOwner,
+          requestFingerprint: persistedFingerprint,
+          state: "IN_PROGRESS",
+        },
+        select: { id: true },
+      });
+      if (!owned) {
+        throw new BotBookingCreateError(
+          "IDEMPOTENCY_IN_PROGRESS",
+          fixedErrorMessage("IDEMPOTENCY_IN_PROGRESS"),
+          { finalForIdempotency: false, retryable: true },
+        );
+      }
+
+      const clientId = await resolveBotClientId(tx, {
+        fullName: request.clientName,
+        phone: request.phone,
+      });
+
+      getBotBookingCreateTestHooks().afterClientResolve?.();
+
+      const runtime = createAppointmentServiceRuntime({
+        runSerializableWrite: async (fn) => fn(tx),
+        db: tx,
+      });
+
+      const created = await createBotOnlineAppointment(
+        {
+          masterId: slot.value.masterId,
+          dateKey: slot.value.dateKey,
+          startTime: slot.value.startTime,
+          endTime,
+          serviceId: slot.value.serviceId,
+          clientName: request.clientName,
+          clientPhone: request.phone,
+          clientId,
+          comment: null,
+        },
+        runtime,
+      );
+
+      const safeSnapshot = buildSafeBotBookingResultSnapshot({
+        bookingId: created.appointment.id,
+        slotId: request.slotId,
+        startsAt,
+      });
+
+      await tx.internalBotBookingOperation.update({
+        where: { id: operationId },
+        data: {
+          state: "SUCCEEDED",
+          resultSnapshot: safeSnapshot,
+          failureCode: null,
+          leaseOwner: null,
+          leaseExpiresAt: null,
+        },
+      });
+
+      return safeSnapshot;
+    });
+
+    return {
+      ok: true,
+      body: toBotBookingSuccessBody(snapshot, false),
+    };
+  } catch (error) {
+    const mapped = mapDomainFailure(error);
+    if (!(error instanceof BotBookingCreateError)) {
+      safeLogError("bot-internal-booking-create", error);
+    }
+
+    try {
+      await markBotBookingIdempotencyFailure(prisma, {
+        operationId,
+        leaseOwner,
+        fingerprint: persistedFingerprint,
+        state: mapped.finalForIdempotency
+          ? "FAILED_FINAL"
+          : "FAILED_RETRYABLE",
+        failureCode: mapped.code,
+      });
+    } catch (markError) {
+      safeLogError("bot-internal-booking-create-idempotency-mark", markError);
+    }
+
+    return {
+      ok: false,
+      code: mapped.code,
+      error: fixedErrorMessage(mapped.code),
+      httpStatus: mapped.httpStatus,
+    };
+  }
+}

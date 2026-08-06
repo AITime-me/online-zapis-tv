@@ -71,12 +71,12 @@ function testCreateUsesTransactionClient(): void {
 
   assert.match(
     src,
-    /runSerializableAppointmentWrite\(async \(tx\) => \{[\s\S]*assertNoBlockingConflict\(\s*tx,/,
+    /runtime\.runSerializableWrite\(async \(tx\) => \{[\s\S]*assertNoBlockingConflict\(\s*tx,/,
     "create: check внутри Serializable tx",
   );
   assert.match(
     src,
-    /runSerializableAppointmentWrite\(async \(tx\) => \{[\s\S]*tx\.appointment\.create/,
+    /runtime\.runSerializableWrite\(async \(tx\) => \{[\s\S]*createAppointmentWithValidatedServicePolicy\(\s*tx,/,
     "create: write через tx client",
   );
 }
@@ -91,7 +91,7 @@ function testUpdateUsesTransactionClientForBlockingStatus(): void {
   );
   assert.match(
     src,
-    /needsConflictCheck[\s\S]*runSerializableAppointmentWrite\(async \(tx\) => \{[\s\S]*assertNoBlockingConflict\(\s*tx,/,
+    /runtime\.runSerializableWrite\(async \(tx\) => \{[\s\S]*needsConflictCheck[\s\S]*assertNoBlockingConflict\(\s*tx,/,
     "update: check внутри Serializable tx",
   );
   assert.match(
@@ -101,8 +101,8 @@ function testUpdateUsesTransactionClientForBlockingStatus(): void {
   );
   assert.match(
     src,
-    /:\s*await prisma\.appointment\.update/,
-    "non-blocking update остаётся вне Serializable tx",
+    /const appointment = await tx\.appointment\.update/,
+    "update appointment write uses transaction client",
   );
 }
 

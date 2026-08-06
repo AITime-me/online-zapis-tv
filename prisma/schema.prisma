@@ -928,6 +928,7 @@ enum LegalAcceptanceSource {
   CONSULTATION_REQUEST
   GAME_CLAIM
   WEBSITE_PROBLEM_REPORT
+  BOT
 }
 
 /// Append-only журнал юридически значимых подтверждений. Не редактируется через админку.
@@ -1094,6 +1095,38 @@ model BotEventLog {
   @@index([clientId])
   @@index([bookingRequestId])
   @@map("bot_event_logs")
+}
+
+enum InternalBotBookingOperationState {
+  IN_PROGRESS
+  SUCCEEDED
+  FAILED_RETRYABLE
+  FAILED_FINAL
+}
+
+/**
+ * Persistent idempotency for POST /api/internal/bot/v1/bookings (CURSOR-24).
+ * Stores HMAC fingerprint only — never raw PII.
+ */
+model InternalBotBookingOperation {
+  id                 String                          @id @default(uuid()) @db.Uuid
+  operationKind      String                          @map("operation_kind") @db.VarChar(64)
+  idempotencyKey     String                          @map("idempotency_key") @db.VarChar(36)
+  requestFingerprint String                          @map("request_fingerprint") @db.VarChar(64)
+  state              InternalBotBookingOperationState
+  leaseOwner         String?                         @map("lease_owner") @db.VarChar(64)
+  leaseExpiresAt     DateTime?                       @map("lease_expires_at") @db.Timestamptz
+  attemptCount       Int                             @default(1) @map("attempt_count")
+  resultSnapshot     Json?                           @map("result_snapshot")
+  failureCode        String?                         @map("failure_code") @db.VarChar(64)
+  expiresAt          DateTime                        @map("expires_at") @db.Timestamptz
+  createdAt          DateTime                        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime                        @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([operationKind, idempotencyKey], map: "internal_bot_booking_ops_kind_key_uidx")
+  @@index([expiresAt], map: "internal_bot_booking_ops_expires_at_idx")
+  @@index([state, leaseExpiresAt], map: "internal_bot_booking_ops_state_lease_idx")
+  @@map("internal_bot_booking_operations")
 }
 
 /**
