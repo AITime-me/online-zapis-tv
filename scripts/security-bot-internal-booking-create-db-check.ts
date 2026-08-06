@@ -23,6 +23,10 @@ import {
 } from "./lib/bot-booking-create-pg-fixture";
 import { resolveBotBookingCreateRaceEligibility } from "./lib/bot-booking-create-db-race-eligibility";
 import { assertDisposableBotBookingTestDatabase } from "./lib/bot-booking-create-test-db-guard";
+import { installServerOnlyShimForSecurityScripts } from "./lib/stub-server-only";
+
+// Must run before any dynamic import of production server-only modules.
+installServerOnlyShimForSecurityScripts();
 
 const ROOT = process.cwd();
 const REQUIRE_POSTGRES = process.argv.includes("--require-postgres");
@@ -74,6 +78,8 @@ function testStaticInvariants(): void {
   );
   assert.match(dbScript, /assertDisposableBotBookingTestDatabase/);
   assert.match(dbScript, /resolveBotBookingCreateRaceEligibility/);
+  assert.match(dbScript, /installServerOnlyShimForSecurityScripts/);
+  assert.match(dbScript, /testServerOnlyHarnessImports/);
   assert.match(dbScript, /createCountdownBarrier/);
   assert.match(dbScript, /beforeCreate|beforeSerializableWrite|beforeClientResolve|beforeZeroClientCreate/);
 
@@ -107,7 +113,38 @@ function testStaticInvariants(): void {
     /process\.env\.(AUTH_SECRET|NEXTAUTH_SECRET)|hmac-fallback/,
   );
 
+  // Production modules must keep the server-only boundary (shim is test-only).
+  assert.match(
+    read("src/services/BotBookingCreateService.ts"),
+    /import "server-only"/,
+  );
+  assert.match(
+    read("src/lib/bot-api/booking-create-idempotency.ts"),
+    /import "server-only"/,
+  );
+  assert.match(
+    read("src/lib/bot-api/booking-create-idempotency-hmac.ts"),
+    /import "server-only"/,
+  );
+
   record("static-invariants", "PASSED");
+}
+
+/**
+ * Prove tsx + security shim can load production server modules used by races.
+ * Runs in both non-gating and required modes (before eligibility / canQuery).
+ */
+async function testServerOnlyHarnessImports(): Promise<void> {
+  installServerOnlyShimForSecurityScripts();
+
+  // Do not $disconnect — race suite reuses the src/lib/db singleton when eligible.
+  const db = await import("../src/lib/db");
+  assert.ok(db.prisma);
+
+  const service = await import("../src/services/BotBookingCreateService");
+  assert.equal(typeof service.createBotConfirmedBooking, "function");
+
+  record("server-only-harness-imports", "PASSED");
 }
 
 async function canQuery(databaseUrl: string): Promise<boolean> {
@@ -769,6 +806,7 @@ function printOutcomes(): void {
 
 async function main(): Promise<void> {
   testStaticInvariants();
+  await testServerOnlyHarnessImports();
 
   const databaseUrl = process.env.DATABASE_URL?.trim();
 

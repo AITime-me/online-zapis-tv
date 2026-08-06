@@ -15,16 +15,14 @@ import { createHmac } from "node:crypto";
 import { isCanonicalUuid } from "../src/lib/booking-requests/idempotency-contract";
 import { resolveApiRateLimitPolicy } from "../src/lib/security/rate-limit/route-rules";
 import { requiresAdminCsrfProtection } from "../src/lib/security/csrf-route-rules";
+import { installServerOnlyShimForSecurityScripts } from "./lib/stub-server-only";
 
 const originalConsoleError = console.error;
 console.error = () => {};
 
 const ROOT = process.cwd();
 const require = createRequire(import.meta.url);
-const serverOnlyMarker = require.resolve("server-only");
-const serverOnlyEmpty = path.join(path.dirname(serverOnlyMarker), "empty.js");
-require(serverOnlyEmpty);
-require.cache[serverOnlyMarker] = require.cache[serverOnlyEmpty];
+installServerOnlyShimForSecurityScripts();
 
 const S1 = "22222222-2222-4222-8222-111111111111";
 const M1 = "11111111-1111-4111-8111-111111111111";
@@ -1141,6 +1139,7 @@ function testStaticArchitecture(): void {
   );
 
   const service = read("src/services/BotBookingCreateService.ts");
+  assert.match(service, /import "server-only"/);
   assert.match(service, /createBotOnlineAppointment/);
   assert.match(service, /assertOnlineBookable/);
   assert.match(service, /getAvailableTimeSlots/);
@@ -1179,12 +1178,15 @@ function testStaticArchitecture(): void {
   assert.match(schema, /BOT\s*\n/);
 
   const hmacMod = read("src/lib/bot-api/booking-create-idempotency-hmac.ts");
+  assert.match(hmacMod, /import "server-only"/);
   assert.doesNotMatch(
     hmacMod,
     /process\.env\.(AUTH_SECRET|NEXTAUTH_SECRET|BOT_INTERNAL_API_TOKEN)/,
   );
+  const idempotency = read("src/lib/bot-api/booking-create-idempotency.ts");
+  assert.match(idempotency, /import "server-only"/);
   assert.doesNotMatch(
-    read("src/lib/bot-api/booking-create-idempotency.ts"),
+    idempotency,
     /process\.env\.(AUTH_SECRET|NEXTAUTH_SECRET)|hmac-fallback|dev-bot-booking-idempotency/,
   );
 
