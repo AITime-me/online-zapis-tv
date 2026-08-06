@@ -227,4 +227,3 @@ export function isExactApplicationJsonContentType(
 
   return true;
 }
-
