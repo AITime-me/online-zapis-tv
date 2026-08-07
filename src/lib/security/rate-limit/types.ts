@@ -10,6 +10,7 @@ export type RateLimitPolicyId =
   | "availabilityCatalog"
   | "botInternal"
   | "botInternalBookingCreate"
+  | "botInternalMasterCommand"
   | "health"
   | "passwordResetRequest";
 

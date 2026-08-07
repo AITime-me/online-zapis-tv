@@ -42,6 +42,16 @@ enum ScheduleBlockType {
   TECHNICAL
 }
 
+/**
+ * Provenance for schedule mutations (CURSOR-26).
+ * BOT_MASTER_COMMAND rows may be deleted only by the owning master via Master Command API.
+ * Never infer ownership from comments / internalReason text.
+ */
+enum ScheduleResourceOrigin {
+  ADMIN_UI
+  BOT_MASTER_COMMAND
+}
+
 enum EmergencyExportType {
   TODAY
   TOMORROW
@@ -402,43 +412,53 @@ model Appointment {
 }
 
 model ScheduleBlock {
-  id              String            @id @default(uuid()) @db.Uuid
-  masterId        String?           @map("master_id") @db.Uuid
-  blockDate       DateTime?         @map("block_date") @db.Date
-  startsAt        DateTime?         @map("starts_at") @db.Timestamptz
-  endsAt          DateTime?         @map("ends_at") @db.Timestamptz
-  isFullDay       Boolean           @default(false) @map("is_full_day")
-  blockType       ScheduleBlockType @map("block_type")
-  internalReason  String?           @map("internal_reason")
-  createdByUserId String?           @map("created_by_user_id") @db.Uuid
-  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz
+  id              String                 @id @default(uuid()) @db.Uuid
+  masterId        String?                @map("master_id") @db.Uuid
+  blockDate       DateTime?              @map("block_date") @db.Date
+  startsAt        DateTime?              @map("starts_at") @db.Timestamptz
+  endsAt          DateTime?              @map("ends_at") @db.Timestamptz
+  isFullDay       Boolean                @default(false) @map("is_full_day")
+  blockType       ScheduleBlockType      @map("block_type")
+  internalReason  String?                @map("internal_reason")
+  /**
+   * Ownership provenance for master-command delete/reopen (not free-text).
+   */
+  origin          ScheduleResourceOrigin @default(ADMIN_UI)
+  createdByUserId String?                @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime               @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime               @updatedAt @map("updated_at") @db.Timestamptz
 
   master        Master? @relation(fields: [masterId], references: [id], onDelete: Cascade)
   createdByUser User?   @relation("BlockCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
 
   @@index([masterId, startsAt, endsAt])
   @@index([masterId, blockDate])
+  @@index([masterId, origin], map: "schedule_blocks_master_origin_idx")
   @@index([startsAt])
   @@map("schedule_blocks")
 }
 
 model ExtraWorkWindow {
-  id                     String   @id @default(uuid()) @db.Uuid
-  masterId               String   @map("master_id") @db.Uuid
-  workDate               DateTime @map("work_date") @db.Date
-  startsAt               DateTime @map("starts_at") @db.Timestamptz
-  endsAt                 DateTime @map("ends_at") @db.Timestamptz
-  isOnlineBookingEnabled Boolean  @default(false) @map("is_online_booking_enabled")
+  id                     String                 @id @default(uuid()) @db.Uuid
+  masterId               String                 @map("master_id") @db.Uuid
+  workDate               DateTime               @map("work_date") @db.Date
+  startsAt               DateTime               @map("starts_at") @db.Timestamptz
+  endsAt                 DateTime               @map("ends_at") @db.Timestamptz
+  isOnlineBookingEnabled Boolean                @default(false) @map("is_online_booking_enabled")
   comment                String?
-  createdByUserId        String?  @map("created_by_user_id") @db.Uuid
-  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  /**
+   * Ownership provenance for master-command cancel (not free-text comment).
+   */
+  origin                 ScheduleResourceOrigin @default(ADMIN_UI)
+  createdByUserId        String?                @map("created_by_user_id") @db.Uuid
+  createdAt              DateTime               @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt              DateTime               @updatedAt @map("updated_at") @db.Timestamptz
 
   master        Master @relation(fields: [masterId], references: [id], onDelete: Cascade)
   createdByUser User?  @relation("ExtraWorkCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
 
   @@index([masterId, workDate])
+  @@index([masterId, origin], map: "extra_work_windows_master_origin_idx")
   @@index([startsAt])
   @@map("extra_work_windows")
 }
@@ -1105,8 +1125,8 @@ enum InternalBotBookingOperationState {
 }
 
 /**
- * Persistent idempotency for POST /api/internal/bot/v1/bookings (CURSOR-24).
- * Stores HMAC fingerprint only — never raw PII.
+ * Persistent idempotency for internal bot mutations (CURSOR-24 bookings + CURSOR-26 master commands).
+ * Domain-separated by operationKind. Stores HMAC fingerprint only — never raw PII.
  */
 model InternalBotBookingOperation {
   id                 String                          @id @default(uuid()) @db.Uuid

@@ -92,11 +92,22 @@ export const API_RATE_LIMIT_RULES: ApiRateLimitRouteRule[] = [
       exactPath(pathname, "/api/internal/bot/v1/bookings"),
   },
   {
+    policyId: "botInternalMasterCommand",
+    match: (pathname, method) =>
+      method === "POST" &&
+      pathname.startsWith("/api/internal/bot/v1/master/") &&
+      !exactPath(pathname, "/api/internal/bot/v1/master/schedule"),
+  },
+  {
     policyId: "botInternal",
     match: (pathname, method) =>
       method === "POST" &&
       pathname.startsWith("/api/internal/bot/v1/") &&
-      !exactPath(pathname, "/api/internal/bot/v1/bookings"),
+      !exactPath(pathname, "/api/internal/bot/v1/bookings") &&
+      !(
+        pathname.startsWith("/api/internal/bot/v1/master/") &&
+        !exactPath(pathname, "/api/internal/bot/v1/master/schedule")
+      ),
   },
 ];
 
@@ -156,11 +167,36 @@ export const RATE_LIMITED_API_PATHS = API_RATE_LIMIT_RULES.flatMap((rule) => {
       return [
         { method: "POST", pathname: "/api/internal/bot/v1/bookings" },
       ];
+    case "botInternalMasterCommand":
+      return [
+        {
+          method: "POST",
+          pathname: "/api/internal/bot/v1/master/blocks/close-interval",
+        },
+        {
+          method: "POST",
+          pathname: "/api/internal/bot/v1/master/blocks/close-day",
+        },
+        {
+          method: "POST",
+          pathname: "/api/internal/bot/v1/master/blocks/delete",
+        },
+        {
+          method: "POST",
+          pathname: "/api/internal/bot/v1/master/extra-work/create",
+        },
+        {
+          method: "POST",
+          pathname: "/api/internal/bot/v1/master/extra-work/delete",
+        },
+        { method: "POST", pathname: "/api/internal/bot/v1/master/bookings" },
+      ];
     case "botInternal":
       return [
         { method: "POST", pathname: "/api/internal/bot/v1/eligibility" },
         { method: "POST", pathname: "/api/internal/bot/v1/available-days" },
         { method: "POST", pathname: "/api/internal/bot/v1/slots" },
+        { method: "POST", pathname: "/api/internal/bot/v1/master/schedule" },
       ];
     default:
       return [];
