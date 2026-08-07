@@ -25,7 +25,9 @@ export function databaseNameHasTestMarker(databaseName: string): boolean {
   const name = databaseName.trim().toLowerCase();
   if (!name) return false;
   if (name.includes("c24test")) return true;
+  if (name.includes("c26test")) return true;
   if (name.includes("bot_booking_create")) return true;
+  if (name.includes("master_command")) return true;
   if (/(^|_)test(_|$)/.test(name)) return true;
   if (name.startsWith("test_")) return true;
   if (name.endsWith("_test")) return true;

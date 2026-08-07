@@ -72,6 +72,15 @@ export const RATE_LIMIT_POLICIES: Record<RateLimitPolicyId, RateLimitPolicy> = {
     windowMs: 15 * 60 * 1000,
     maxRequests: 30,
   },
+  /**
+   * Authenticated S2S Master Command mutations (CURSOR-26).
+   * Stricter than shared botInternal read bucket.
+   */
+  botInternalMasterCommand: {
+    id: "botInternalMasterCommand",
+    windowMs: 15 * 60 * 1000,
+    maxRequests: 60,
+  },
   health: {
     id: "health",
     windowMs: 60 * 1000,

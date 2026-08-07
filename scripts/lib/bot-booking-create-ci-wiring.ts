@@ -23,6 +23,16 @@ export const BOT_BOOKING_CREATE_REQUIRED_NPM =
 export const BOT_BOOKING_CREATE_REQUIRED_PACKAGE_SCRIPT =
   "test:security:bot-internal-booking-create-db:required";
 
+/** CURSOR-26 required PG gate (same workflow file). */
+export const MASTER_COMMAND_REQUIRED_GATE_STEP_NAME =
+  "CURSOR-26 required PostgreSQL Gate";
+
+export const MASTER_COMMAND_REQUIRED_NPM =
+  "npm run test:security:bot-master-command-db:required";
+
+export const MASTER_COMMAND_REQUIRED_PACKAGE_SCRIPT =
+  "test:security:bot-master-command-db:required";
+
 /** Paths that must be covered by both pull_request and push filters. */
 export const BOT_BOOKING_CREATE_REQUIRED_PATH_TARGETS = [
   {
@@ -189,11 +199,16 @@ function isNeutralShellSetupLine(line: string): boolean {
 }
 
 /**
- * True only when `run` executes the required npm script as a real command line.
+ * True only when `run` executes `requiredNpm` as a real command line.
  * Allows preceding neutral `set -e` / `set -o pipefail` lines only.
  */
-export function runTextExecutesRequiredGateCommand(run: string): boolean {
-  if (typeof run !== "string" || !run.trim()) return false;
+export function runTextExecutesExactNpmCommand(
+  run: string,
+  requiredNpm: string,
+): boolean {
+  if (typeof run !== "string" || !run.trim() || !requiredNpm.trim()) {
+    return false;
+  }
 
   const executable: string[] = [];
   for (const raw of run.split(/\r?\n/)) {
@@ -206,7 +221,7 @@ export function runTextExecutesRequiredGateCommand(run: string): boolean {
 
   let sawRequired = false;
   for (const line of executable) {
-    if (line === BOT_BOOKING_CREATE_REQUIRED_NPM) {
+    if (line === requiredNpm) {
       if (sawRequired) return false;
       sawRequired = true;
       continue;
@@ -220,6 +235,14 @@ export function runTextExecutesRequiredGateCommand(run: string): boolean {
   }
 
   return sawRequired;
+}
+
+/**
+ * True only when `run` executes the CURSOR-24 required npm script as a real command line.
+ * Allows preceding neutral `set -e` / `set -o pipefail` lines only.
+ */
+export function runTextExecutesRequiredGateCommand(run: string): boolean {
+  return runTextExecutesExactNpmCommand(run, BOT_BOOKING_CREATE_REQUIRED_NPM);
 }
 
 function findGateStep(steps: WorkflowStep[]): WorkflowStep | undefined {
@@ -497,6 +520,59 @@ export function assertBotBookingCreateCiWiring(
     issues.length,
     0,
     issues.map((i) => `${i.code}: ${i.message}`).join("; "),
+  );
+}
+
+/**
+ * Fail-closed: one concrete step must be named CURSOR-26 required gate and
+ * actually execute the required npm script (same parsing as C24 wiring).
+ * Comments / echo / other steps mentioning the command do not satisfy this.
+ */
+export function assertMasterCommandRequiredPgGateWired(
+  workflowText: string,
+): void {
+  let doc: WorkflowDoc;
+  try {
+    doc = yaml.load(workflowText) as WorkflowDoc;
+  } catch (error) {
+    assert.fail(
+      `Master Command CI workflow YAML parse failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+
+  const jobs = doc.jobs ?? {};
+  const jobEntries = Object.values(jobs);
+  assert.ok(jobEntries.length > 0, "workflow has no jobs");
+
+  const steps = jobEntries.flatMap((job) => job.steps ?? []);
+  const named = steps.filter(
+    (step) => step.name === MASTER_COMMAND_REQUIRED_GATE_STEP_NAME,
+  );
+  assert.equal(
+    named.length,
+    1,
+    `expected exactly one step named "${MASTER_COMMAND_REQUIRED_GATE_STEP_NAME}", found ${named.length}`,
+  );
+
+  const gate = named[0]!;
+  assert.equal(
+    gate.if,
+    undefined,
+    "CURSOR-26 required gate step must not have if-condition",
+  );
+  assert.notEqual(
+    gate["continue-on-error"],
+    true,
+    "CURSOR-26 required gate step continue-on-error forbidden",
+  );
+  assert.ok(
+    runTextExecutesExactNpmCommand(
+      stepRunText(gate),
+      MASTER_COMMAND_REQUIRED_NPM,
+    ),
+    `step "${MASTER_COMMAND_REQUIRED_GATE_STEP_NAME}" must execute ${MASTER_COMMAND_REQUIRED_NPM}`,
   );
 }
 

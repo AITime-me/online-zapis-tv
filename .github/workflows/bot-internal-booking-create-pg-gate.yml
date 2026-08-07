@@ -10,22 +10,31 @@ on:
       - "docker-compose.production.yml"
       - "docker-compose.staging.yml"
       - "src/app/api/internal/bot/v1/bookings/**"
+      - "src/app/api/internal/bot/v1/master/**"
       - "src/lib/bot-api/booking-create*"
       - "src/lib/bot-api/booking-create-idempotency*"
+      - "src/lib/bot-api/master-command*"
+      - "src/lib/bot-api/internal-bot-operation-idempotency.ts"
       - "src/lib/booking/bot-slot-id.ts"
       - "src/lib/auth/bot-internal-api.ts"
       - "src/lib/auth/bot-internal-auth.ts"
       - "src/services/BotBookingCreateService.ts"
+      - "src/services/MasterCommandService.ts"
       - "src/services/AppointmentService.ts"
       - "src/services/BookingService.ts"
+      - "src/services/ScheduleBlockService.ts"
+      - "src/services/ExtraWorkWindowService.ts"
       - "src/lib/security/rate-limit/**"
       - "scripts/security-bot-internal-booking-create*"
+      - "scripts/security-bot-master-command*"
       - "scripts/lib/bot-booking-create-*.ts"
       - "docs/architecture/bot-internal-api-pr-a.md"
+      - "docs/architecture/bot-master-command-api.md"
   push:
     branches:
       - main
       - "feat/cursor-24-*"
+      - "feat/cursor-26-*"
     paths:
       - ".github/workflows/bot-internal-booking-create-pg-gate.yml"
       - "package.json"
@@ -34,16 +43,23 @@ on:
       - "docker-compose.production.yml"
       - "docker-compose.staging.yml"
       - "src/app/api/internal/bot/v1/bookings/**"
+      - "src/app/api/internal/bot/v1/master/**"
       - "src/lib/bot-api/booking-create*"
       - "src/lib/bot-api/booking-create-idempotency*"
+      - "src/lib/bot-api/master-command*"
+      - "src/lib/bot-api/internal-bot-operation-idempotency.ts"
       - "src/lib/booking/bot-slot-id.ts"
       - "src/lib/auth/bot-internal-api.ts"
       - "src/lib/auth/bot-internal-auth.ts"
       - "src/services/BotBookingCreateService.ts"
+      - "src/services/MasterCommandService.ts"
       - "src/services/AppointmentService.ts"
       - "src/services/BookingService.ts"
+      - "src/services/ScheduleBlockService.ts"
+      - "src/services/ExtraWorkWindowService.ts"
       - "src/lib/security/rate-limit/**"
       - "scripts/security-bot-internal-booking-create*"
+      - "scripts/security-bot-master-command*"
       - "scripts/lib/bot-booking-create-*.ts"
   workflow_dispatch:
 
@@ -111,6 +127,12 @@ jobs:
 
       - name: CURSOR-24 required PostgreSQL Gate
         run: npm run test:security:bot-internal-booking-create-db:required
+
+      - name: CURSOR-26 unit and security checks
+        run: npm run test:security:bot-master-command
+
+      - name: CURSOR-26 required PostgreSQL Gate
+        run: npm run test:security:bot-master-command-db:required
 
       - name: Typecheck
         run: npx tsc --noEmit

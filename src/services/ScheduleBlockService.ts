@@ -1,4 +1,4 @@
-import type { ScheduleBlockType } from "@prisma/client";
+import type { Prisma, ScheduleBlockType, ScheduleResourceOrigin } from "@prisma/client";
 import {
   APPOINTMENT_BUSY_TIMING_SELECT,
   getAppointmentBusyInterval,
@@ -20,18 +20,48 @@ import {
 import type { ScheduleDayBlock } from "@/types/schedule";
 
 export class ScheduleBlockConflictError extends Error {
-  constructor(message: string) {
+  readonly code: ScheduleBlockConflictCode;
+
+  constructor(code: ScheduleBlockConflictCode, message: string) {
     super(message);
     this.name = "ScheduleBlockConflictError";
+    this.code = code;
   }
 }
 
+export type ScheduleBlockConflictCode =
+  | "APPOINTMENT_OVERLAP"
+  | "DAY_HAS_APPOINTMENTS"
+  | "FULL_DAY_EXISTS";
+
 export class ScheduleBlockValidationError extends Error {
-  constructor(message: string) {
+  readonly code: ScheduleBlockValidationCode;
+
+  constructor(code: ScheduleBlockValidationCode, message: string) {
     super(message);
     this.name = "ScheduleBlockValidationError";
+    this.code = code;
   }
 }
+
+export type ScheduleBlockValidationCode =
+  | "NOT_FOUND"
+  | "INVALID_TYPE"
+  | "MISSING_TIMES"
+  | "INVALID_RANGE"
+  | "FULL_DAY_EDIT_FORBIDDEN";
+
+export class ScheduleBlockOwnershipError extends Error {
+  readonly code: ScheduleBlockOwnershipCode;
+
+  constructor(code: ScheduleBlockOwnershipCode, message: string) {
+    super(message);
+    this.name = "ScheduleBlockOwnershipError";
+    this.code = code;
+  }
+}
+
+export type ScheduleBlockOwnershipCode = "CROSS_MASTER" | "WRONG_ORIGIN";
 
 export type ScheduleBlockWriteInput = {
   masterId: string;
@@ -40,6 +70,16 @@ export type ScheduleBlockWriteInput = {
   blockType: ScheduleBlockType;
   startTime?: string;
   endTime?: string;
+};
+
+export type ScheduleBlockDbClient = Pick<
+  Prisma.TransactionClient,
+  "appointment" | "scheduleBlock"
+>;
+
+export type ScheduleBlockCreateMeta = {
+  createdByUserId: string | null;
+  origin?: ScheduleResourceOrigin;
 };
 
 function mapBlock(block: {
@@ -79,16 +119,16 @@ export function blocksForDayWhere(masterId: string, dateKey: string) {
   };
 }
 
-async function assertNoAppointmentOverlap(
+export async function assertNoAppointmentOverlap(
+  db: ScheduleBlockDbClient,
   masterId: string,
   dateKey: string,
   startsAt: Date,
   endsAt: Date,
-  excludeBlockId?: string,
 ) {
   const { dayStart, dayEnd } = getStudioDayRangeFromDateKey(dateKey);
 
-  const appointments = await prisma.appointment.findMany({
+  const appointments = await db.appointment.findMany({
     where: {
       masterId,
       status: { notIn: [...NON_BLOCKING_APPOINTMENT_STATUSES] },
@@ -107,20 +147,20 @@ async function assertNoAppointmentOverlap(
 
   if (hasOverlap) {
     throw new ScheduleBlockConflictError(
+      "APPOINTMENT_OVERLAP",
       "Блок пересекается с записью клиента",
     );
   }
-
-  void excludeBlockId;
 }
 
-async function assertNoActiveAppointmentsOnDay(
+export async function assertNoActiveAppointmentsOnDay(
+  db: ScheduleBlockDbClient,
   masterId: string,
   dateKey: string,
 ) {
   const { dayStart, dayEnd } = getStudioDayRangeFromDateKey(dateKey);
 
-  const activeCount = await prisma.appointment.count({
+  const activeCount = await db.appointment.count({
     where: {
       masterId,
       status: { notIn: [...NON_BLOCKING_APPOINTMENT_STATUSES] },
@@ -129,7 +169,10 @@ async function assertNoActiveAppointmentsOnDay(
   });
 
   if (activeCount > 0) {
-    throw new ScheduleBlockConflictError("На этот день уже есть записи");
+    throw new ScheduleBlockConflictError(
+      "DAY_HAS_APPOINTMENTS",
+      "На этот день уже есть записи",
+    );
   }
 }
 
@@ -137,6 +180,7 @@ function validateBlockInput(input: ScheduleBlockWriteInput) {
   if (input.isFullDay) {
     if (!isFullDayBlockType(input.blockType)) {
       throw new ScheduleBlockValidationError(
+        "INVALID_TYPE",
         "Недопустимый тип для закрытия дня",
       );
     }
@@ -145,33 +189,45 @@ function validateBlockInput(input: ScheduleBlockWriteInput) {
 
   if (!INTERVAL_BLOCK_TYPES.includes(input.blockType)) {
     throw new ScheduleBlockValidationError(
+      "INVALID_TYPE",
       "Недопустимый тип для интервального блока",
     );
   }
 
   if (!input.startTime || !input.endTime) {
-    throw new ScheduleBlockValidationError("Укажите начало и окончание");
+    throw new ScheduleBlockValidationError(
+      "MISSING_TIMES",
+      "Укажите начало и окончание",
+    );
   }
 
   const startsAt = parseStudioDateTime(input.dateKey, input.startTime);
   const endsAt = parseStudioDateTime(input.dateKey, input.endTime);
 
   if (endsAt <= startsAt) {
-    throw new ScheduleBlockValidationError("Окончание должно быть позже начала");
+    throw new ScheduleBlockValidationError(
+      "INVALID_RANGE",
+      "Окончание должно быть позже начала",
+    );
   }
 }
 
-export async function createScheduleBlock(
+/**
+ * Create schedule block using the provided DB client (supports Serializable txs).
+ */
+export async function createScheduleBlockWithDb(
+  db: ScheduleBlockDbClient,
   input: ScheduleBlockWriteInput,
-  createdByUserId: string,
+  meta: ScheduleBlockCreateMeta,
 ): Promise<ScheduleDayBlock> {
   validateBlockInput(input);
   const { noteDate } = getStudioDayRangeFromDateKey(input.dateKey);
+  const origin = meta.origin ?? "ADMIN_UI";
 
   if (input.isFullDay) {
-    await assertNoActiveAppointmentsOnDay(input.masterId, input.dateKey);
+    await assertNoActiveAppointmentsOnDay(db, input.masterId, input.dateKey);
 
-    const existingFullDay = await prisma.scheduleBlock.findFirst({
+    const existingFullDay = await db.scheduleBlock.findFirst({
       where: {
         masterId: input.masterId,
         isFullDay: true,
@@ -180,10 +236,10 @@ export async function createScheduleBlock(
     });
 
     if (existingFullDay) {
-      throw new ScheduleBlockConflictError("День уже закрыт");
+      throw new ScheduleBlockConflictError("FULL_DAY_EXISTS", "День уже закрыт");
     }
 
-    const block = await prisma.scheduleBlock.create({
+    const block = await db.scheduleBlock.create({
       data: {
         masterId: input.masterId,
         blockDate: noteDate,
@@ -191,7 +247,8 @@ export async function createScheduleBlock(
         blockType: input.blockType,
         startsAt: null,
         endsAt: null,
-        createdByUserId,
+        origin,
+        createdByUserId: meta.createdByUserId,
       },
     });
 
@@ -201,13 +258,14 @@ export async function createScheduleBlock(
   const startsAt = parseStudioDateTime(input.dateKey, input.startTime!);
   const endsAt = parseStudioDateTime(input.dateKey, input.endTime!);
   await assertNoAppointmentOverlap(
+    db,
     input.masterId,
     input.dateKey,
     startsAt,
     endsAt,
   );
 
-  const block = await prisma.scheduleBlock.create({
+  const block = await db.scheduleBlock.create({
     data: {
       masterId: input.masterId,
       blockDate: noteDate,
@@ -215,11 +273,22 @@ export async function createScheduleBlock(
       endsAt,
       isFullDay: false,
       blockType: input.blockType,
-      createdByUserId,
+      origin,
+      createdByUserId: meta.createdByUserId,
     },
   });
 
   return mapBlock(block);
+}
+
+export async function createScheduleBlock(
+  input: ScheduleBlockWriteInput,
+  createdByUserId: string,
+): Promise<ScheduleDayBlock> {
+  return createScheduleBlockWithDb(prisma, input, {
+    createdByUserId,
+    origin: "ADMIN_UI",
+  });
 }
 
 export async function updateScheduleBlock(
@@ -228,7 +297,7 @@ export async function updateScheduleBlock(
 ): Promise<ScheduleDayBlock> {
   const existing = await prisma.scheduleBlock.findUnique({ where: { id } });
   if (!existing) {
-    throw new ScheduleBlockValidationError("Блок не найден");
+    throw new ScheduleBlockValidationError("NOT_FOUND", "Блок не найден");
   }
 
   const merged: ScheduleBlockWriteInput = {
@@ -255,6 +324,7 @@ export async function updateScheduleBlock(
 
   if (merged.isFullDay) {
     throw new ScheduleBlockValidationError(
+      "FULL_DAY_EDIT_FORBIDDEN",
       "Полное закрытие дня редактируется через снятие и повторное создание",
     );
   }
@@ -264,6 +334,7 @@ export async function updateScheduleBlock(
   const startsAt = parseStudioDateTime(merged.dateKey, merged.startTime!);
   const endsAt = parseStudioDateTime(merged.dateKey, merged.endTime!);
   await assertNoAppointmentOverlap(
+    prisma,
     merged.masterId,
     merged.dateKey,
     startsAt,
@@ -288,6 +359,49 @@ export async function updateScheduleBlock(
 
 export async function deleteScheduleBlock(id: string): Promise<void> {
   await prisma.scheduleBlock.delete({ where: { id } });
+}
+
+/**
+ * Delete only a caller-owned master-command block (provenance-gated).
+ */
+export async function deleteOwnedMasterScheduleBlock(
+  db: ScheduleBlockDbClient,
+  input: {
+    blockId: string;
+    masterId: string;
+    requiredOrigin?: ScheduleResourceOrigin;
+  },
+): Promise<{ blockId: string }> {
+  const requiredOrigin = input.requiredOrigin ?? "BOT_MASTER_COMMAND";
+  const existing = await db.scheduleBlock.findUnique({
+    where: { id: input.blockId },
+    select: {
+      id: true,
+      masterId: true,
+      origin: true,
+    },
+  });
+
+  if (!existing) {
+    throw new ScheduleBlockValidationError("NOT_FOUND", "Блок не найден");
+  }
+
+  if (existing.masterId !== input.masterId) {
+    throw new ScheduleBlockOwnershipError(
+      "CROSS_MASTER",
+      "Блок принадлежит другому мастеру",
+    );
+  }
+
+  if (existing.origin !== requiredOrigin) {
+    throw new ScheduleBlockOwnershipError(
+      "WRONG_ORIGIN",
+      "Блок нельзя удалить через master command",
+    );
+  }
+
+  await db.scheduleBlock.delete({ where: { id: existing.id } });
+  return { blockId: existing.id };
 }
 
 export async function hasFullDayBlock(
