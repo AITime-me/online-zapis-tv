@@ -228,8 +228,14 @@ export function AppointmentEditorForm({
     `appointment-${appointment.id}-${name}`;
 
   useEffect(() => {
-    // Синхронизация локальной формы после refresh с сервера (onSaved).
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- controlled editor reset from refreshed appointment prop
+    // key={appointment.id} remounts on record switch. Same-id prop churn comes from
+    // refreshCell after autosave — re-applying props here wipes dirty draft, breaks
+    // IME/caret, and makes the modal jump while the user is still typing.
+    if (appointmentIdRef.current === appointment.id) {
+      return;
+    }
+    appointmentIdRef.current = appointment.id;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset draft only when editing a different appointment
     setForm(toFormState(appointment));
     setShowOverlapConfirm(false);
     setSelectedClientId(
@@ -239,13 +245,8 @@ export function AppointmentEditorForm({
     );
     setClientLinkDirty(false);
     setDuplicateCandidates([]);
-    // Сбрасываем CRM-state только при смене записи, чтобы error после partial
-    // success не терялся на onSaved refresh той же карточки.
-    if (appointmentIdRef.current !== appointment.id) {
-      appointmentIdRef.current = appointment.id;
-      setLastClientLinkResult(null);
-      setLinkBanner(null);
-    }
+    setLastClientLinkResult(null);
+    setLinkBanner(null);
   }, [appointment]);
 
   useEffect(() => {

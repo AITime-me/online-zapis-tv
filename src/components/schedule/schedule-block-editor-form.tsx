@@ -53,9 +53,15 @@ export function ScheduleBlockEditorForm({
   const [error, setError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const formRef = useRef(form);
+  const blockIdRef = useRef(block.id);
   formRef.current = form;
 
   useEffect(() => {
+    // Same-id block object replacement after refreshCell must not reset local draft.
+    if (blockIdRef.current === block.id) {
+      return;
+    }
+    blockIdRef.current = block.id;
     setForm(toFormState(block));
   }, [block]);
 
