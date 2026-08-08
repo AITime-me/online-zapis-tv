@@ -465,19 +465,18 @@ export function QuickDayEditor({
               {formatDateKeyLabel(data.dateKey)} · {data.masterInternalName}
               <span className="text-zinc-400"> ({data.masterPublicName})</span>
             </p>
-            {statusLabel ? (
-              <p
-                className={`mt-0.5 text-[10px] ${
-                  saveStatus === "error"
-                    ? "text-red-600"
-                    : saveStatus === "saved"
-                      ? "text-green-700"
-                      : "text-zinc-500"
-                }`}
-              >
-                {statusLabel}
-              </p>
-            ) : null}
+            <p
+              className={`mt-0.5 min-h-[1rem] text-[10px] ${
+                saveStatus === "error"
+                  ? "text-red-600"
+                  : saveStatus === "saved"
+                    ? "text-green-700"
+                    : "text-zinc-500"
+              }`}
+              aria-live="polite"
+            >
+              {statusLabel ?? "\u00a0"}
+            </p>
           </div>
           <button
             type="button"
