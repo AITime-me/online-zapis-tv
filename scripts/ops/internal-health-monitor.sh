@@ -9,6 +9,10 @@ readonly IHM_LOCK_NAME="run.lock"
 readonly IHM_JOURNAL_NAME="journal.jsonl"
 readonly IHM_TELEGRAM_STATE_NAME="telegram-notify-state.json"
 readonly IHM_TELEGRAM_CONFIG_DEFAULT="/etc/online-zapis-tv/health-monitor.env"
+readonly IHM_N8N_TARGETS_DEFAULT="/etc/online-zapis-tv/health-monitor-targets.env"
+readonly IHM_N8N_STATE_NAME="n8n-external-probe-state.json"
+readonly IHM_N8N_TIMEOUT_DEFAULT=10
+readonly IHM_N8N_FAILURE_THRESHOLD_DEFAULT=2
 readonly IHM_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly IHM_TELEGRAM_NOTIFIER="${IHM_SCRIPT_DIR}/internal-health-monitor-telegram.py"
 
@@ -63,10 +67,18 @@ readonly IHM_STAGING_BACKUP_SERVICE="online-zapis-tv-staging-backup.service"
 IHM_STATE_DIR="${IHM_STATE_DIR_DEFAULT}"
 IHM_TELEGRAM_CONFIG="${IHM_TELEGRAM_CONFIG:-$IHM_TELEGRAM_CONFIG_DEFAULT}"
 IHM_TELEGRAM_DRY_RUN_DIR="${IHM_TELEGRAM_DRY_RUN_DIR:-}"
+# Optional override for local harness; units never set this.
+IHM_N8N_TARGETS_FILE="${IHM_N8N_TARGETS_FILE:-$IHM_N8N_TARGETS_DEFAULT}"
+# Test-only mock: "liveness:200:40,readiness:200:50" or classes timeout|tls|transport.
+# When set, no real network probe is performed.
+IHM_N8N_PROBE_MOCK="${IHM_N8N_PROBE_MOCK:-}"
 IHM_FIXTURE=""
 IHM_HELP=0
 IHM_SKIP_TELEGRAM=0
 IHM_ONLY_RESTORE_TEST=0
+IHM_ONLY_N8N_EXTERNAL=0
+# Sticky: set only by --only-n8n-external parse; never read from env. Gates harness PATH curl.
+IHM_N8N_HARNESS_ENTRY=0
 
 IHM_OVERALL="healthy"
 IHM_FAIL_COUNT=0
@@ -90,6 +102,7 @@ Options:
                       restore_test_not_enforced
                       (skips Telegram notify)
   --only-restore-test Run only isolated restore-test evidence checks (harness/tests)
+  --only-n8n-external Run only config-driven n8n HTTPS probes (harness/tests)
 
 Exit codes:
   0   healthy
@@ -99,6 +112,7 @@ Exit codes:
 
 This script never restarts containers, restores databases, migrates, or prunes Docker.
 Optional Telegram notifications may be sent after the health result (detect only; no auto-fix).
+Independent n8n HTTPS probing is optional and config-driven; n8n is never its own only monitor.
 EOF
 }
 
@@ -126,6 +140,10 @@ parse_args() {
         ;;
       --only-restore-test)
         IHM_ONLY_RESTORE_TEST=1
+        ;;
+      --only-n8n-external)
+        IHM_ONLY_N8N_EXTERNAL=1
+        IHM_N8N_HARNESS_ENTRY=1
         ;;
       *)
         die_usage "unknown argument: $1"
@@ -189,8 +207,8 @@ emit_check() {
       [[ -n "$detail" ]] && line="${line} ${detail}"
       echo "$line"
       ;;
-    not_enforced)
-      # Neutral bootstrap: not a pass, not a fail, no Telegram escalation.
+    not_enforced|info)
+      # Neutral / informational: not a pass-as-healthy claim, not a fail, no Telegram escalation.
       line="INFO ${label}"
       [[ -n "$detail" ]] && line="${line}: ${detail}"
       echo "$line"
@@ -856,6 +874,515 @@ check_restore_test_evidence() {
     "ageHours=${age} tables=${tables} cleanup=1 dumpLagHours=${IHM_RT_DUMP_LAG_HOURS:-0}"
 }
 
+ihm_n8n_read_kv() {
+  local file="$1"
+  local want_key="$2"
+  local line key value
+  [[ -f "$file" && -r "$file" ]] || return 1
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # Full-line comments only; do not strip '#' inside URL values (fragments are rejected later).
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -n "$line" ]] || continue
+    [[ "$line" == \#* ]] && continue
+    [[ "$line" == *=* ]] || continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="${key%"${key##*[![:space:]]}"}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [[ ${#value} -ge 2 ]]; then
+      if [[ "${value:0:1}" == '"' && "${value: -1}" == '"' ]] || [[ "${value:0:1}" == "'" && "${value: -1}" == "'" ]]; then
+        value="${value:1:${#value}-2}"
+      fi
+    fi
+    if [[ "$key" == "$want_key" ]]; then
+      printf '%s' "$value"
+      return 0
+    fi
+  done <"$file"
+  return 1
+}
+
+ihm_n8n_validate_https_url() {
+  # Args: url expected_path
+  # expected_path must be exactly /healthz or /healthz/readiness (no trailing slash).
+  local url="$1"
+  local expect_path="$2"
+  local rest host_port path_part
+
+  [[ -n "$url" ]] || return 1
+  [[ -n "$expect_path" ]] || return 1
+  [[ "$url" == https://* ]] || return 2
+  [[ "$url" != *"?"* ]] || return 3
+  [[ "$url" != *"#"* ]] || return 4
+  rest="${url#https://}"
+  [[ -n "$rest" ]] || return 5
+  [[ "$rest" != *@* ]] || return 6
+  host_port="${rest%%/*}"
+  [[ -n "$host_port" ]] || return 5
+  [[ "$host_port" != *[[:space:]]* ]] || return 7
+  [[ "$url" != *[[:space:]]* ]] || return 7
+  # Require an explicit path; reject bare hosts and non-canonical suffixes.
+  if [[ "$rest" != */* ]]; then
+    return 8
+  fi
+  path_part="${rest#*/}"
+  if [[ "/${path_part}" != "$expect_path" ]]; then
+    return 8
+  fi
+  return 0
+}
+
+ihm_n8n_error_class_from_rc() {
+  local url_rc="$1"
+  # curl exit codes: 28 timeout, 35/51/53/54/58/59/60 TLS-ish, else transport
+  case "$url_rc" in
+    28) printf 'timeout' ;;
+    35|51|53|54|58|59|60) printf 'tls' ;;
+    *) printf 'transport' ;;
+  esac
+}
+
+ihm_n8n_atomic_write_state() {
+  # Durable replace matching telegram notifier pattern:
+  # temp in same dir → complete write → fsync → atomic replace → cleanup on failure.
+  # Previous valid state at $path is left untouched if any step fails.
+  local path="$1"
+  local body="$2"
+  local dir tmp bin rc
+
+  dir="$(dirname -- "$path")"
+  mkdir -p "$dir" || return 1
+  chmod 750 "$dir" 2>/dev/null || true
+
+  # Test-only: simulate replace failure after temp write (only --only-n8n-external).
+  # Unreachable on run_live (IHM_ONLY_N8N_EXTERNAL=0). Leaves $path untouched.
+  if [[ "$IHM_ONLY_N8N_EXTERNAL" -eq 1 && "${IHM_N8N_STATE_WRITE_FAIL:-}" == "1" ]]; then
+    tmp="$(mktemp "${dir}/.n8n-probe-state.XXXXXX")" || return 1
+    if ! printf '%s\n' "$body" >"$tmp"; then
+      rm -f "$tmp"
+      return 1
+    fi
+    rm -f "$tmp"
+    return 1
+  fi
+
+  if bin="$(ihm_python3_bin)"; then
+    set +e
+    "$bin" -c '
+import os
+import sys
+import tempfile
+
+path = sys.argv[1]
+directory = sys.argv[2]
+body = sys.argv[3]
+fd, tmp_path = tempfile.mkstemp(prefix=".n8n-probe-state.", dir=directory, text=True)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(body)
+        if not body.endswith("\n"):
+            fh.write("\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp_path, path)
+    try:
+        os.chmod(path, 0o640)
+    except OSError:
+        pass
+except Exception:
+    try:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+    except OSError:
+        pass
+    raise SystemExit(1)
+raise SystemExit(0)
+' "$path" "$dir" "$body"
+    rc=$?
+    set -e
+    return "$rc"
+  fi
+
+  # Fallback without python3: still atomic replace + temp cleanup (no fsync).
+  tmp="$(mktemp "${dir}/.n8n-probe-state.XXXXXX")" || return 1
+  if ! printf '%s\n' "$body" >"$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  chmod 640 "$tmp" 2>/dev/null || true
+  if ! mv -f "$tmp" "$path"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  return 0
+}
+
+ihm_n8n_read_streak() {
+  local state_path="$1"
+  local probe="$2"
+  local target_id="$3"
+  local raw val
+
+  IHM_N8N_STREAK=0
+  [[ -f "$state_path" && -r "$state_path" ]] || return 0
+  raw="$(tr -d '\n' <"$state_path" 2>/dev/null || true)"
+  [[ -n "$raw" ]] || return 0
+  # Bound parse: reject oversized state (anti-abuse); no body/secrets expected.
+  if (( ${#raw} > 4096 )); then
+    return 0
+  fi
+  if [[ "$raw" != *"\"targetId\":\"$(json_escape "$target_id")\""* ]]; then
+    return 0
+  fi
+  case "$probe" in
+    liveness)
+      val="$(sed -nE 's/.*"liveness"[[:space:]]*:[[:space:]]*\{[^}]*"consecutiveFailures"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' <<<"$raw" | head -n1)"
+      ;;
+    readiness)
+      val="$(sed -nE 's/.*"readiness"[[:space:]]*:[[:space:]]*\{[^}]*"consecutiveFailures"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' <<<"$raw" | head -n1)"
+      ;;
+    *)
+      val=""
+      ;;
+  esac
+  if [[ "$val" =~ ^[0-9]+$ ]]; then
+    IHM_N8N_STREAK="$val"
+  fi
+}
+
+ihm_n8n_write_state() {
+  local state_path="$1"
+  local target_id="$2"
+  local live_fail="$3"
+  local live_http="$4"
+  local live_err="$5"
+  local live_ms="$6"
+  local ready_fail="$7"
+  local ready_http="$8"
+  local ready_err="$9"
+  local ready_ms="${10}"
+  local ts body
+
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  body="$(printf '{"schemaVersion":1,"targetId":"%s","liveness":{"consecutiveFailures":%s,"lastHttpCode":%s,"lastErrorClass":"%s","lastLatencyMs":%s},"readiness":{"consecutiveFailures":%s,"lastHttpCode":%s,"lastErrorClass":"%s","lastLatencyMs":%s},"updatedAtUtc":"%s"}' \
+    "$(json_escape "$target_id")" \
+    "$live_fail" \
+    "$live_http" \
+    "$(json_escape "$live_err")" \
+    "$live_ms" \
+    "$ready_fail" \
+    "$ready_http" \
+    "$(json_escape "$ready_err")" \
+    "$ready_ms" \
+    "$(json_escape "$ts")")"
+  ihm_n8n_atomic_write_state "$state_path" "$body"
+}
+
+ihm_n8n_parse_mock_slot() {
+  # Sets: IHM_N8N_MOCK_HTTP IHM_N8N_MOCK_MS IHM_N8N_MOCK_CLASS IHM_N8N_MOCK_OK
+  local mock="$1"
+  local probe="$2"
+  local slot code_or_class ms
+
+  IHM_N8N_MOCK_HTTP=0
+  IHM_N8N_MOCK_MS=0
+  IHM_N8N_MOCK_CLASS="transport"
+  IHM_N8N_MOCK_OK=0
+
+  slot="$(awk -F',' -v p="$probe" '{
+    for (i=1;i<=NF;i++) {
+      split($i, a, ":");
+      if (a[1]==p) { print $i; exit }
+    }
+  }' <<<"$mock")"
+  [[ -n "$slot" ]] || return 1
+  code_or_class="$(cut -d: -f2 <<<"$slot")"
+  ms="$(cut -d: -f3 <<<"$slot")"
+  [[ "$ms" =~ ^[0-9]+$ ]] || ms=0
+  IHM_N8N_MOCK_MS="$ms"
+  case "$code_or_class" in
+    timeout|tls|transport)
+      IHM_N8N_MOCK_CLASS="$code_or_class"
+      IHM_N8N_MOCK_HTTP=0
+      IHM_N8N_MOCK_OK=0
+      ;;
+    ''|*[!0-9]*)
+      return 1
+      ;;
+    *)
+      IHM_N8N_MOCK_HTTP="$code_or_class"
+      IHM_N8N_MOCK_CLASS="none"
+      if [[ "$code_or_class" == "200" ]]; then
+        IHM_N8N_MOCK_OK=1
+        IHM_N8N_MOCK_CLASS="none"
+      else
+        IHM_N8N_MOCK_OK=0
+        IHM_N8N_MOCK_CLASS="http_status"
+      fi
+      ;;
+  esac
+  return 0
+}
+
+ihm_n8n_probe_once() {
+  # Args: probe_type url timeout_sec
+  # Sets: IHM_N8N_HTTP_CODE IHM_N8N_LATENCY_MS IHM_N8N_ERROR_CLASS IHM_N8N_PROBE_OK
+  local probe_type="$1"
+  local url="$2"
+  local timeout_sec="$3"
+  local body_file out http_code latency_s latency_ms curl_rc
+
+  IHM_N8N_HTTP_CODE=0
+  IHM_N8N_LATENCY_MS=0
+  IHM_N8N_ERROR_CLASS="none"
+  IHM_N8N_PROBE_OK=0
+
+  # Mock is test-only for --only-n8n-external. HARNESS_AS_LIVE keeps only-mode but
+  # forces mock ignore (live probe semantics) while still allowing CURL_BIN stubs.
+  if [[ -n "$IHM_N8N_PROBE_MOCK" && "$IHM_ONLY_N8N_EXTERNAL" -eq 1 && "${IHM_N8N_HARNESS_AS_LIVE:-}" != "1" ]]; then
+    if ! ihm_n8n_parse_mock_slot "$IHM_N8N_PROBE_MOCK" "$probe_type"; then
+      IHM_N8N_ERROR_CLASS="transport"
+      return 1
+    fi
+    IHM_N8N_HTTP_CODE="$IHM_N8N_MOCK_HTTP"
+    IHM_N8N_LATENCY_MS="$IHM_N8N_MOCK_MS"
+    IHM_N8N_ERROR_CLASS="$IHM_N8N_MOCK_CLASS"
+    IHM_N8N_PROBE_OK="$IHM_N8N_MOCK_OK"
+    if [[ "$IHM_N8N_PROBE_OK" -eq 1 ]]; then
+      return 0
+    fi
+    return 1
+  fi
+
+  body_file="$(mktemp)"
+  set +e
+  # CURL_BIN is harness-only: honored solely under --only-n8n-external.
+  # Normal run_live always uses real curl regardless of inherited env.
+  # HARNESS_PATH_CURL is only-n8n entry + live-gates simulation (never run_live).
+  local curl_bin="curl"
+  if [[ "$IHM_ONLY_N8N_EXTERNAL" -eq 1 && -n "${IHM_N8N_CURL_BIN:-}" ]]; then
+    curl_bin="${IHM_N8N_CURL_BIN}"
+  elif [[ "$IHM_N8N_HARNESS_ENTRY" -eq 1 && "$IHM_ONLY_N8N_EXTERNAL" -ne 1 && -n "${IHM_N8N_HARNESS_PATH_CURL:-}" ]]; then
+    curl_bin="${IHM_N8N_HARNESS_PATH_CURL}"
+  fi
+  out="$("$curl_bin" \
+    --silent \
+    --show-error \
+    --proto '=https' \
+    --proto-redir '=https' \
+    --max-time "$timeout_sec" \
+    --connect-timeout "$timeout_sec" \
+    --no-location \
+    --output "$body_file" \
+    --write-out '%{http_code} %{time_total}' \
+    "$url" 2>/dev/null)"
+  curl_rc=$?
+  set -e
+  # Never log response body; discard immediately.
+  rm -f "$body_file"
+
+  http_code="$(awk '{print $1}' <<<"$out")"
+  latency_s="$(awk '{print $2}' <<<"$out")"
+  if [[ "$http_code" =~ ^[0-9]+$ ]]; then
+    IHM_N8N_HTTP_CODE="$http_code"
+  else
+    IHM_N8N_HTTP_CODE=0
+  fi
+  if [[ "$latency_s" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    latency_ms="$(awk -v t="$latency_s" 'BEGIN { printf "%d", (t * 1000) + 0.5 }')"
+    IHM_N8N_LATENCY_MS="$latency_ms"
+  fi
+
+  if [[ "$curl_rc" -ne 0 ]] || [[ "$IHM_N8N_HTTP_CODE" -eq 0 ]]; then
+    IHM_N8N_ERROR_CLASS="$(ihm_n8n_error_class_from_rc "$curl_rc")"
+    return 1
+  fi
+  if [[ "$IHM_N8N_HTTP_CODE" -ne 200 ]]; then
+    IHM_N8N_ERROR_CLASS="http_status"
+    return 1
+  fi
+  IHM_N8N_PROBE_OK=1
+  IHM_N8N_ERROR_CLASS="none"
+  return 0
+}
+
+ihm_n8n_emit_probe_result() {
+  local probe_type="$1"
+  local target_id="$2"
+  local ok="$3"
+  local http_code="$4"
+  local err_class="$5"
+  local latency_ms="$6"
+  local streak="$7"
+  local threshold="$8"
+  local label detail code
+
+  label="n8n ${probe_type}"
+  detail="target=${target_id} probe=${probe_type} http=${http_code} errorClass=${err_class} latencyMs=${latency_ms} streak=${streak}/${threshold}"
+
+  if [[ "$ok" -eq 1 ]]; then
+    emit_check healthy "$label" "$detail"
+    return
+  fi
+
+  case "$probe_type" in
+    liveness) code="N8N_LIVENESS_UNHEALTHY" ;;
+    readiness) code="N8N_READINESS_UNHEALTHY" ;;
+    *) code="N8N_EXTERNAL_UNHEALTHY" ;;
+  esac
+
+  if (( streak < threshold )); then
+    emit_check info "$label" "${detail} debounced"
+    return
+  fi
+  emit_check critical "$label" "$detail" "$code"
+}
+
+check_n8n_external_health() {
+  local cfg="$IHM_N8N_TARGETS_FILE"
+  local target_id live_url ready_url timeout_sec threshold
+  local present=0
+  local rc state_path
+  local live_streak ready_streak live_fail ready_fail
+  local live_http live_err live_ms ready_http ready_err ready_ms
+  local live_ok ready_ok
+
+  if [[ ! -f "$cfg" ]]; then
+    emit_check info "n8n external" "disabled (targets config absent)"
+    return
+  fi
+  if [[ ! -r "$cfg" ]]; then
+    emit_check technical_error "n8n external" "targets config unreadable" "N8N_CONFIG_INVALID"
+    return
+  fi
+
+  target_id="$(ihm_n8n_read_kv "$cfg" "IHM_N8N_TARGET_ID" || true)"
+  live_url="$(ihm_n8n_read_kv "$cfg" "IHM_N8N_LIVENESS_URL" || true)"
+  ready_url="$(ihm_n8n_read_kv "$cfg" "IHM_N8N_READINESS_URL" || true)"
+  timeout_sec="$(ihm_n8n_read_kv "$cfg" "IHM_N8N_TIMEOUT_SEC" || true)"
+  threshold="$(ihm_n8n_read_kv "$cfg" "IHM_N8N_FAILURE_THRESHOLD" || true)"
+
+  [[ -n "$target_id" ]] && present=1
+  [[ -n "$live_url" ]] && present=1
+  [[ -n "$ready_url" ]] && present=1
+  [[ -n "$timeout_sec" ]] && present=1
+  [[ -n "$threshold" ]] && present=1
+
+  if [[ "$present" -eq 0 ]]; then
+    emit_check info "n8n external" "disabled (no IHM_N8N_* keys)"
+    return
+  fi
+
+  if [[ -z "$target_id" || -z "$live_url" || -z "$ready_url" ]]; then
+    emit_check technical_error "n8n external" "incomplete targets config" "N8N_CONFIG_INVALID"
+    return
+  fi
+  if [[ ! "$target_id" =~ ^[A-Za-z0-9._-]{1,64}$ ]]; then
+    emit_check technical_error "n8n external" "invalid target id" "N8N_CONFIG_INVALID"
+    return
+  fi
+
+  # Mock is test-only for --only-n8n-external. Never replace live HTTPS probes.
+  # HARNESS_AS_LIVE (only-mode) also ignores mock so live probe semantics can be tested.
+  if [[ -n "$IHM_N8N_PROBE_MOCK" ]] && { [[ "$IHM_ONLY_N8N_EXTERNAL" -ne 1 ]] || [[ "${IHM_N8N_HARNESS_AS_LIVE:-}" == "1" ]]; }; then
+    emit_check info "n8n external" "probe mock ignored (live path)"
+  fi
+  # CURL_BIN override is ignored on live path (including FORCE_LIVE_GATES simulation).
+  if [[ -n "${IHM_N8N_CURL_BIN:-}" && "$IHM_ONLY_N8N_EXTERNAL" -ne 1 ]]; then
+    emit_check info "n8n external" "curl bin override ignored (live path)"
+  fi
+
+  if [[ -z "$timeout_sec" ]]; then
+    timeout_sec="$IHM_N8N_TIMEOUT_DEFAULT"
+  fi
+  if [[ -z "$threshold" ]]; then
+    threshold="$IHM_N8N_FAILURE_THRESHOLD_DEFAULT"
+  fi
+  if [[ ! "$timeout_sec" =~ ^[0-9]+$ ]] || (( timeout_sec < 1 || timeout_sec > 60 )); then
+    emit_check technical_error "n8n external" "invalid timeout" "N8N_CONFIG_INVALID"
+    return
+  fi
+  if [[ ! "$threshold" =~ ^[0-9]+$ ]] || (( threshold < 1 || threshold > 10 )); then
+    emit_check technical_error "n8n external" "invalid failure threshold" "N8N_CONFIG_INVALID"
+    return
+  fi
+
+  set +e
+  ihm_n8n_validate_https_url "$live_url" "/healthz"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    emit_check technical_error "n8n external" "unsafe or non-canonical liveness URL class=${rc}" "N8N_CONFIG_INVALID"
+    return
+  fi
+  set +e
+  ihm_n8n_validate_https_url "$ready_url" "/healthz/readiness"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    emit_check technical_error "n8n external" "unsafe or non-canonical readiness URL class=${rc}" "N8N_CONFIG_INVALID"
+    return
+  fi
+
+  state_path="${IHM_STATE_DIR}/${IHM_N8N_STATE_NAME}"
+  mkdir -p "$IHM_STATE_DIR" 2>/dev/null || true
+
+  IHM_N8N_STREAK=0
+  ihm_n8n_read_streak "$state_path" "liveness" "$target_id"
+  live_streak="$IHM_N8N_STREAK"
+  IHM_N8N_STREAK=0
+  ihm_n8n_read_streak "$state_path" "readiness" "$target_id"
+  ready_streak="$IHM_N8N_STREAK"
+
+  live_ok=0
+  ready_ok=0
+  if ihm_n8n_probe_once "liveness" "$live_url" "$timeout_sec"; then
+    live_ok=1
+  fi
+  live_http="$IHM_N8N_HTTP_CODE"
+  live_err="$IHM_N8N_ERROR_CLASS"
+  live_ms="$IHM_N8N_LATENCY_MS"
+
+  if ihm_n8n_probe_once "readiness" "$ready_url" "$timeout_sec"; then
+    ready_ok=1
+  fi
+  ready_http="$IHM_N8N_HTTP_CODE"
+  ready_err="$IHM_N8N_ERROR_CLASS"
+  ready_ms="$IHM_N8N_LATENCY_MS"
+
+  if [[ "$live_ok" -eq 1 ]]; then
+    live_fail=0
+  else
+    live_fail=$((live_streak + 1))
+  fi
+  if [[ "$ready_ok" -eq 1 ]]; then
+    ready_fail=0
+  else
+    ready_fail=$((ready_streak + 1))
+  fi
+
+  # Persist bounded safe evidence only (no URL with secrets, no response body).
+  if ! ihm_n8n_write_state \
+    "$state_path" \
+    "$target_id" \
+    "$live_fail" \
+    "$live_http" \
+    "$live_err" \
+    "$live_ms" \
+    "$ready_fail" \
+    "$ready_http" \
+    "$ready_err" \
+    "$ready_ms"; then
+    emit_check technical_error "n8n external" "probe state write failed" "N8N_STATE_WRITE_FAILED"
+  fi
+
+  ihm_n8n_emit_probe_result "liveness" "$target_id" "$live_ok" "$live_http" "$live_err" "$live_ms" "$live_fail" "$threshold"
+  ihm_n8n_emit_probe_result "readiness" "$target_id" "$ready_ok" "$ready_http" "$ready_err" "$ready_ms" "$ready_fail" "$threshold"
+}
+
 read_commit() {
   local checkout="$1"
   if git -C "$checkout" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -957,7 +1484,7 @@ build_telegram_payload() {
 
   for record in "${IHM_CHECK_RECORDS[@]+"${IHM_CHECK_RECORDS[@]}"}"; do
     IFS=$'\t' read -r level label code detail <<<"$record"
-    if [[ "$level" == "healthy" || "$level" == "not_enforced" || -z "$level" ]]; then
+    if [[ "$level" == "healthy" || "$level" == "not_enforced" || "$level" == "info" || -z "$level" ]]; then
       continue
     fi
     if [[ -n "$code" && -n "$detail" ]]; then
@@ -1056,6 +1583,7 @@ run_fixture() {
       emit_check healthy "staging dump readable" "name=fixture.dump"
       emit_check not_enforced "production restore-test" "control not enabled (.enforce absent); not proof of restore readiness"
       emit_check not_enforced "staging restore-test" "control not enabled (.enforce absent); not proof of restore readiness"
+      emit_check info "n8n external" "disabled (targets config absent)"
       ;;
     warning)
       emit_check healthy "docker production app"
@@ -1096,10 +1624,32 @@ run_restore_test_only() {
   exit_with_overall
 }
 
+run_n8n_external_only() {
+  IHM_SKIP_TELEGRAM=1
+  # Same monitor lock as run_live so streak RMW cannot race the timer.
+  acquire_lock_or_skip
+  # Test harness only: drop only-mode gates to match run_live (mock + CURL_BIN ignored).
+  # Unreachable from run_live. HARNESS_AS_LIVE alone keeps only-mode so CURL_BIN stubs work.
+  if [[ "${IHM_N8N_HARNESS_FORCE_LIVE_GATES:-}" == "1" ]]; then
+    IHM_ONLY_N8N_EXTERNAL=0
+  fi
+  echo "INTERNAL_HEALTH_MONITOR START (n8n external only)"
+  check_n8n_external_health
+  print_footer
+  mkdir -p "$IHM_STATE_DIR"
+  append_jsonl || true
+  exit_with_overall
+}
+
 acquire_lock_or_skip() {
   local lock="${IHM_STATE_DIR}/${IHM_LOCK_NAME}"
   mkdir -p "$IHM_STATE_DIR"
   chmod 750 "$IHM_STATE_DIR" 2>/dev/null || true
+  # Production Ubuntu provides flock; without it, continuing is safer than a false SKIP.
+  if ! command -v flock >/dev/null 2>&1; then
+    echo "INFO lock: flock unavailable, continuing without exclusive lock" >&2
+    return 0
+  fi
   exec 9>"$lock"
   if ! flock -n 9; then
     echo "INTERNAL_HEALTH_MONITOR SKIP concurrent run"
@@ -1119,6 +1669,9 @@ run_live() {
 
   check_http_health "$IHM_PROD_HEALTH_URL" "production"
   check_http_health "$IHM_STAGING_HEALTH_URL" "staging"
+
+  # Optional independent n8n HTTPS probes (config-driven; absent config = disabled).
+  check_n8n_external_health
 
   # Root filesystem covers /opt checkouts and typical Docker data roots on this host.
   check_disk_root
@@ -1160,6 +1713,9 @@ main() {
   fi
   if [[ "$IHM_ONLY_RESTORE_TEST" -eq 1 ]]; then
     run_restore_test_only
+  fi
+  if [[ "$IHM_ONLY_N8N_EXTERNAL" -eq 1 ]]; then
+    run_n8n_external_only
   fi
   run_live
 }

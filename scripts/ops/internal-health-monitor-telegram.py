@@ -28,6 +28,10 @@ PROBLEM_LABELS_RU: dict[str, str] = {
     "DISK_USAGE_CRITICAL": "диск почти заполнен",
     "BACKUP_STALE": "резервная копия устарела",
     "PG_VERIFY_IMAGE_MISSING": "локальный образ postgres для проверки копии отсутствует",
+    "N8N_CONFIG_INVALID": "конфиг внешнего мониторинга n8n некорректен",
+    "N8N_LIVENESS_UNHEALTHY": "n8n liveness probe не проходит",
+    "N8N_READINESS_UNHEALTHY": "n8n readiness probe не проходит",
+    "N8N_STATE_WRITE_FAILED": "не удалось записать состояние n8n probe",
 }
 
 
