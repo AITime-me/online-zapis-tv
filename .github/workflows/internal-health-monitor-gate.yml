@@ -1,0 +1,62 @@
+name: Internal Health Monitor Gate
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/internal-health-monitor-gate.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/ops/internal-health-monitor.sh"
+      - "scripts/ops/internal-health-monitor-telegram.py"
+      - "scripts/security-internal-health-monitor-check.ts"
+      - "scripts/internal-health-monitor-telegram-check.ts"
+      - "deploy/config/health-monitor-targets.env.example"
+      - "docs/operations/internal-health-monitor.md"
+
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/internal-health-monitor-gate.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/ops/internal-health-monitor.sh"
+      - "scripts/ops/internal-health-monitor-telegram.py"
+      - "scripts/security-internal-health-monitor-check.ts"
+      - "scripts/internal-health-monitor-telegram-check.ts"
+      - "deploy/config/health-monitor-targets.env.example"
+      - "docs/operations/internal-health-monitor.md"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: internal-health-monitor-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  internal-health-monitor-gate:
+    name: Internal Health Monitor Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Internal Health Monitor security checks
+        run: npm run test:security:internal-health-monitor
+
+      - name: Internal Health Monitor Telegram checks
+        run: npm run test:internal-health-monitor-telegram

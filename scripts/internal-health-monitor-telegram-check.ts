@@ -66,10 +66,19 @@ function toBashPath(winPath: string): string {
 
 /** Env for monitor integration: force the same Python binary used by unit tests. */
 function envWithPython3(pythonBin: string, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  return {
-    ...base,
-    IHM_PYTHON3: toBashPath(pythonBin),
-  };
+  const env = { ...base };
+
+  if (
+    pythonBin.includes(path.sep) ||
+    pythonBin.includes("/") ||
+    process.platform === "win32"
+  ) {
+    env.IHM_PYTHON3 = toBashPath(pythonBin);
+  } else {
+    delete env.IHM_PYTHON3;
+  }
+
+  return env;
 }
 
 function runNotifier(
