@@ -347,6 +347,51 @@ function main(): void {
     const stateAfter = JSON.parse(fs.readFileSync(statePath, "utf8")) as Record<string, unknown>;
     assert.equal(stateAfter.schemaVersion, 1);
 
+    // n8n incident: fingerprint/dedupe stable for repeated identical problem; recovery works.
+    clearMessage(dryDir);
+    const n8nPayload = payload("critical", [
+      {
+        id: "n8n liveness",
+        status: "critical",
+        code: "N8N_LIVENESS_UNHEALTHY",
+        detail: "target=n8n-test-dev probe=liveness http=0 errorClass=timeout latencyMs=10000 streak=2/2",
+      },
+    ]);
+    const n8nState = path.join(tmpRoot, "n8n-tg-state.json");
+    res = runNotifier(
+      pythonBin,
+      ["--config", config, "--state", n8nState, "--dry-run-dir", dryDir],
+      n8nPayload,
+    );
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stderr, /alert notification sent/);
+    msg = readMessage(dryDir);
+    assert.match(msg, /n8n liveness/);
+    assertNoSecretLeak(msg + res.stdout + res.stderr);
+    assert.doesNotMatch(msg, /FAKE-TOKEN|password|user:pass@/i);
+
+    clearMessage(dryDir);
+    res = runNotifier(
+      pythonBin,
+      ["--config", config, "--state", n8nState, "--dry-run-dir", dryDir],
+      n8nPayload,
+    );
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stderr, /duplicate fingerprint/);
+    assert.equal(messageExists(dryDir), false);
+
+    clearMessage(dryDir);
+    res = runNotifier(
+      pythonBin,
+      ["--config", config, "--state", n8nState, "--dry-run-dir", dryDir],
+      healthyPayload,
+    );
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stderr, /recovery notification sent/);
+    msg = readMessage(dryDir);
+    assert.match(msg, /восстановлена/);
+    assertNoSecretLeak(msg);
+
     const evilConfig = path.join(tmpRoot, "evil.env");
     fs.writeFileSync(
       evilConfig,

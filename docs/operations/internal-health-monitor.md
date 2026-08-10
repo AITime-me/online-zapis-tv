@@ -11,6 +11,7 @@ Canonical files in git:
 | --- | --- |
 | `scripts/ops/internal-health-monitor.sh` | Host script |
 | `scripts/ops/internal-health-monitor-telegram.py` | Telegram notifier (Python 3 stdlib only) |
+| `deploy/config/health-monitor-targets.env.example` | Non-secret example for optional n8n HTTPS targets |
 | `deploy/systemd/host/online-zapis-tv-internal-health-monitor.service` | oneshot service |
 | `deploy/systemd/host/online-zapis-tv-internal-health-monitor.timer` | every 15 minutes |
 | `deploy/logrotate/online-zapis-tv-health-monitor` | JSONL rotation |
@@ -21,8 +22,9 @@ Installed paths (manual):
 | --- | --- |
 | `/usr/local/lib/online-zapis-tv/internal-health-monitor.sh` | Installed script |
 | `/usr/local/lib/online-zapis-tv/internal-health-monitor-telegram.py` | Telegram notifier (Python) |
-| `/var/lib/online-zapis-tv/health-monitor/` | Lock + `journal.jsonl` + Telegram state |
+| `/var/lib/online-zapis-tv/health-monitor/` | Lock + `journal.jsonl` + Telegram state + n8n probe streak state |
 | `/etc/online-zapis-tv/health-monitor.env` | Telegram credentials (not in Git) |
+| `/etc/online-zapis-tv/health-monitor-targets.env` | Optional non-secret n8n HTTPS targets (not required) |
 | `/etc/systemd/system/online-zapis-tv-internal-health-monitor.service` | Unit |
 | `/etc/systemd/system/online-zapis-tv-internal-health-monitor.timer` | Timer |
 | `/etc/logrotate.d/online-zapis-tv-health-monitor` | logrotate |
@@ -45,6 +47,7 @@ Installed paths (manual):
    exists, the check reports neutral `not_enforced` (INFO) — not healthy readiness and not a
    Telegram alert.
 10. Staging/production git short SHAs (informational only; never fail the run).
+11. Optional independent **n8n external HTTPS probes** (liveness `/healthz`, readiness `/healthz/readiness`) when `/etc/online-zapis-tv/health-monitor-targets.env` is configured (see §19). Absent config = disabled (INFO), not unhealthy.
 
 ## 2. What it never does
 
@@ -63,6 +66,7 @@ Installed paths (manual):
 - Staging checkout `/opt/online-zapis-tv`, production `/opt/online-zapis-tv-production`
 - Existing backup timers already installed
 - Optional Telegram: config file `/etc/online-zapis-tv/health-monitor.env` (see §18)
+- Optional n8n targets: `/etc/online-zapis-tv/health-monitor-targets.env` (see §19; no secrets)
 
 ## 4. Copy files manually
 
@@ -90,6 +94,8 @@ sudo cp deploy/logrotate/online-zapis-tv-health-monitor /etc/logrotate.d/online-
 ```
 
 Telegram credentials are **not** copied from Git. Create them separately (see §18).
+Optional n8n target URLs are **non-secret** but still live outside runtime hardcoding — copy the example and edit (see §19).
+
 ## 5. Syntax check
 
 ```bash
@@ -197,6 +203,7 @@ State directory (optional keep for history):
 # optional — removes JSONL and Telegram notify state
 sudo rm -f /var/lib/online-zapis-tv/health-monitor/journal.jsonl
 sudo rm -f /var/lib/online-zapis-tv/health-monitor/telegram-notify-state.json
+sudo rm -f /var/lib/online-zapis-tv/health-monitor/n8n-external-probe-state.json
 sudo rm -f /var/lib/online-zapis-tv/health-monitor/run.lock
 sudo rmdir /var/lib/online-zapis-tv/health-monitor 2>/dev/null || true
 ```
@@ -206,6 +213,7 @@ Telegram config (optional remove):
 ```bash
 # optional
 sudo rm -f /etc/online-zapis-tv/health-monitor.env
+sudo rm -f /etc/online-zapis-tv/health-monitor-targets.env
 ```
 ## 15. Confirm removal
 
@@ -257,10 +265,14 @@ Timer schedule (from simple v1 plan): `*-*-* *:0/15:00 Asia/Yekaterinburg`, `Per
 | `postgres:17-alpine` missing | Load/pull the image in a controlled maintenance window (monitor itself never pulls). |
 | technical_error on queries | Check permissions for `deploy`, Docker socket group, python3/curl availability. |
 | Telegram disabled / failed | Monitor checks still stand. Fix `/etc/online-zapis-tv/health-monitor.env` permissions or bot token; re-run `--test-send`. |
+| n8n external disabled (INFO) | Expected when targets file absent. No action unless you intended to enable §19. |
+| n8n config invalid (`N8N_CONFIG_INVALID`) | Fix `/etc/online-zapis-tv/health-monitor-targets.env` (HTTPS only, no userinfo/query/fragment, required keys). |
+| n8n liveness/readiness unhealthy | Check n8n independently (HTTPS `/healthz`, `/healthz/readiness`). IHM only reports; it does not restart n8n. Confirm consecutive-failure threshold was reached (default 2). |
 
 **Important:** `SuccessExitStatus=10 20` means warning/critical do **not** mark the systemd unit as failed. Health is in `journalctl` / JSONL / Telegram — not in `systemctl is-failed`.
 
 External public uptime alerts remain with the existing Timeweb HTTP monitor.
+**n8n is not its own only monitor:** Error Handler / workflows inside n8n do not replace this host-side HTTPS probe, and this probe does not replace n8n’s internal Error Handler.
 
 ## 18. Telegram notifications (optional)
 
@@ -321,3 +333,109 @@ Expected stderr (no token): `INFO telegram: test message sent`
 npm run test:internal-health-monitor-telegram
 npm run test:security:internal-health-monitor
 ```
+
+## 19. Independent n8n external HTTPS probe (optional)
+
+Purpose: keep an **independent**, host-side health signal for n8n so that n8n is **not** the only watchdog of its own availability. Probes run inside the existing Internal Health Monitor (same timer/service cadence). Alerting remains Telegram/IHM — **no n8n workflow and no MCP dependency**.
+
+Booking production/staging `/api/health` semantics and localhost URLs are **unchanged**.
+
+### Config contract (non-secret)
+
+Example in Git: `deploy/config/health-monitor-targets.env.example`
+
+Installed path (manual): `/etc/online-zapis-tv/health-monitor-targets.env`
+
+| Key | Required | Default | Meaning |
+| --- | --- | --- | --- |
+| `IHM_N8N_TARGET_ID` | yes (when enabled) | — | Short stable id in evidence/alerts (`[A-Za-z0-9._-]{1,64}`) |
+| `IHM_N8N_LIVENESS_URL` | yes (when enabled) | — | Absolute HTTPS URL whose path is **exactly** `/healthz` (no trailing slash, query, or fragment) |
+| `IHM_N8N_READINESS_URL` | yes (when enabled) | — | Absolute HTTPS URL whose path is **exactly** `/healthz/readiness` (no trailing slash, query, or fragment) |
+| `IHM_N8N_TIMEOUT_SEC` | no | `10` | Bounded connect/request timeout (1..60) |
+| `IHM_N8N_FAILURE_THRESHOLD` | no | `2` | Consecutive failures before durable critical |
+
+**Secrets policy:** never put tokens, passwords, or credentials in target URLs. Rejected: non-HTTPS, userinfo (`user:pass@`), query strings, fragments, trailing slashes, and any path other than the canonical `/healthz` or `/healthz/readiness`.
+
+**Trailing slash:** strict. `…/healthz/` and `…/healthz/readiness/` are **invalid** (`N8N_CONFIG_INVALID`). Use the exact canonical paths with no trailing slash.
+
+The same monitor can later represent:
+
+- current TEST/DEV n8n (operator fills the active HTTPS host/paths in the env file)
+- future PROD self-hosted `tv_n8n` (operator swaps host/paths only — no shell hardcoding)
+
+### Liveness vs readiness
+
+| Probe | Typical path | Meaning for this monitor |
+| --- | --- | --- |
+| Liveness | `/healthz` | Process/responding — HTTP 200 required |
+| Readiness | `/healthz/readiness` | Ready to accept work — HTTP 200 required |
+
+Evidence logged (safe only): `target`, `probe`, `http`, `errorClass`, `latencyMs`, `streak`. **No response body** in journal, JSONL, probe state, or Telegram.
+
+### Debounce / consecutive-failure threshold
+
+- Default threshold: **2**
+- First transient failure below threshold → `INFO` (`debounced`), overall status unchanged, no problem code escalation
+- After N consecutive failures for that probe → `critical` with `N8N_LIVENESS_UNHEALTHY` / `N8N_READINESS_UNHEALTHY`
+- Successful probe clears that probe’s streak to `0`
+- Repeated identical unhealthy states reuse existing Telegram fingerprint/dedupe (no spam every 15 minutes)
+- `--only-n8n-external` (harness) acquires the **same** `run.lock` flock as live runs so streak RMW cannot race the timer
+- `IHM_N8N_PROBE_MOCK` is honored **only** under `--only-n8n-external`; on the live path it is ignored (`INFO … probe mock ignored`) and real HTTPS probes run
+
+### State file
+
+Atomic bounded JSON (no secrets/bodies). Written with the same durable pattern as Telegram state (temp in the state directory → complete write → `fsync` → atomic replace; previous file kept on failure):
+
+`/var/lib/online-zapis-tv/health-monitor/n8n-external-probe-state.json`
+
+Schema (conceptual):
+
+```json
+{
+  "schemaVersion": 1,
+  "targetId": "n8n-test-dev",
+  "liveness": {
+    "consecutiveFailures": 0,
+    "lastHttpCode": 200,
+    "lastErrorClass": "none",
+    "lastLatencyMs": 42
+  },
+  "readiness": {
+    "consecutiveFailures": 0,
+    "lastHttpCode": 200,
+    "lastErrorClass": "none",
+    "lastLatencyMs": 55
+  },
+  "updatedAtUtc": "2026-08-10T00:00:00Z"
+}
+```
+
+Separate from `telegram-notify-state.json`.
+
+### Backward-compatible disabled state
+
+If the targets file is **absent**, or present but contains **no** `IHM_N8N_*` keys:
+
+- emit `INFO n8n external: disabled (...)`
+- do **not** mark IHM unhealthy
+- existing booking production/staging checks unchanged
+
+If the file exists and n8n keys are present but malformed/unsafe → deterministic `technical_error` / `N8N_CONFIG_INVALID`.
+
+### Problem codes
+
+| Code | Severity | When |
+| --- | --- | --- |
+| `N8N_CONFIG_INVALID` | technical_error | Malformed/unsafe/incomplete targets config |
+| `N8N_LIVENESS_UNHEALTHY` | critical | Liveness failures ≥ threshold |
+| `N8N_READINESS_UNHEALTHY` | critical | Readiness failures ≥ threshold |
+| `N8N_STATE_WRITE_FAILED` | technical_error | Probe streak state could not be written |
+
+### Safe rollout
+
+1. Keep timer/service unchanged; deploy updated `internal-health-monitor.sh` (+ telegram py if present).
+2. Leave targets file **absent** first → confirm `INFO n8n external: disabled` and booking checks still green.
+3. Copy example → `/etc/online-zapis-tv/health-monitor-targets.env` (`root:deploy` `0640`), edit real HTTPS URLs (no secrets).
+4. Manual run as `deploy`; confirm liveness/readiness OK lines and state file created.
+5. Optionally force a single mocked/transient failure in a maintenance window to confirm debounce, then recovery clears streak.
+6. Do not add n8n workflows that “monitor n8n for IHM”; this host probe stays independent.
