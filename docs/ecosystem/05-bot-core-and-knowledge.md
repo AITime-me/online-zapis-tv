@@ -21,15 +21,26 @@ Bot Core **не** владеет каталогом услуг/цен/масте
 
 ## Фактический статус (`bot-TV`, соседний репозиторий)
 
-| Элемент | Статус (на момент DOCS-01) |
+| Элемент | Статус |
 | --- | --- |
-| Fail-closed baseline, `BOT_MODE=OFF`, emergency lock | `NOT VERIFIED` до `AUDIT-BOT-01` (в sibling-коде baseline есть; свежий аудит не заменяет) |
-| Outbound / AI / каналы | `NOT VERIFIED` до `AUDIT-BOT-01` (в baseline outbound всегда `false`; AI provider enum отсутствует) |
-| Собственные PostgreSQL/Redis/inbox/outbox | `NOT DONE` → `BOT-CORE-FOUNDATION-01` |
-| Закрытый тестовый адаптер | `NOT DONE` → `BOT-CLOSED-TEST-01` |
+| Fail-closed baseline, `BOT_MODE=OFF`, emergency lock | `DONE` / verified — `AUDIT-BOT-01` OWNER PASS (`main`@`ed1abcc`) |
+| Outbound / AI / каналы | Baseline: outbound automatic всегда `false`; AI provider enum отсутствует; live channels off — verified `AUDIT-BOT-01` |
+| Собственные PostgreSQL + inbox/outbox / durable ingress / lease-retry | `DONE` — `BOT-CORE-FOUNDATION-01` (OWNER: **PG-only**; Redis **не** runtime-зависимость foundation) |
+| Закрытый тестовый адаптер | `NOT DONE` → `BOT-CLOSED-TEST-01` (ещё зависит от `CONTRACT-MODE-01`) |
 | Production channel adapters | `NOT DONE` |
 
-Документы экосистемы не заменяют свежий аудит кода `bot-TV` (`AUDIT-BOT-01`).
+### Storage foundation (канон)
+
+Bot Core хранит диалоговое состояние и очереди в **собственном PostgreSQL**.
+Redis **не** является обязательной частью foundation: не добавлять только ради
+формального чекбокса. Если позже понадобится (например, отдельный nonce/cache
+store), это отдельное OWNER-решение с обоснованием runtime-необходимости.
+
+### Обязательный следующий security gap (не часть foundation)
+
+**M1:** worker S2S **read** (eligibility / availability) сейчас может выполняться
+без gate `BOT_MODE` / `EMERGENCY_LOCK`. Fail-closed hardening этого пути —
+обязательный следующий шаг вместе с `CONTRACT-MODE-01` (до closed test / write).
 
 ## База знаний
 

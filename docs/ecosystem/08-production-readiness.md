@@ -11,10 +11,12 @@
 | --- | --- |
 | Канонические документы экосистемы | `DONE` (`DOCS-01`; `docs/ecosystem/`, `BACKLOG.md`, документационный commit) |
 | Ops backup/restore/IHM на сервере | `NOT VERIFIED` / `PARTIAL` → `AUDIT-OPS-02` |
-| Свежий аудит Bot Core | `NOT VERIFIED` → `AUDIT-BOT-01` |
+| Свежий аудит Bot Core | `DONE` — `AUDIT-BOT-01` OWNER PASS (`bot-TV` `main`@`ed1abcc`) |
+| Bot Core storage foundation (PG inbox/outbox/ingress) | `DONE` — `BOT-CORE-FOUNDATION-01` (PG-only; Redis не добавлен) |
 | Internal Bot API + auth | `NOT DONE` |
 | Live booking race-test | `NOT DONE` |
 | Согласованный mode contract | `NOT DONE` → `CONTRACT-MODE-01` |
+| M1: S2S read gated by `BOT_MODE`/`EMERGENCY_LOCK` | `NOT DONE` — обязательный security gap post-audit (до closed test / write) |
 | n8n Error Handler + external monitor | `NOT DONE` |
 | Write booking через диалог | `NOT DONE` — запрещено включать до полного checklist |
 | AI provider ≠ `NONE` | запрещено включать без OWNER; default `NONE` = `DONE` |
