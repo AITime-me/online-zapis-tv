@@ -26,7 +26,8 @@ Bot Core **не** владеет каталогом услуг/цен/масте
 | Fail-closed baseline, `BOT_MODE=OFF`, emergency lock | `DONE` / verified — `AUDIT-BOT-01` OWNER PASS (`main`@`ed1abcc`) |
 | Outbound / AI / каналы | Baseline: outbound automatic всегда `false`; AI provider enum отсутствует; live channels off — verified `AUDIT-BOT-01` |
 | Собственные PostgreSQL + inbox/outbox / durable ingress / lease-retry | `DONE` — `BOT-CORE-FOUNDATION-01` (OWNER: **PG-only**; Redis **не** runtime-зависимость foundation) |
-| Закрытый тестовый адаптер | `NOT DONE` → `BOT-CLOSED-TEST-01` (ещё зависит от `CONTRACT-MODE-01`) |
+| Mode contract + M1 live S2S read gate | `DONE` — `CONTRACT-MODE-01` + M1 (`main`@`03ed268`, PR #32) |
+| Закрытый тестовый адаптер | `NOT DONE` → следующий Bot Core gate `BOT-CLOSED-TEST-01` (`CONTRACT-MODE-01` dependency удовлетворена; closed test ещё не реализован) |
 | Production channel adapters | `NOT DONE` |
 
 ### Storage foundation (канон)
@@ -36,11 +37,25 @@ Redis **не** является обязательной частью foundation
 формального чекбокса. Если позже понадобится (например, отдельный nonce/cache
 store), это отдельное OWNER-решение с обоснованием runtime-необходимости.
 
-### Обязательный следующий security gap (не часть foundation)
+### M1 live S2S read gate (`DONE`)
 
-**M1:** worker S2S **read** (eligibility / availability) сейчас может выполняться
-без gate `BOT_MODE` / `EMERGENCY_LOCK`. Fail-closed hardening этого пути —
-обязательный следующий шаг вместе с `CONTRACT-MODE-01` (до closed test / write).
+Worker / composition live Booking Service **reads** (eligibility / availability)
+gated by `BOT_MODE` + `EMERGENCY_LOCK`:
+
+- `OFF` / `HINTS` / `DRAFT` → DENY live eligibility/availability;
+- `AUTO_READ` / `AUTO_WRITE` → ALLOW только при `EMERGENCY_LOCK=false`;
+- `EMERGENCY_LOCK=true` → absolute DENY в любом режиме;
+- factory fail-closed (live-read clients не строятся при DENY);
+- HTTP boundary re-check `is_live_booking_s2s_read_allowed(Settings)` непосредственно перед I/O;
+- injected production HTTP clients/flows rebind к runtime Settings на composition roots;
+- caller-controlled permission flag (`live_read_enabled` и аналоги) отсутствует;
+- booking **write** и public/channel **outbound** этой задачей **не** включены.
+
+Evidence: `bot-TV` `main`@`03ed268`, PR #32, `app/core/mode_contract.py`;
+adversarial re-review APPROVE; GitHub PR Gate SUCCESS.
+
+Closed test больше **не** ждёт незакрытый `CONTRACT-MODE-01`.
+Следующий Bot Core gate: `BOT-CLOSED-TEST-01`.
 
 ## База знаний
 
