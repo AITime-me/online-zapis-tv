@@ -41,7 +41,9 @@ import {
   BOT_LOG_MUST_NOT_STORE,
 } from "@/lib/bot-settings/event-log";
 import type { BotKnowledgeFoundationSummary } from "@/lib/bot-knowledge/types";
+import { isClosedTestConsoleVisible } from "@/lib/bot-core/closed-test-gate";
 import type { BotSettingsDto, BotSettingsWriteInput } from "@/types/bot-settings";
+import { BotClosedTestConsole } from "@/components/admin/bot-closed-test-console";
 import { BotEventLogsSection } from "@/components/admin/bot-event-logs-section";
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -416,6 +418,12 @@ export function BotSettingsPanel({
               </span>
             </span>
           </label>
+
+          {isClosedTestConsoleVisible(settings) ? (
+            <div className="lg:col-span-2">
+              <BotClosedTestConsole canEdit={canEdit} />
+            </div>
+          ) : null}
 
           <label className="flex flex-col gap-1">
             <span className={labelClass}>AI-провайдер (конфиг)</span>
