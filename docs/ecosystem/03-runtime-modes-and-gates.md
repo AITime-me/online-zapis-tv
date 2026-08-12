@@ -68,13 +68,14 @@ adversarial re-review APPROVE; GitHub PR Gate SUCCESS.
 | Gate | Назначение | Статус |
 | --- | --- | --- |
 | Runtime mode / `CONTRACT-MODE-01` | Dual-enum contract + M1 live-read gate | `DONE` |
-| Exposure / synthetic / closed test | До публичных каналов | `NOT DONE` → следующий gate `BOT-CLOSED-TEST-01` |
+| Exposure / synthetic / closed test | До публичных каналов (`BOT-CLOSED-TEST-01`) | `DONE` — код/CI: bot-TV PR #33 `main`@`d055231`; admin PR #40 `main`@`1887e06`. **Не** означает deploy/live production |
 | Production gate | Перед write | `NOT DONE` как отдельный enforced gate |
-| Channel enable | По каналу | `PARTIAL` (поля в BotSettings; outbound off) |
+| Channel enable | По каналу | `PARTIAL` (поля в BotSettings; outbound off). Следующий: `AMO-01` |
 | AI provider enable | Провайдер ≠ `NONE` | Default `NONE` = `DONE` |
 | Write booking | Только после race-test + API | `NOT DONE` |
 
-Production / write / channel gates **не** повышать из-за закрытия `CONTRACT-MODE-01` / M1.
+Production / write / channel / AI gates **не** повышать из-за закрытия `BOT-CLOSED-TEST-01`.
+Closed-test в Git/CI ≠ Bot Core или closed-test surface уже развёрнуты в production.
 
 ## Связь с существующим control plane
 

@@ -30,7 +30,7 @@ Write-сценарий записи через бота включается т�
 
 ## Backlog порядок (фрагмент)
 
-- `AMO-01`
+- `AMO-01` — **следующий** canonical channel/integration gate после `BOT-CLOSED-TEST-01`
 - `CHANNEL-VK-TEST-01`
 - далее: VK production, MAX, site chat, Telegram, WhatsApp
 - AI text (`AI-TEXT-01`) — после повторной проверки тарифов Яндекс AI, при provider ≠ `NONE` только с OWNER
@@ -39,8 +39,8 @@ Write-сценарий записи через бота включается т�
 
 | Канал / интеграция | Статус |
 | --- | --- |
-| Synthetic / closed test adapter | `NOT DONE` |
-| amoCRM bot channel | `NOT DONE` |
+| Synthetic / closed test adapter | `DONE` — `BOT-CLOSED-TEST-01` (bot-TV PR #33 `main`@`d055231`; admin PR #40 `main`@`1887e06`; CI green). Код в Git; **deploy/live production не утверждается** |
+| amoCRM bot channel | `NOT DONE` → следующий gate `AMO-01` |
 | VK TEST allowlist | `NOT DONE` |
 | VK / MAX / site / Telegram / WhatsApp production | `NOT DONE` |
 | Booking notifications (не AI Bot Core) | см. отдельный architecture doc; не путать с Bot Core |
