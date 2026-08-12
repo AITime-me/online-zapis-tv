@@ -27,8 +27,8 @@ Bot Core **не** владеет каталогом услуг/цен/масте
 | Outbound / AI / каналы | Baseline: outbound automatic всегда `false`; AI provider enum отсутствует; live channels off — verified `AUDIT-BOT-01` |
 | Собственные PostgreSQL + inbox/outbox / durable ingress / lease-retry | `DONE` — `BOT-CORE-FOUNDATION-01` (OWNER: **PG-only**; Redis **не** runtime-зависимость foundation) |
 | Mode contract + M1 live S2S read gate | `DONE` — `CONTRACT-MODE-01` + M1 (`main`@`03ed268`, PR #32) |
-| Закрытый тестовый адаптер | `NOT DONE` → следующий Bot Core gate `BOT-CLOSED-TEST-01` (`CONTRACT-MODE-01` dependency удовлетворена; closed test ещё не реализован) |
-| Production channel adapters | `NOT DONE` |
+| Закрытый тестовый адаптер / admin console | `DONE` — `BOT-CLOSED-TEST-01` (bot-TV PR #33 `main`@`d055231`; admin PR #40 `main`@`1887e06`; CI green). Synthetic-only; OWNER + saved `TEST`+enabled; **не** deploy/live production |
+| Production channel adapters | `NOT DONE` — следующий channel gate `AMO-01` |
 
 ### Storage foundation (канон)
 
@@ -54,8 +54,9 @@ gated by `BOT_MODE` + `EMERGENCY_LOCK`:
 Evidence: `bot-TV` `main`@`03ed268`, PR #32, `app/core/mode_contract.py`;
 adversarial re-review APPROVE; GitHub PR Gate SUCCESS.
 
-Closed test больше **не** ждёт незакрытый `CONTRACT-MODE-01`.
-Следующий Bot Core gate: `BOT-CLOSED-TEST-01`.
+`BOT-CLOSED-TEST-01` закрыт в коде/CI (см. статус выше). **Следующий** canonical
+channel/integration gate: `AMO-01`. Production / `AUTO_WRITE` / public channels / AI
+этим **не** включаются; deploy closed-test в production в этих задачах **не** выполнялся.
 
 ## База знаний
 

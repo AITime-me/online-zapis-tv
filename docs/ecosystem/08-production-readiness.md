@@ -19,10 +19,10 @@
 | M1: S2S read gated by `BOT_MODE`/`EMERGENCY_LOCK` | `DONE` — Settings-bound policy + HTTP pre-I/O check + DI rebind; adversarial APPROVE; PR Gate green (`main`@`03ed268`, PR #32) |
 | n8n Error Handler + external monitor | `NOT DONE` |
 | Write booking через диалог | `NOT DONE` — запрещено включать до полного checklist |
-| Closed test / synthetic exposure | `NOT DONE` → следующий canonical bot gate `BOT-CLOSED-TEST-01` |
+| Closed test / synthetic exposure | `DONE` — `BOT-CLOSED-TEST-01` (bot-TV PR #33 `main`@`d055231`; admin PR #40 `main`@`1887e06`; CI green). **Не** deploy/live production |
 | Production `AUTO_WRITE` | `NOT DONE` — отдельный OWNER write gate; CP `AUTO` ≠ `AUTO_WRITE` |
 | AI provider ≠ `NONE` | запрещено включать без OWNER; default `NONE` = `DONE` |
-| Публичные каналы | `NOT DONE` — порядок в [07](./07-integrations-and-rollout.md) |
+| Публичные каналы | `NOT DONE` — следующий gate `AMO-01`; порядок в [07](./07-integrations-and-rollout.md) |
 
 ## Checklist до `AUTO_WRITE: booking`
 
@@ -35,7 +35,8 @@
 - [ ] reconciliation `UNKNOWN`
 - [ ] live race-test: 2 concurrent → 1 success, no double book
 - [ ] production gate + OWNER
-- [ ] закрытый тест и предшествующие канальные gates пройдены
+- [x] закрытый тест (`BOT-CLOSED-TEST-01`) — код/CI DONE; deploy/live не утверждается
+- [ ] канальные gates после closed test (`AMO-01` → …) пройдены
 
 ## Ops checklist (сервер)
 
