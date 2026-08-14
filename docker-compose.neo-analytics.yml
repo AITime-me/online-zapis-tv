@@ -1,0 +1,5 @@
+services:
+  app:
+    environment:
+      # Dedicated read-only analytics credential. Never reuse BOT_INTERNAL_API_TOKEN.
+      NEO_ANALYTICS_API_TOKEN: ${NEO_ANALYTICS_API_TOKEN:-}
