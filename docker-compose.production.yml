@@ -54,6 +54,12 @@ services:
       BOT_INTERNAL_API_TOKEN: ${BOT_INTERNAL_API_TOKEN:-}
       # Dedicated read-only credential for neo analytics; never reuse bot token.
       NEO_ANALYTICS_API_TOKEN: ${NEO_ANALYTICS_API_TOKEN:-}
+      # amoCRM / Kommo OAuth, server-only. The connector exposes no CRM write method.
+      AMOCRM_BASE_URL: ${AMOCRM_BASE_URL:-}
+      AMOCRM_CLIENT_ID: ${AMOCRM_CLIENT_ID:-}
+      AMOCRM_CLIENT_SECRET: ${AMOCRM_CLIENT_SECRET:-}
+      AMOCRM_REDIRECT_URI: ${AMOCRM_REDIRECT_URI:-}
+      AMOCRM_REFRESH_TOKEN: ${AMOCRM_REFRESH_TOKEN:-}
       # Dedicated HMAC for bot booking idempotency fingerprints (CURSOR-24). Required for create.
       # Never reuse AUTH_SECRET. Optional previous list: BOT_INTERNAL_IDEMPOTENCY_HMAC_PREVIOUS_SECRETS.
       BOT_INTERNAL_IDEMPOTENCY_HMAC_SECRET: ${BOT_INTERNAL_IDEMPOTENCY_HMAC_SECRET:-}
