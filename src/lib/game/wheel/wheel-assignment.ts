@@ -82,5 +82,6 @@ export function wheelAssignmentToJson(
     prizeSystemKey: assignment.prizeSystemKey,
     giftId: assignment.giftId,
     prizeSnapshot: assignment.prizeSnapshot,
+    ...(assignment.claimLock ? { claimLock: assignment.claimLock } : {}),
   };
 }

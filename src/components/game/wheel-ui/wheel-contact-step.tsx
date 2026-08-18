@@ -72,7 +72,7 @@ export function WheelContactStep({
         </>
       }
     >
-      <div className="flex flex-col gap-5 overflow-y-auto pb-2">
+      <div className="flex flex-col gap-5 pb-2">
         <h2
           ref={headingRef}
           tabIndex={-1}

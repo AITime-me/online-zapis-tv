@@ -112,7 +112,7 @@ export function WheelPreferenceStep({
         </>
       }
     >
-      <div className="flex flex-col gap-6 overflow-y-auto pb-2">
+      <div className="flex flex-col gap-6 pb-2">
         <section aria-labelledby="intent-heading">
           <h2
             id="intent-heading"

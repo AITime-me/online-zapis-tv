@@ -463,6 +463,7 @@ async function assertPostgresCompleteProof(): Promise<void> {
       name: "Полина",
       phone,
       attemptId,
+      interest: "lips",
       personalDataConsent: true,
       offerAcknowledgement: true,
       auth,

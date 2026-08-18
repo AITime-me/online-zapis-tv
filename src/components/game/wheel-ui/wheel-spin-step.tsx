@@ -50,7 +50,7 @@ export function WheelSpinStep({
         )
       }
     >
-      <div className="flex flex-col gap-4 overflow-y-auto pb-2">
+      <div className="flex flex-col gap-4 pb-2">
         <h2 tabIndex={-1} className="sr-only" data-testid="spin-step-heading">
           Экран колеса
         </h2>

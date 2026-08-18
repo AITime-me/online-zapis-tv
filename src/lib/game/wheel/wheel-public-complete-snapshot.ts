@@ -11,6 +11,7 @@ import {
   buildWheelGiftSnapshotFields,
   type WheelAwareGiftSnapshot,
 } from "@/lib/game/wheel/wheel-gift-snapshot";
+import { resolveWheelPublicPrizeDisplayName } from "@/lib/game/wheel/wheel-claim-lock";
 import type { WheelZone } from "@/lib/game/wheel/zone-types";
 
 function frozenToGiftSource(frozen: WheelFrozenPrizeGiftV1) {
@@ -116,5 +117,5 @@ export function buildWheelCompleteGiftSnapshot(input: {
 export function prizeDisplayNameFromAssignment(
   assignment: WheelServerAssignmentV1,
 ): string {
-  return assignment.prizeSnapshot.original.displayName;
+  return resolveWheelPublicPrizeDisplayName(assignment);
 }

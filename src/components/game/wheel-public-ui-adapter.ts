@@ -55,12 +55,16 @@ export function mapUiPreferencesToCompletePayload(input: {
   return { ok: false, error: "Неизвестный тип процедуры" };
 }
 
+export function sectorIdFromIndex(sectorIndex: number): string {
+  return String(sectorIndex);
+}
+
 /** Build 16 presentation sectors from production public labels. */
 export function mapSectorLabelsToWheelSectors(
   labels: WheelPublicSectorLabel[],
 ): WheelSector[] {
   return labels.map((label) => ({
-    id: String(label.sectorIndex),
+    id: sectorIdFromIndex(label.sectorIndex),
     shortLabel: makeShortLabel(label.prizeDisplayName),
     fullName: label.prizeDisplayName,
   }));
@@ -104,6 +108,23 @@ export function buildProductionWheelShareMessage(input: {
   ].join("\n");
 }
 
-export function sectorIdFromIndex(sectorIndex: number): string {
-  return String(sectorIndex);
+export function overlayWinningSectorOnWheelSectors(
+  sectors: WheelSector[],
+  animation: { sectorIndex: number; prizeDisplayName: string },
+): WheelSector[] {
+  const winningId = sectorIdFromIndex(animation.sectorIndex);
+  const finalName = animation.prizeDisplayName.trim();
+  if (!finalName) {
+    return sectors;
+  }
+  return sectors.map((sector) => {
+    if (sector.id !== winningId || sector.fullName === finalName) {
+      return sector;
+    }
+    return {
+      ...sector,
+      fullName: finalName,
+      shortLabel: makeShortLabel(finalName),
+    };
+  });
 }

@@ -21,8 +21,20 @@ import {
   type WheelFortuneViewProps,
   type WheelSector,
 } from "../src/components/game/wheel-ui";
+import {
+  promoPathNeedsCookieBannerOffset,
+  shouldShowCookieBanner,
+  WHEEL_COOKIE_BANNER_OFFSET_VAR,
+} from "../src/lib/legal/cookie-banner-placement";
 
 const ROOT = path.resolve(__dirname, "..");
+
+const LOW_VIEWPORTS = [
+  [320, 568],
+  [360, 640],
+  [393, 659],
+  [412, 732],
+] as const;
 const WHEEL_UI_DIR = path.join(ROOT, "src/components/game/wheel-ui");
 
 function read(rel: string): string {
@@ -231,6 +243,42 @@ function assertSourceContracts(): void {
   );
   const layout = read("src/components/game/wheel-ui/wheel-layout.tsx");
   assert.match(layout, /import\s+["']\.\/wheel-ui\.css["']/);
+  assert.match(layout, /data-testid=["']wheel-layout-footer["']/);
+  assert.match(layout, /wheel-layout-footer/);
+  assert.doesNotMatch(layout, /min-h-\[100/);
+  assert.doesNotMatch(layout, /min-h-0/);
+
+  assert.match(css, /min-height:\s*100vh/);
+  assert.match(css, /min-height:\s*100svh/);
+  assert.match(css, /min-height:\s*100dvh/);
+  assert.match(css, /@supports \(min-height: 100svh\)/);
+  assert.match(css, /@supports \(min-height: 100dvh\)/);
+  assert.match(css, /overflow-y:\s*visible/);
+  assert.match(css, /env\(safe-area-inset-bottom/);
+  assert.match(css, /var\(--wheel-cookie-banner-offset,\s*0px\)/);
+  assert.doesNotMatch(
+    css,
+    /\.wheel-ui-root\s*\{[^}]*(?<![-\w])height:\s*100(dvh|vh|svh)/,
+    "wheel shell must use min-height, not a locked height",
+  );
+
+  assert.equal(shouldShowCookieBanner("/promo/wheel"), true);
+  assert.equal(shouldShowCookieBanner("/"), true);
+  assert.equal(shouldShowCookieBanner("/admin/game"), false);
+  assert.equal(shouldShowCookieBanner("/schedule"), false);
+  assert.equal(promoPathNeedsCookieBannerOffset("/promo/wheel"), true);
+  assert.equal(promoPathNeedsCookieBannerOffset("/booking"), false);
+  const cookieBanner = read("src/components/legal/cookie-consent-banner.tsx");
+  assert.match(cookieBanner, /data-testid=["']cookie-consent-banner["']/);
+  assert.match(cookieBanner, /WHEEL_COOKIE_BANNER_OFFSET_VAR/);
+  assert.match(cookieBanner, /applyWheelCookieBannerOffset/);
+  assert.doesNotMatch(
+    cookieBanner,
+    /pathname\.startsWith\(["']\/promo["']\)[\s\S]{0,120}return false/,
+    "promo must still show cookie consent; offset instead of hiding",
+  );
+
+  assert.equal(LOW_VIEWPORTS.length, 4);
 
   const restored = read("src/components/game/wheel-ui/wheel-restored-step.tsx");
   assert.match(
@@ -276,6 +324,45 @@ async function renderView(
 async function runUiChecks(): Promise<void> {
   const { container, cleanup } = setupDom();
   try {
+    // Mobile CTA is in document flow and fully present on the intro step,
+    // including low viewports where Xiaomi/Chrome UI chrome used to clip it.
+    for (const [width, height] of LOW_VIEWPORTS) {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: height });
+      document.documentElement.style.setProperty(
+        WHEEL_COOKIE_BANNER_OFFSET_VAR,
+        "180px",
+      );
+      const { unmount } = await renderView(
+        container,
+        baseProps({ phase: "intro" }),
+      );
+      const root = container.querySelector(".wheel-ui-root") as HTMLElement | null;
+      const footer = container.querySelector(
+        '[data-testid="wheel-layout-footer"]',
+      );
+      const cta = container.querySelector('[data-testid="wheel-start-button"]');
+      assert.ok(root, `intro root missing at ${width}x${height}`);
+      assert.ok(footer, `intro footer missing at ${width}x${height}`);
+      assert.ok(cta, `intro CTA missing at ${width}x${height}`);
+      assert.ok(
+        footer!.contains(cta),
+        `CTA must live inside the layout footer at ${width}x${height}`,
+      );
+      const footerStyle = window.getComputedStyle(footer as HTMLElement);
+      assert.notEqual(footerStyle.position, "fixed");
+      assert.notEqual(footerStyle.position, "sticky");
+      const rootStyle = window.getComputedStyle(root);
+      assert.notEqual(rootStyle.overflowY, "hidden");
+      assert.ok(
+        Boolean(cta!.compareDocumentPosition(footer!) & Node.DOCUMENT_POSITION_CONTAINS) ||
+          footer!.contains(cta),
+        `CTA must remain in footer document flow at ${width}x${height}`,
+      );
+      unmount();
+      container.innerHTML = "";
+    }
+
     // 1–3: 16 sectors, shortLabel, hub without prize full name
     {
       const prizeFull = "Секретный длинный подарок XYZ";
