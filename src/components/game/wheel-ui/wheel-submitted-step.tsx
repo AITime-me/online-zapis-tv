@@ -61,7 +61,7 @@ export function WheelSubmittedStep({
       }
     >
       <div
-        className="flex flex-1 flex-col justify-center gap-4 overflow-y-auto pb-2"
+        className="flex flex-1 flex-col justify-center gap-4 pb-2"
         data-testid="wheel-submitted"
       >
         <article

@@ -18,6 +18,7 @@ import {
   buildProductionWheelShareMessage,
   mapSectorLabelsToWheelSectors,
   mapUiPreferencesToCompletePayload,
+  overlayWinningSectorOnWheelSectors,
   sectorIdFromIndex,
 } from "@/components/game/wheel-public-ui-adapter";
 import {
@@ -115,14 +116,26 @@ export function WheelFortunePublic({
   const spinTimerRef = useRef<number | null>(null);
   const mountedRef = useRef(true);
   const [confettiActive, setConfettiActive] = useState(false);
+  const [sectorOverride, setSectorOverride] = useState<
+    ReturnType<typeof mapSectorLabelsToWheelSectors> | null
+  >(null);
 
   const uiBusy =
     requestBusy || phase === "spinning" || phase === "submitting";
 
-  const sectors = useMemo(
-    () => mapSectorLabelsToWheelSectors(sectorLabels),
-    [sectorLabels],
-  );
+  const sectors = useMemo(() => {
+    const base = mapSectorLabelsToWheelSectors(sectorLabels);
+    return sectorOverride ?? base;
+  }, [sectorLabels, sectorOverride]);
+
+  function applyAnimationSectors(next: AnimationResult) {
+    setSectorOverride(
+      overlayWinningSectorOnWheelSectors(
+        mapSectorLabelsToWheelSectors(sectorLabels),
+        next,
+      ),
+    );
+  }
 
   const result: WheelPrizeResult | null = animation
     ? {
@@ -197,7 +210,11 @@ export function WheelFortunePublic({
           return;
         }
         setAnimation(data.animation);
-        const mappedSectors = mapSectorLabelsToWheelSectors(sectorLabels);
+        applyAnimationSectors(data.animation);
+        const mappedSectors = overlayWinningSectorOnWheelSectors(
+          mapSectorLabelsToWheelSectors(sectorLabels),
+          data.animation,
+        );
         setRotationDeg(
           computeRotationForSector(
             sectorIdFromIndex(data.animation.sectorIndex),
@@ -291,6 +308,16 @@ export function WheelFortunePublic({
       return;
     }
 
+    const mapped = mapUiPreferencesToCompletePayload({
+      intent: selectedIntent,
+      zone: selectedZone,
+    });
+    if (!mapped.ok) {
+      setError(mapped.error);
+      setPhase("preferences");
+      return;
+    }
+
     spinningLock.current = true;
     startSucceededRef.current = false;
     setRequestBusy(true);
@@ -306,6 +333,10 @@ export function WheelFortunePublic({
             name: lead.name.trim(),
             phone: phoneE164(),
             attemptId,
+            interest: mapped.payload.interest,
+            ...(mapped.payload.confirmedZone
+              ? { confirmedZone: mapped.payload.confirmedZone }
+              : {}),
             personalDataConsent: true,
             offerAcknowledgement: true,
           }),
@@ -334,6 +365,7 @@ export function WheelFortunePublic({
         startSucceededRef.current = true;
         setError(null);
         setAnimation(data.animation);
+        applyAnimationSectors(data.animation);
         setPhase("spinning");
 
         const target = computeRotationForSector(
@@ -465,10 +497,12 @@ export function WheelFortunePublic({
           return;
         }
         if (data.prizeDisplayName && animation) {
-          setAnimation({
+          const nextAnimation = {
             ...animation,
             prizeDisplayName: data.prizeDisplayName,
-          });
+          };
+          setAnimation(nextAnimation);
+          applyAnimationSectors(nextAnimation);
         }
         setClaimStatus("submitted");
         setPhase("submitted");

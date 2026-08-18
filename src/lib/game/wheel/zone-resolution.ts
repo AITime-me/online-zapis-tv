@@ -53,8 +53,9 @@ export function resolveConfirmedZone(input: {
 }
 
 /**
- * Replacement of a lips-restricted prize is allowed only when the client
- * explicitly confirmed a non-lips zone. Never for unknown / undecided / null.
+ * Replacement of a lips-restricted prize by confirmed zone is allowed only
+ * for an explicit non-lips zone. Undecided is handled separately in
+ * resolvePrizeReplacement because interest is locked at spin.
  */
 export function canReplaceLipsRestrictedPrize(
   zone: WheelZone | null | undefined,

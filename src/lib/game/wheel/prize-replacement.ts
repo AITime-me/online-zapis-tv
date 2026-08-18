@@ -12,7 +12,15 @@ export type PrizeIdentity = {
   name: string;
 };
 
-export type PrizeReplacementReason = "confirmed_non_lips_zone";
+export type PrizeReplacementReason =
+  | "confirmed_non_lips_zone"
+  | "undecided_interest";
+
+export function isPrizeReplacementReason(
+  value: unknown,
+): value is PrizeReplacementReason {
+  return value === "confirmed_non_lips_zone" || value === "undecided_interest";
+}
 
 export type PrizeReplacementDecision =
   | {
@@ -44,7 +52,8 @@ export type PrizeReplacementDecision =
  * - cover / refresh without zone → keep
  * - cover / refresh + lips → keep
  * - cover / refresh + brows|eyelids → replace
- * - undecided / null → keep
+ * - undecided → replace (intent is locked at spin; lips-only would be a dead end)
+ * - null → keep
  */
 export function resolvePrizeReplacement(input: {
   original: PrizeIdentity;
@@ -86,7 +95,8 @@ export function resolvePrizeReplacement(input: {
     return baseNoReplace;
   }
 
-  if (!canReplaceLipsRestrictedPrize(confirmedZone)) {
+  const replaceForUndecided = confirmedInterest === "undecided";
+  if (!replaceForUndecided && !canReplaceLipsRestrictedPrize(confirmedZone)) {
     return baseNoReplace;
   }
 
@@ -106,8 +116,10 @@ export function resolvePrizeReplacement(input: {
     final: fallbackPrize,
     fallbackSystemKey: replacement.fallbackSystemKey,
     confirmedInterest,
-    confirmedZone: confirmedZone!,
-    replacementReason: "confirmed_non_lips_zone",
+    confirmedZone: confirmedZone ?? "unknown",
+    replacementReason: replaceForUndecided
+      ? "undecided_interest"
+      : "confirmed_non_lips_zone",
     replacedAt: now.toISOString(),
   };
 }

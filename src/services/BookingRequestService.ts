@@ -17,6 +17,7 @@ import {
   toSummaryScheduleBookingRequest,
   type FullScheduleBookingRequestDto,
 } from "@/lib/schedule/booking-request-schedule";
+import { buildGameBookingRequestDisplay } from "@/lib/schedule/game-booking-request-display";
 import type { ScheduleBookingRequestVisibility } from "@/lib/schedule/schedule-load-options";
 import type { ClientStatus } from "@prisma/client";
 import {
@@ -1209,17 +1210,64 @@ export async function listActiveBookingRequestsForRange(
     where: {
       leadId: { in: requests.map((request) => request.id) },
     },
-    select: { leadId: true },
+    select: {
+      leadId: true,
+      id: true,
+      gameDirection: true,
+      gameCatalogId: true,
+      gameSessionId: true,
+      selectedGiftId: true,
+      consumedAt: true,
+      giftSnapshot: true,
+      rulesSnapshot: true,
+      selectedGift: {
+        select: { name: true, shortDescription: true },
+      },
+      gameCatalog: {
+        select: { id: true, slug: true, title: true },
+      },
+      gameSession: {
+        select: {
+          id: true,
+          gameCatalogId: true,
+          tokenHash: true,
+          status: true,
+          claimExpiresAt: true,
+          consumedAt: true,
+        },
+      },
+    },
   });
-  const gameLeadIds = new Set(
+  const gamePlayByLeadId = new Map(
     gamePlays
-      .map((play) => play.leadId)
-      .filter((leadId): leadId is string => Boolean(leadId)),
+      .filter((play): play is typeof play & { leadId: string } => Boolean(play.leadId))
+      .map((play) => [play.leadId, play]),
   );
 
   const fullRequests: FullScheduleBookingRequestDto[] = requests.map((request) => {
     const appointmentDateKey = request.appointment
       ? formatDateKeyInStudio(request.appointment.startsAt)
+      : null;
+    const play = gamePlayByLeadId.get(request.id) ?? null;
+    const gameDisplay = play
+      ? buildGameBookingRequestDisplay({
+          serviceNameSnapshot: request.serviceNameSnapshot ?? null,
+          comment: request.comment,
+          play: {
+            ...play,
+            leadId: play.leadId,
+            gameSession: play.gameSession
+              ? {
+                  ...play.gameSession,
+                  status: play.gameSession.status as
+                    | "ACTIVE"
+                    | "COMPLETED"
+                    | "CONSUMED"
+                    | "EXPIRED",
+                }
+              : null,
+          },
+        })
       : null;
 
     return {
@@ -1230,7 +1278,8 @@ export async function listActiveBookingRequestsForRange(
       comment: request.comment,
       status: request.status,
       type: request.type,
-      isFromGame: gameLeadIds.has(request.id),
+      isFromGame: Boolean(play),
+      gameDisplay,
       masterName: request.master?.publicName ?? null,
       serviceId: request.serviceId ?? null,
       serviceNameSnapshot: request.serviceNameSnapshot ?? null,

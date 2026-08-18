@@ -3,14 +3,28 @@ const CLIENT_GAME_MESSAGE_PREFIX =
 
 const MANAGER_GAME_MESSAGE_PREFIX = "Клиент прошёл игру «Поймай своё время».";
 
+const CLIENT_GAME_MESSAGE_ANY_TITLE =
+  /^Здравствуйте! Я прошла игру «[^»]+»\./u;
+
+const MANAGER_GAME_MESSAGE_ANY_TITLE =
+  /^Клиент прошёл игру «[^»]+»\./u;
+
 const MANAGER_USER_SECTION_MARKER = "Сообщение клиента:";
 
 export function isClientGameMessageTemplate(text: string): boolean {
-  return text.trimStart().startsWith(CLIENT_GAME_MESSAGE_PREFIX);
+  const trimmed = text.trimStart();
+  return (
+    trimmed.startsWith(CLIENT_GAME_MESSAGE_PREFIX) ||
+    CLIENT_GAME_MESSAGE_ANY_TITLE.test(trimmed)
+  );
 }
 
 export function isManagerGameMessageTemplate(text: string): boolean {
-  return text.trimStart().startsWith(MANAGER_GAME_MESSAGE_PREFIX);
+  const trimmed = text.trimStart();
+  return (
+    trimmed.startsWith(MANAGER_GAME_MESSAGE_PREFIX) ||
+    MANAGER_GAME_MESSAGE_ANY_TITLE.test(trimmed)
+  );
 }
 
 function readManagerTemplateUserSection(text: string): string | null {

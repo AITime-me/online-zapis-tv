@@ -34,6 +34,8 @@ function main(): void {
   assert.match(controller, /mountedRef/);
   assert.match(controller, /setConfettiActive\(false\)/);
   assert.match(controller, /onIntentChange/);
+  assert.match(controller, /overlayWinningSectorOnWheelSectors/);
+  assert.match(controller, /interest:\s*mapped\.payload\.interest/);
   assert.match(
     controller,
     /intent === ["']undecided["'][\s\S]*?setSelectedZone\(null\)/,
@@ -46,17 +48,25 @@ function main(): void {
   );
   assert.doesNotMatch(controller, /localStorage/);
 
-  // /start payload must not include preferences.
-  const startBodyMatch = controller.match(
-    /fetch\("\/api\/game\/wheel\/start"[\s\S]*?body:\s*JSON\.stringify\(\{([\s\S]*?)\}\)/,
+  // /start payload must include mapped preferences so replacement happens before spin.
+  const startFetch = controller.match(
+    /fetch\("\/api\/game\/wheel\/start"[\s\S]{0,1200}personalDataConsent:\s*true/,
   );
-  assert.ok(startBodyMatch, "start JSON body not found");
-  const startBody = startBodyMatch[1] ?? "";
-  assert.doesNotMatch(startBody, /\binterest\b/);
-  assert.doesNotMatch(startBody, /confirmedZone/);
-  assert.doesNotMatch(startBody, /selectedIntent/);
-  assert.match(startBody, /attemptId/);
-  assert.match(startBody, /personalDataConsent:\s*true/);
+  assert.ok(startFetch, "start fetch with personalDataConsent not found");
+  assert.match(controller, /\binterest:\s*mapped\.payload\.interest\b/);
+  assert.match(controller, /mapped\.payload\.confirmedZone/);
+  assert.match(
+    controller,
+    /fetch\("\/api\/game\/wheel\/start"[\s\S]{0,900}interest:\s*mapped\.payload\.interest/,
+  );
+  assert.doesNotMatch(
+    controller,
+    /fetch\("\/api\/game\/wheel\/start"[\s\S]{0,900}selectedIntent/,
+  );
+  assert.match(
+    controller,
+    /fetch\("\/api\/game\/wheel\/start"[\s\S]{0,900}attemptId/,
+  );
 
   // /complete uses mapped interest; confirmedZone only when present on payload.
   assert.match(controller, /mapped\.payload\.interest/);

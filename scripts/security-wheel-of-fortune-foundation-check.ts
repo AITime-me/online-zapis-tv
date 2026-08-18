@@ -68,7 +68,7 @@ const SECURITY_INVENTORY = [
   "refresh without zone keeps prize",
   "refresh + lips keeps prize",
   "refresh + brows replaces prize",
-  "undecided keeps prize",
+  "undecided replaces lips-only prize",
   "null interest keeps prize",
   "originalPrize and finalPrize after replacement",
   "confirmedZone stored in snapshot/contract",
@@ -180,7 +180,14 @@ function assertZoneReplacementMatrix(): void {
     true,
   );
 
-  assert.equal(replaceCase({ interest: "undecided" }).replaced, false);
+  const undecided = replaceCase({ interest: "undecided" });
+  assert.equal(undecided.replaced, true);
+  if (!undecided.replaced) {
+    throw new Error("expected undecided replacement");
+  }
+  assert.equal(undecided.final.systemKey, WHEEL_PRIZE_SYSTEM_KEYS.handCare);
+  assert.equal(undecided.confirmedZone, "unknown");
+  assert.equal(undecided.replacementReason, "undecided_interest");
   assert.equal(replaceCase({ interest: null }).replaced, false);
 
   const brows = replaceCase({ interest: "brows_permanent" });
