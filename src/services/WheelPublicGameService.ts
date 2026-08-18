@@ -35,6 +35,11 @@ import {
   type WheelPrizeCatalogGift,
 } from "@/lib/game/wheel/wheel-assignment-prize-snapshot";
 import {
+  buildWheelClaimLock,
+  withWheelClaimLock,
+} from "@/lib/game/wheel/wheel-claim-lock";
+import { resolveWheelZoneLabel } from "@/lib/game/wheel/interest-zone-labels";
+import {
   buildWheelCompleteGiftSnapshot,
   prizeDisplayNameFromAssignment,
 } from "@/lib/game/wheel/wheel-public-complete-snapshot";
@@ -52,6 +57,7 @@ import { assertWheelSessionPhoneMatches } from "@/lib/game/wheel/wheel-public-se
 import type { WheelAwareGiftSnapshot } from "@/lib/game/wheel/wheel-gift-snapshot";
 import type { WheelInterestKey } from "@/lib/game/wheel/procedure-types";
 import { validateClaimZoneForInterest } from "@/lib/game/wheel/zone-resolution";
+import type { WheelZone } from "@/lib/game/wheel/zone-types";
 import { createBookingRequest } from "@/services/BookingRequestService";
 import { ensureVisitorAuth } from "@/services/GameSessionService";
 import { getStudioSettings } from "@/services/StudioSettingsService";
@@ -254,11 +260,31 @@ async function lockWheelSessionRow(
   );
 }
 
+function resolveStartInterestAndZone(input: {
+  interest: unknown;
+  confirmedZone?: unknown;
+}): { interest: WheelInterestKey; confirmedZone: WheelZone } {
+  const requestedInterest = mapToWheelInterestKey(input.interest);
+  if (!requestedInterest) {
+    throwWheel("GAME_INVALID_REQUEST", "Некорректный интерес");
+  }
+  const zone = validateClaimZoneForInterest({
+    interest: requestedInterest,
+    confirmedZone: input.confirmedZone,
+  });
+  if (!zone.ok) {
+    throwWheel("GAME_INVALID_REQUEST", zone.error);
+  }
+  return { interest: requestedInterest, confirmedZone: zone.confirmedZone };
+}
+
 export async function startWheelPublicGame(input: {
   catalogSlug: string;
   name: string;
   phone: string;
   attemptId: string;
+  interest: unknown;
+  confirmedZone?: unknown;
   personalDataConsent: boolean;
   offerAcknowledgement: boolean;
   auth: SessionAuthContext;
@@ -266,6 +292,8 @@ export async function startWheelPublicGame(input: {
   db?: PrismaClient;
   env?: NodeJS.ProcessEnv;
   isGameEnabled?: boolean;
+  /** Test injection only — never used by public routes. */
+  randomInt?: (maxExclusive: number) => number;
 }): Promise<WheelPublicStartServiceResult & { cookieOperations: CookieOperation[] }> {
   const now = input.now ?? new Date();
   const db = input.db ?? defaultPrisma;
@@ -286,6 +314,11 @@ export async function startWheelPublicGame(input: {
     throwWheel("GAME_INVALID_REQUEST", "attemptId некорректен");
   }
 
+  const lockedPreferences = resolveStartInterestAndZone({
+    interest: input.interest,
+    confirmedZone: input.confirmedZone,
+  });
+
   const catalog = await loadWheelCatalogBySlug(input.catalogSlug, db);
   await assertWheelPubliclyPlayable(catalog, now, {
     isGameEnabled: input.isGameEnabled,
@@ -300,18 +333,29 @@ export async function startWheelPublicGame(input: {
     settingsRaw: catalog.settings,
     gifts: giftsToSectorGifts(gifts),
     now,
+    randomInt: input.randomInt,
   });
   if (!assignmentBase) {
     throwWheel("WHEEL_CONFIG_INVALID", "Конфигурация колеса невалидна");
   }
 
-  const assignment = enrichWheelAssignmentWithPrizeSnapshot(
+  const assignmentWithSnapshot = enrichWheelAssignmentWithPrizeSnapshot(
     assignmentBase,
     gifts,
   );
-  if (!assignment) {
+  if (!assignmentWithSnapshot) {
     throwWheel("WHEEL_CONFIG_INVALID", "Конфигурация колеса невалидна");
   }
+
+  const assignment = withWheelClaimLock(
+    assignmentWithSnapshot,
+    buildWheelClaimLock({
+      assignment: assignmentWithSnapshot,
+      confirmedInterest: lockedPreferences.interest,
+      confirmedZone: lockedPreferences.confirmedZone,
+      now,
+    }),
+  );
 
   const playExpiresAt = new Date(now.getTime() + PLAY_WINDOW_MS);
   const registered = await registerWheelPhoneBoundSession({
@@ -498,7 +542,7 @@ function buildWheelManagerComment(input: {
     `Клиент прошёл игру «${input.catalogTitle}».`,
     "",
     `Интерес: ${WHEEL_PUBLIC_INTEREST_LABELS[input.interest]}`,
-    `Зона: ${input.zone}`,
+    `Зона: ${resolveWheelZoneLabel(input.zone) ?? input.zone}`,
     `Исходный приз: ${input.originalName}`,
     `Итоговый приз: ${input.finalName}`,
   ];
@@ -565,7 +609,12 @@ export async function completeWheelPublicGame(input: {
   }
 
   const requestedInterest = mapToWheelInterestKey(input.interest);
-  if (!requestedInterest) {
+  if (
+    input.interest !== undefined &&
+    input.interest !== null &&
+    input.interest !== "" &&
+    !requestedInterest
+  ) {
     throwWheel("GAME_INVALID_REQUEST", "Некорректный интерес");
   }
 
@@ -658,6 +707,7 @@ export async function completeWheelPublicGame(input: {
       throwWheel("GAME_SESSION_EXPIRED", "Время игры истекло", 409);
     }
 
+    const locked = assignment.claimLock ?? null;
     const existingSnapshot = session.gamePlay?.giftSnapshot
       ? (parseGiftSnapshot(
           session.gamePlay.giftSnapshot,
@@ -706,15 +756,21 @@ export async function completeWheelPublicGame(input: {
       };
     }
 
-    const effectiveInterest = resolveLockedInterest(
-      existingSnapshot,
-      requestedInterest,
-    );
-    const effectiveZone = validateClaimZoneForInterest({
-      interest: effectiveInterest,
-      confirmedZone:
-        existingSnapshot?.confirmedZone ?? input.confirmedZone,
-    });
+    const effectiveInterest = locked
+      ? locked.interest
+      : requestedInterest
+        ? resolveLockedInterest(existingSnapshot, requestedInterest)
+        : null;
+    if (!effectiveInterest) {
+      throwWheel("GAME_INVALID_REQUEST", "Некорректный интерес");
+    }
+    const effectiveZone = locked
+      ? { ok: true as const, confirmedZone: locked.confirmedZone }
+      : validateClaimZoneForInterest({
+          interest: effectiveInterest,
+          confirmedZone:
+            existingSnapshot?.confirmedZone ?? input.confirmedZone,
+        });
     if (!effectiveZone.ok) {
       throwWheel("GAME_INVALID_REQUEST", effectiveZone.error);
     }

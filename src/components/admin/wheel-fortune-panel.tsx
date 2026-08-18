@@ -70,6 +70,9 @@ export function WheelFortunePanel({
   const [status, setStatus] = useState<UiStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [editingGiftId, setEditingGiftId] = useState<string | null>(null);
+  const [nameDraft, setNameDraft] = useState("");
+  const [descriptionDraft, setDescriptionDraft] = useState("");
+  const [conditionDraft, setConditionDraft] = useState("");
   const [sectorDraft, setSectorDraft] = useState(0);
   const [activeDraft, setActiveDraft] = useState(true);
   const inFlightRef = useRef(false);
@@ -353,6 +356,9 @@ export function WheelFortunePanel({
 
   const startEditGift = (gift: GameGiftDto) => {
     setEditingGiftId(gift.id);
+    setNameDraft(gift.name);
+    setDescriptionDraft(gift.shortDescription);
+    setConditionDraft(gift.activationConditionText);
     setSectorDraft(gift.probability);
     setActiveDraft(gift.isActive);
   };
@@ -372,22 +378,36 @@ export function WheelFortunePanel({
       if (!gift) {
         throw new Error("Приз не найден");
       }
+      const name = nameDraft.trim();
+      const shortDescription = descriptionDraft.trim();
+      const activationConditionText = conditionDraft.trim();
+      if (!name) {
+        throw new Error("Название подарка не может быть пустым");
+      }
+      if (!shortDescription) {
+        throw new Error("Описание подарка не может быть пустым");
+      }
+      if (!activationConditionText) {
+        throw new Error("Условие получения не может быть пустым");
+      }
+      if (!Number.isInteger(Number(sectorDraft)) || Number(sectorDraft) < 0) {
+        throw new Error(
+          "Количество секторов должно быть целым неотрицательным числом",
+        );
+      }
       const response = await fetch(
         `/api/admin/games/${encodeURIComponent(gameCatalogId)}/gifts/${encodeURIComponent(editingGiftId)}`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            name: gift.name,
-            shortDescription: gift.shortDescription,
+            name,
+            shortDescription,
             isActive: activeDraft,
             probability: Number(sectorDraft),
             activationMode: gift.activationMode,
-            activationConditionText: gift.activationConditionText,
-            systemKey: gift.systemKey,
-            prizeType: gift.prizeType,
-            prizeRules: gift.prizeRules,
-            sortOrder: gift.sortOrder,
+            activationConditionText,
+            minCourseSessions: gift.minCourseSessions,
           }),
         },
       );
@@ -621,11 +641,41 @@ export function WheelFortunePanel({
               Редактирование: {editingGift.name}
             </h3>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <label className="space-y-1 md:col-span-2">
+                <span className={labelClass}>Название подарка</span>
+                <input
+                  className={fieldClass}
+                  value={nameDraft}
+                  onChange={(event) => setNameDraft(event.target.value)}
+                  disabled={busy}
+                />
+              </label>
+              <label className="space-y-1 md:col-span-2">
+                <span className={labelClass}>Короткое описание</span>
+                <textarea
+                  className={fieldClass}
+                  rows={2}
+                  value={descriptionDraft}
+                  onChange={(event) => setDescriptionDraft(event.target.value)}
+                  disabled={busy}
+                />
+              </label>
+              <label className="space-y-1 md:col-span-2">
+                <span className={labelClass}>Условие получения</span>
+                <textarea
+                  className={fieldClass}
+                  rows={2}
+                  value={conditionDraft}
+                  onChange={(event) => setConditionDraft(event.target.value)}
+                  disabled={busy}
+                />
+              </label>
               <label className="space-y-1">
                 <span className={labelClass}>Количество секторов / вес</span>
                 <input
                   type="number"
                   min={0}
+                  step={1}
                   className={fieldClass}
                   value={sectorDraft}
                   onChange={(event) => setSectorDraft(Number(event.target.value))}
@@ -643,8 +693,11 @@ export function WheelFortunePanel({
               </label>
             </div>
             <p className="mt-2 text-xs text-zinc-600">
-              Тип: {prizeTypeLabel(editingGift.prizeType)}. Критические правила
-              хранятся на сервере в prizeRules и snapshots.
+              Тип: {prizeTypeLabel(editingGift.prizeType)} · Ключ:{" "}
+              <code>{editingGift.systemKey ?? "—"}</code>. Тип, ключ и prizeRules
+              нельзя менять здесь — для другого типа создайте новый подарок и
+              отключите текущий. Количество секторов сохраняется только если
+              итоговое колесо остаётся валидным.
             </p>
             <div className="mt-3 flex gap-2">
               <button

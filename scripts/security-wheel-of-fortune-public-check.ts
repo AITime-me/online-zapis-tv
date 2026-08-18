@@ -33,6 +33,7 @@ import {
   startWheelPublicGame,
 } from "../src/services/WheelPublicGameService";
 import { hashOpaqueToken } from "../src/lib/game/session/game-session-token";
+import { WHEEL_REPLAY_COOLDOWN_MS } from "../src/lib/game/wheel/wheel-replay-cooldown";
 
 const ROOT = process.cwd();
 const TEST_ENV = {
@@ -806,8 +807,9 @@ async function assertFakePrismaPublicFlow(): Promise<void> {
         catalogSlug: CATALOG_SLUG,
         name: "Анна",
         phone: "+7 999 123-45-67",
-        attemptId,
-        personalDataConsent: true,
+      attemptId,
+      interest: "lips",
+      personalDataConsent: true,
         offerAcknowledgement: true,
         auth,
         now,
@@ -824,8 +826,9 @@ async function assertFakePrismaPublicFlow(): Promise<void> {
     catalogSlug: CATALOG_SLUG,
     name: "Анна",
     phone: "+7 999 123-45-67",
-    attemptId,
-    personalDataConsent: true,
+      attemptId,
+      interest: "lips",
+      personalDataConsent: true,
     offerAcknowledgement: true,
     auth,
     now,
@@ -866,8 +869,9 @@ async function assertFakePrismaPublicFlow(): Promise<void> {
     catalogSlug: CATALOG_SLUG,
     name: "Анна",
     phone: "8 (999) 123-45-67",
-    attemptId,
-    personalDataConsent: true,
+      attemptId,
+      interest: "lips",
+      personalDataConsent: true,
     offerAcknowledgement: true,
     auth,
     now,
@@ -887,8 +891,9 @@ async function assertFakePrismaPublicFlow(): Promise<void> {
         catalogSlug: CATALOG_SLUG,
         name: "Анна",
         phone: "79991234567",
-        attemptId: createWheelAttemptId(),
-        personalDataConsent: true,
+      attemptId: createWheelAttemptId(),
+      interest: "lips",
+      personalDataConsent: true,
         offerAcknowledgement: true,
         auth,
         now,
@@ -904,6 +909,45 @@ async function assertFakePrismaPublicFlow(): Promise<void> {
       /уже участвовали/i.test(error.message),
   );
   void otherAttempt;
+
+  const stillBlocked = await assert.rejects(
+    () =>
+      startWheelPublicGame({
+        catalogSlug: CATALOG_SLUG,
+        name: "Анна",
+        phone: "79991234567",
+        attemptId: createWheelAttemptId(),
+        interest: "lips",
+        personalDataConsent: true,
+        offerAcknowledgement: true,
+        auth,
+        now: new Date(now.getTime() + WHEEL_REPLAY_COOLDOWN_MS - 1),
+        db: fake.db,
+        env: TEST_ENV,
+        isGameEnabled: true,
+      }),
+    (error: unknown) =>
+      error instanceof WheelPublicGameError &&
+      error.code === "WHEEL_COOLDOWN_ACTIVE",
+  );
+  void stillBlocked;
+
+  const afterCooldown = await startWheelPublicGame({
+    catalogSlug: CATALOG_SLUG,
+    name: "Анна",
+    phone: "79991234567",
+    attemptId: createWheelAttemptId(),
+    interest: "lips",
+    personalDataConsent: true,
+    offerAcknowledgement: true,
+    auth,
+    now: new Date(now.getTime() + WHEEL_REPLAY_COOLDOWN_MS),
+    db: fake.db,
+    env: TEST_ENV,
+    isGameEnabled: true,
+  });
+  assert.equal(afterCooldown.ok, true);
+  assert.equal(afterCooldown.created, true);
 
   const result = await getWheelPublicResult({
     catalogSlug: CATALOG_SLUG,
@@ -996,8 +1040,9 @@ async function assertFakePrismaPublicFlow(): Promise<void> {
     catalogSlug: CATALOG_SLUG,
     name: "Мария",
     phone: "+79997654321",
-    attemptId: createWheelAttemptId(),
-    personalDataConsent: true,
+      attemptId: createWheelAttemptId(),
+      interest: "lips",
+      personalDataConsent: true,
     offerAcknowledgement: true,
     auth,
     now,
@@ -1115,6 +1160,112 @@ async function assertFakePrismaPublicFlow(): Promise<void> {
     afterMutation.prizeDisplayName,
     completeStart.animation.prizeDisplayName,
   );
+
+  await assert.rejects(
+    () =>
+      startWheelPublicGame({
+        catalogSlug: CATALOG_SLUG,
+        name: "Анна",
+        phone: "+79991112233",
+        attemptId: createWheelAttemptId(),
+        personalDataConsent: true,
+        offerAcknowledgement: true,
+        auth,
+        now,
+        db: createPublicFlowFakePrisma().db,
+        env: TEST_ENV,
+        isGameEnabled: true,
+      }),
+    (error: unknown) =>
+      error instanceof WheelPublicGameError &&
+      error.code === "GAME_INVALID_REQUEST",
+  );
+
+  const lipsBioFake = createPublicFlowFakePrisma();
+  const handCareName = DEFAULT_WHEEL_PRIZE_DEFINITIONS.find(
+    (prize) => prize.systemKey === "hand_care_gift",
+  )!.name;
+  const lipsBioName = DEFAULT_WHEEL_PRIZE_DEFINITIONS.find(
+    (prize) => prize.systemKey === "lips_biorevitalizant_upgrade",
+  )!.name;
+  const browsStart = await startWheelPublicGame({
+    catalogSlug: CATALOG_SLUG,
+    name: "Анна",
+    phone: "+79990001122",
+    attemptId: createWheelAttemptId(),
+    interest: "refresh",
+    confirmedZone: "brows",
+    personalDataConsent: true,
+    offerAcknowledgement: true,
+    auth,
+    now,
+    db: lipsBioFake.db,
+    env: TEST_ENV,
+    isGameEnabled: true,
+    randomInt: () => 15,
+  });
+  assert.equal(browsStart.animation.sectorIndex, 15);
+  assert.equal(browsStart.animation.prizeDisplayName, handCareName);
+  assert.notEqual(browsStart.animation.prizeDisplayName, lipsBioName);
+
+  const lipsStart = await startWheelPublicGame({
+    catalogSlug: CATALOG_SLUG,
+    name: "Анна",
+    phone: "+79990003344",
+    attemptId: createWheelAttemptId(),
+    interest: "lips",
+    personalDataConsent: true,
+    offerAcknowledgement: true,
+    auth,
+    now,
+    db: createPublicFlowFakePrisma().db,
+    env: TEST_ENV,
+    isGameEnabled: true,
+    randomInt: () => 15,
+  });
+  assert.equal(lipsStart.animation.prizeDisplayName, lipsBioName);
+
+  const browsComplete = await completeWheelPublicGame({
+    catalogSlug: CATALOG_SLUG,
+    interest: "lips",
+    name: "Анна",
+    phone: "+79990001122",
+    personalDataConsent: true,
+    offerAcknowledgement: true,
+    auth: {
+      visitorToken: VISITOR_TOKEN,
+      sessionToken: browsStart.sessionToken,
+    },
+    request: new Request("http://localhost/api/game/wheel/complete", {
+      method: "POST",
+    }),
+    idempotencyKey: "idem-lock-brows",
+    now,
+    db: lipsBioFake.db,
+    env: TEST_ENV,
+    createBookingRequestFn: async () => {
+      const bookingId = randomUUID();
+      lipsBioFake.bookings.set(bookingId, { id: bookingId });
+      const session = lipsBioFake.sessions[0]!;
+      assert.ok(session.gamePlay);
+      session.gamePlay.leadId = bookingId;
+      session.status = "CONSUMED";
+      return {
+        id: bookingId,
+        clientName: "Анна",
+        clientPhone: "79990001122",
+        status: "NEW",
+        type: "CONSULTATION_REQUEST",
+        createdAt: now.toISOString(),
+        isFromGame: true,
+        serviceNameSnapshot: null,
+        appointmentServiceName: null,
+      };
+    },
+  });
+  assert.equal(browsComplete.prizeDisplayName, handCareName);
+  assert.equal(browsComplete.originalPrizeDisplayName, lipsBioName);
+  assert.equal(browsComplete.replacementApplied, true);
 }
 
 async function main(): Promise<void> {

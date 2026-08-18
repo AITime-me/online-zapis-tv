@@ -51,6 +51,8 @@ export async function POST(request: Request) {
       name: typeof body.name === "string" ? body.name : "",
       phone: typeof body.phone === "string" ? body.phone : "",
       attemptId: typeof body.attemptId === "string" ? body.attemptId : "",
+      interest: body.interest,
+      confirmedZone: body.confirmedZone,
       personalDataConsent: body.personalDataConsent === true,
       offerAcknowledgement: body.offerAcknowledgement === true,
       auth,

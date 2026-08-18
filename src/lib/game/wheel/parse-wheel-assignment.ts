@@ -1,4 +1,5 @@
 import type { WheelServerAssignmentV1 } from "@/lib/game/wheel/wheel-assignment-contract";
+import { parseWheelClaimLock } from "@/lib/game/wheel/wheel-claim-lock";
 import { parseWheelAssignmentPrizeSnapshot } from "@/lib/game/wheel/wheel-assignment-prize-snapshot";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -66,6 +67,12 @@ export function parseWheelServerAssignment(
     return null;
   }
 
+  const claimLock =
+    raw.claimLock === undefined ? undefined : parseWheelClaimLock(raw.claimLock);
+  if (raw.claimLock !== undefined && !claimLock) {
+    return null;
+  }
+
   return {
     version: 1,
     mechanicType: "WHEEL_OF_FORTUNE",
@@ -79,5 +86,6 @@ export function parseWheelServerAssignment(
     prizeSystemKey: raw.prizeSystemKey.trim(),
     giftId: raw.giftId.trim(),
     prizeSnapshot,
+    ...(claimLock ? { claimLock } : {}),
   };
 }

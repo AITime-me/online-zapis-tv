@@ -8,6 +8,7 @@ import {
   makeShortLabel,
   mapSectorLabelsToWheelSectors,
   mapUiPreferencesToCompletePayload,
+  overlayWinningSectorOnWheelSectors,
 } from "../src/components/game/wheel-public-ui-adapter";
 
 function main(): void {
@@ -162,6 +163,23 @@ function main(): void {
     assert.match(text, /Зона: Губы/);
     assert.match(text, /Мой подарок: Тестовый подарок/);
     assert.match(text, /Хочу записаться и активировать подарок/);
+  }
+
+  {
+    const sectors = mapSectorLabelsToWheelSectors([
+      { sectorIndex: 0, prizeDisplayName: "Скидка 10% на перманент" },
+      {
+        sectorIndex: 15,
+        prizeDisplayName: "Биоревитализант к перманенту губ в подарок",
+      },
+    ]);
+    const overlaid = overlayWinningSectorOnWheelSectors(sectors, {
+      sectorIndex: 15,
+      prizeDisplayName: "Уход для рук в подарок",
+    });
+    assert.equal(overlaid[0]!.fullName, "Скидка 10% на перманент");
+    assert.equal(overlaid[1]!.fullName, "Уход для рук в подарок");
+    assert.equal(overlaid[1]!.id, "15");
   }
 
   console.log("wheel-public-ui-adapter checks: OK");

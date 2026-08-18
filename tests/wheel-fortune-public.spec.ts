@@ -429,11 +429,11 @@ async function spinWheel(page: Page, phone: string) {
       throw new Error(safeWheelStartFailureMessage(startResponse.status(), body));
     }
 
-    // Guard: /start request must not include preferences.
+    // Guard: /start request must include mapped preferences, never donor intent.
     const startRequestText = startResponse.request().postData() ?? "";
-    expect(startRequestText).not.toMatch(/"interest"/i);
-    expect(startRequestText).not.toMatch(/"confirmedZone"/i);
-    expect(startRequestText).not.toMatch(/"selectedIntent"/i);
+    expect(startRequestText).toMatch(/"interest"\s*:\s*"lips"/);
+    expect(startRequestText).not.toMatch(/"selectedIntent"/);
+    expect(startRequestText).not.toMatch(/"confirmedZone"/);
 
     const startMeta = {
       status: startResponse.status(),

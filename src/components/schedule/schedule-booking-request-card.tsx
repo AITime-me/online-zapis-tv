@@ -13,6 +13,7 @@ import {
   isFullScheduleBookingRequest,
   truncateScheduleText,
 } from "@/lib/schedule/booking-request-schedule";
+import { formatGameBookingRequestCompactComment } from "@/lib/schedule/game-booking-request-display-format";
 import {
   getBookingRequestStatusLabel,
   getBookingRequestTypeLabel,
@@ -141,7 +142,17 @@ export function ScheduleBookingRequestSafeDetailModal({
             </div>
           </div>
 
-          {request.serviceNameSnapshot ? (
+          {request.isFromGame &&
+          "gameDisplay" in request &&
+          request.gameDisplay ? (
+            <div>
+              <div className="text-xs text-zinc-500">Детали игры</div>
+              <div className="mt-1 whitespace-pre-line text-zinc-900">
+                {formatGameBookingRequestCompactComment(request.gameDisplay) ||
+                  "Нет дополнительных данных."}
+              </div>
+            </div>
+          ) : request.serviceNameSnapshot ? (
             <div>
               <div className="text-xs text-zinc-500">Процедура</div>
               <div className="text-zinc-900">{request.serviceNameSnapshot}</div>
@@ -290,7 +301,7 @@ export function ScheduleBookingRequestDetailModal({
             </div>
           </div>
 
-          {request.serviceNameSnapshot ? (
+          {request.serviceNameSnapshot && !request.isFromGame ? (
             <div>
               <div className="text-xs text-zinc-500">Процедура</div>
               <div className="text-zinc-900">{request.serviceNameSnapshot}</div>
@@ -323,7 +334,15 @@ export function ScheduleBookingRequestDetailModal({
             )}
           </div>
 
-          {request.comment ? (
+          {request.isFromGame && request.gameDisplay ? (
+            <div>
+              <div className="text-xs text-zinc-500">Детали игры</div>
+              <div className="mt-1 max-h-56 overflow-y-auto whitespace-pre-line rounded border border-[#e8eaed] bg-[#f8faf9] px-3 py-2 text-sm text-zinc-800">
+                {formatGameBookingRequestCompactComment(request.gameDisplay) ||
+                  "Нет дополнительных данных."}
+              </div>
+            </div>
+          ) : request.comment ? (
             <div>
               <div className="text-xs text-zinc-500">
                 {request.type === "RESCHEDULE_REQUEST"
@@ -409,7 +428,9 @@ function ScheduleBookingRequestMonthCard({
   const giftLine =
     detailLevel === "full" && isFullScheduleBookingRequest(request) && request.isFromGame
       ? (() => {
-          const giftName = extractGiftFromBookingComment(request.comment);
+          const giftName =
+            request.gameDisplay?.giftName ??
+            extractGiftFromBookingComment(request.comment);
           return giftName
             ? `Подарок: ${truncateScheduleText(giftName, 22)}`
             : null;
@@ -478,7 +499,9 @@ function ScheduleBookingRequestDayCard({
   const giftLine =
     detailLevel === "full" && isFullScheduleBookingRequest(request) && request.isFromGame
       ? (() => {
-          const giftName = extractGiftFromBookingComment(request.comment);
+          const giftName =
+            request.gameDisplay?.giftName ??
+            extractGiftFromBookingComment(request.comment);
           return giftName ? `Подарок: ${giftName}` : null;
         })()
       : null;
