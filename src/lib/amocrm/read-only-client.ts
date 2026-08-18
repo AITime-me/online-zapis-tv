@@ -83,7 +83,8 @@ export async function refreshAmoCrmAccessToken(): Promise<{
     );
   const payload = (await response.json()) as OAuthTokenResponse;
   if (
-    payload.token_type?.toLowerCase() !== "bearer" ||
+    typeof payload.token_type !== "string" ||
+    payload.token_type.toLowerCase() !== "bearer" ||
     typeof payload.access_token !== "string" ||
     typeof payload.refresh_token !== "string" ||
     typeof payload.expires_in !== "number" ||
