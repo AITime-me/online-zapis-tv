@@ -17,6 +17,7 @@ const ALLOWED_BODY_KEYS = new Set([
   "slotId",
   "clientName",
   "phone",
+  "clientRef",
   "personalDataConsent",
   "offerAcknowledgement",
 ]);
@@ -26,6 +27,11 @@ export type BotBookingCreateRequest = {
   slotId: string;
   clientName: string;
   phone: string;
+  /**
+   * Bot-TV canonical identity (UUID string).
+   * When present, it becomes authoritative cross-system identity.
+   */
+  clientRef?: string;
   personalDataConsent: true;
   offerAcknowledgement: true;
 };
@@ -142,6 +148,30 @@ export function parseBotBookingCreateBody(
 
   const phone = body.phone.trim();
 
+  const clientRefRaw = (body as Record<string, unknown>).clientRef;
+  const clientRef =
+    clientRefRaw === undefined
+      ? undefined
+      : typeof clientRefRaw !== "string"
+        ? null
+        : clientRefRaw.trim();
+
+  if (clientRef === null || clientRef === "") {
+    return {
+      ok: false,
+      code: "VALIDATION_ERROR",
+      error: "Invalid clientRef",
+    };
+  }
+
+  if (clientRef !== undefined && !isCanonicalUuid(clientRef)) {
+    return {
+      ok: false,
+      code: "VALIDATION_ERROR",
+      error: "Invalid clientRef",
+    };
+  }
+
   const fieldErrors = validateClientContactFields(clientName, phone);
   if (fieldErrors.name) {
     return {
@@ -193,6 +223,7 @@ export function parseBotBookingCreateBody(
       slotId: body.slotId,
       clientName,
       phone,
+      ...(clientRef !== undefined ? { clientRef: clientRef.toLowerCase() } : {}),
       personalDataConsent: true,
       offerAcknowledgement: true,
     },
