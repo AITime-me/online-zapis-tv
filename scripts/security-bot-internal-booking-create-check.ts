@@ -27,12 +27,14 @@ installServerOnlyShimForSecurityScripts();
 const S1 = "22222222-2222-4222-8222-111111111111";
 const M1 = "11111111-1111-4111-8111-111111111111";
 const KEY = "550e8400-e29b-41d4-a716-446655440000";
+const CLIENT_REF = "77777777-7777-4aaa-8bbb-cccccccccccc";
 const TOKEN = "cursor24-bot-booking-create-token-32c!";
 
 assert.ok(TOKEN.length >= 32);
 assert.ok(isCanonicalUuid(S1));
 assert.ok(isCanonicalUuid(M1));
 assert.ok(isCanonicalUuid(KEY));
+assert.ok(isCanonicalUuid(CLIENT_REF));
 
 function read(rel: string): string {
   return fs.readFileSync(path.join(ROOT, rel), "utf8");
@@ -148,6 +150,32 @@ async function testRequestParser(): Promise<void> {
     offerAcknowledgement: true,
   });
   assert.equal(valid.ok, true);
+
+  assert.equal(
+    parseBotBookingCreateBody({
+      idempotencyKey: KEY,
+      slotId,
+      clientName: "Иван",
+      phone: "+79123456789",
+      clientRef: CLIENT_REF,
+      personalDataConsent: true,
+      offerAcknowledgement: true,
+    }).ok,
+    true,
+  );
+
+  assert.equal(
+    parseBotBookingCreateBody({
+      idempotencyKey: KEY,
+      slotId,
+      clientName: "Иван",
+      phone: "+79123456789",
+      clientRef: "not-a-uuid",
+      personalDataConsent: true,
+      offerAcknowledgement: true,
+    }).ok,
+    false,
+  );
 
   assert.equal(
     parseBotBookingCreateBody({
@@ -288,6 +316,32 @@ async function testIdempotencyFingerprint(): Promise<void> {
     clientName: "Мария",
   });
   assert.equal(botBookingFingerprintsEqual(a, changedName), false);
+
+  // clientRef must affect fingerprint, and must be canonicalized to lowercase.
+  const withClientRefLower = computeBotBookingRequestFingerprint({
+    ...base,
+    clientRef: CLIENT_REF,
+  } as any);
+  const withClientRefUpper = computeBotBookingRequestFingerprint({
+    ...base,
+    clientRef: CLIENT_REF.toUpperCase(),
+  } as any);
+  assert.equal(
+    botBookingFingerprintsEqual(withClientRefLower, withClientRefUpper),
+    true,
+  );
+  assert.equal(
+    botBookingFingerprintsEqual(a, withClientRefLower),
+    false,
+  );
+
+  // Legacy byte-for-byte compatibility: adding clientRef: undefined
+  // must not change the canonical payload.
+  const legacyWithUndefined = computeBotBookingRequestFingerprint({
+    ...base,
+    clientRef: undefined,
+  } as any);
+  assert.equal(botBookingFingerprintsEqual(a, legacyWithUndefined), true);
 
   const changedSlot = computeBotBookingRequestFingerprint({
     ...base,

@@ -1017,6 +1017,7 @@ model Client {
   mergedByUser             User?                   @relation("ClientMergedBy", fields: [mergedByUserId], references: [id], onDelete: SetNull)
   mergeLogsAsTarget        ClientMergeLog[]        @relation("MergeLogTarget")
   botEventLogs             BotEventLog[]
+  botClientIdentityLinks  BotClientIdentityLink[]
   communicationContacts    CommunicationContact[]
   legalAcceptanceRecords   LegalAcceptanceRecord[]
 
@@ -1115,6 +1116,24 @@ model BotEventLog {
   @@index([clientId])
   @@index([bookingRequestId])
   @@map("bot_event_logs")
+}
+
+/**
+ * Bot-TV canonical identity mapping.
+ *
+ * Multiple historical external refs may ultimately resolve to one merged Client,
+ * but clientRef itself stays stable and unique across systems.
+ */
+model BotClientIdentityLink {
+  clientRef String   @id @map("client_ref") @db.Uuid
+  clientId  String   @map("client_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+  @@map("bot_client_identity_links")
 }
 
 enum InternalBotBookingOperationState {

@@ -36,6 +36,11 @@ export type BotBookingFingerprintInput = {
   slotId: string;
   clientName: string;
   phone: string;
+  /**
+   * Bot-TV canonical identity UUID string.
+   * When present, it is part of the HMAC fingerprint payload.
+   */
+  clientRef?: string;
   personalDataConsent: boolean;
   offerAcknowledgement: boolean;
 };
@@ -58,7 +63,15 @@ function buildCanonicalFingerprintPayload(
   const slotId = input.slotId.normalize("NFC");
 
   // Fixed key order — JSON object key insertion order is stable here.
-  const ordered = {
+  const ordered: {
+    clientName: string;
+    normalizedPhone: string;
+    offerAcknowledgement: boolean;
+    operationKind: string;
+    personalDataConsent: boolean;
+    slotId: string;
+    clientRef?: string;
+  } = {
     clientName,
     normalizedPhone,
     offerAcknowledgement: input.offerAcknowledgement === true,
@@ -66,6 +79,11 @@ function buildCanonicalFingerprintPayload(
     personalDataConsent: input.personalDataConsent === true,
     slotId,
   };
+
+  // Preserve legacy byte-for-byte: when clientRef is absent, do not add the key.
+  if (input.clientRef !== undefined) {
+    ordered.clientRef = input.clientRef.toLowerCase();
+  }
 
   return JSON.stringify(ordered);
 }

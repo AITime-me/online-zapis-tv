@@ -221,6 +221,7 @@ async function runRequiredRaceSuite(): Promise<void> {
     computeBotBookingRequestFingerprintCandidates,
   } = await import("../src/lib/bot-api/booking-create-idempotency");
   const { normalizePhone } = await import("../src/lib/phone/normalize-phone");
+  const { buildBotSlotId } = await import("../src/lib/booking/bot-slot-id");
 
   const tables = await prisma.$queryRawUnsafe<Array<{ tablename: string }>>(
     `SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = 'internal_bot_booking_operations'`,
@@ -379,6 +380,157 @@ async function runRequiredRaceSuite(): Promise<void> {
     await prisma.client.deleteMany({
       where: { fullName: { startsWith: fixture.nameTag } },
     });
+
+    // --- IDEMPOTENCY clientRef fingerprint semantics (EXPAND contract) ---
+    {
+      async function resetBookingState(): Promise<void> {
+        await prisma.legalAcceptanceRecord.deleteMany({
+          where: { appointment: { masterId: fixture.masterId } },
+        });
+        await prisma.appointment.deleteMany({
+          where: { masterId: fixture.masterId },
+        });
+        await prisma.client.deleteMany({
+          where: { fullName: { startsWith: fixture.nameTag } },
+        });
+      }
+
+      // 1) same key + same complete payload + same clientRef => replay success
+      {
+        const key = randomUUID();
+        trackedKeys.push(key);
+
+        const clientRef = randomUUID();
+        const phone = nextFixturePhone(fixture.runId, 5);
+        const request = {
+          idempotencyKey: key,
+          slotId: fixture.slotId,
+          clientName: fixtureClientName(fixture.runId, "IdemCR1"),
+          phone,
+          clientRef,
+          personalDataConsent: true,
+          offerAcknowledgement: true,
+        };
+
+        const first = await createBotConfirmedBooking(request);
+        assert.equal(first.ok, true, "Idem #1 first call ok");
+
+        const second = await createBotConfirmedBooking(request);
+        assert.equal(second.ok, true, "Idem #1 replay call ok");
+        if (second.ok) {
+          assert.equal(second.body.idempotentReplay, true);
+        }
+
+        await resetBookingState();
+      }
+
+      // 2) same key + identical legacy fields + DIFFERENT clientRef => IDEMPOTENCY_CONFLICT
+      {
+        const key = randomUUID();
+        trackedKeys.push(key);
+
+        const phone = nextFixturePhone(fixture.runId, 6);
+        const base = {
+          idempotencyKey: key,
+          slotId: fixture.slotId,
+          clientName: fixtureClientName(fixture.runId, "IdemCR2"),
+          phone,
+          personalDataConsent: true,
+          offerAcknowledgement: true,
+        };
+
+        const clientRefA = randomUUID();
+        const clientRefB = randomUUID();
+
+        const first = await createBotConfirmedBooking({
+          ...base,
+          clientRef: clientRefA,
+        });
+        assert.equal(first.ok, true, "Idem #2 first call ok");
+
+        const second = await createBotConfirmedBooking({
+          ...base,
+          clientRef: clientRefB,
+        });
+        assert.equal(second.ok, false, "Idem #2 replay with diff clientRef must conflict");
+        assert.equal(second.code, "IDEMPOTENCY_CONFLICT");
+
+        const apptCount = await prisma.appointment.count({
+          where: { masterId: fixture.masterId },
+        });
+        assert.equal(apptCount, 1, "Idem #2 must not create a 2nd appointment");
+
+        await resetBookingState();
+      }
+
+      // 3) same key + legacy request (no clientRef) vs otherwise identical WITH clientRef => IDEMPOTENCY_CONFLICT
+      {
+        const key = randomUUID();
+        trackedKeys.push(key);
+
+        const phone = nextFixturePhone(fixture.runId, 7);
+        const clientName = fixtureClientName(fixture.runId, "IdemCR3");
+        const slotId = fixture.slotId;
+
+        const first = await createBotConfirmedBooking({
+          idempotencyKey: key,
+          slotId,
+          clientName,
+          phone,
+          personalDataConsent: true,
+          offerAcknowledgement: true,
+        });
+        assert.equal(first.ok, true, "Idem #3 legacy first call ok");
+
+        const second = await createBotConfirmedBooking({
+          idempotencyKey: key,
+          slotId,
+          clientName,
+          phone,
+          clientRef: randomUUID(),
+          personalDataConsent: true,
+          offerAcknowledgement: true,
+        });
+        assert.equal(second.ok, false);
+        assert.equal(second.code, "IDEMPOTENCY_CONFLICT");
+
+        const apptCount = await prisma.appointment.count({
+          where: { masterId: fixture.masterId },
+        });
+        assert.equal(apptCount, 1, "Idem #3 must not create a 2nd appointment");
+
+        await resetBookingState();
+      }
+
+      // 4) legacy request without clientRef keeps fingerprint compatibility (legacy replay ok)
+      {
+        const key = randomUUID();
+        trackedKeys.push(key);
+
+        const phone = nextFixturePhone(fixture.runId, 8);
+        const request = {
+          idempotencyKey: key,
+          slotId: fixture.slotId,
+          clientName: fixtureClientName(fixture.runId, "IdemCR4"),
+          phone,
+          personalDataConsent: true,
+          offerAcknowledgement: true,
+        };
+
+        const first = await createBotConfirmedBooking(request);
+        assert.equal(first.ok, true);
+
+        const second = await createBotConfirmedBooking(request);
+        assert.equal(second.ok, true, "Idem #4 legacy replay ok");
+        if (second.ok) {
+          assert.equal(second.body.idempotentReplay, true);
+        }
+
+        await resetBookingState();
+      }
+
+      record("idempotency-clientRef-semantics", "PASSED");
+    }
 
     // --- Race C: different keys, same slot ---
     {
@@ -722,6 +874,818 @@ async function runRequiredRaceSuite(): Promise<void> {
       assert.equal(op.resultSnapshot, null);
 
       record("race-g-rollback", "PASSED");
+    }
+
+    // --- BotClientIdentityLink / clientRef mapping tests (EXPAND contract) ---
+    // NOTE: these cases validate the booking-create identity resolution logic only.
+    const nonConflictingSlotId = buildBotSlotId({
+      serviceId: fixture.serviceId,
+      masterId: fixture.masterId,
+      dateKey: fixture.dateKey,
+      startTime: "16:30",
+    });
+
+    async function cleanMasterState(): Promise<void> {
+      await prisma.legalAcceptanceRecord.deleteMany({
+        where: { appointment: { masterId: fixture.masterId } },
+      });
+      await prisma.appointment.deleteMany({
+        where: { masterId: fixture.masterId },
+      });
+      await prisma.client.deleteMany({
+        where: { fullName: { startsWith: fixture.nameTag } },
+      });
+    }
+
+    // --- TEST #3: legacy request without clientRef keeps fuzzy phone suffix behaviour ---
+    {
+      await cleanMasterState();
+
+      const requestPhone = nextFixturePhone(fixture.runId, 17);
+      const requestNormalized = normalizePhone(requestPhone);
+      assert.ok(requestNormalized);
+
+      const suffix = requestNormalized.slice(-10);
+      const existingNormalizedCandidate = `1${suffix}`;
+      const existingNormalized =
+        existingNormalizedCandidate === requestNormalized
+          ? `2${suffix}`
+          : existingNormalizedCandidate;
+
+      const existing = await prisma.client.create({
+        data: {
+          fullName: fixtureClientName(fixture.runId, "LegacySuffixClient"),
+          phone: `+${existingNormalized}`,
+          normalizedPhone: existingNormalized,
+          status: "NEW",
+        },
+      });
+
+      const key = randomUUID();
+      trackedKeys.push(key);
+
+      const result = await createBotConfirmedBooking({
+        idempotencyKey: key,
+        slotId: fixture.slotId,
+        clientName: fixtureClientName(fixture.runId, "LegacySuffixRequest"),
+        phone: requestPhone,
+        personalDataConsent: true,
+        offerAcknowledgement: true,
+      });
+
+      assert.equal(result.ok, true, "TEST #3 legacy suffix match succeeds");
+      if (result.ok) {
+        const appt = await prisma.appointment.findUnique({
+          where: { id: result.body.bookingId },
+          select: { clientId: true },
+        });
+        assert.equal(appt?.clientId, existing.id);
+      }
+      record("clientref-legacy-suffix-path", "PASSED");
+    }
+
+    // --- TEST #4: mapped clientRef resolves mapped Client (ignores phone/name conflicts) ---
+    {
+      await cleanMasterState();
+
+      const clientRef = randomUUID();
+      const phoneA = nextFixturePhone(fixture.runId, 18);
+      const phoneB = nextFixturePhone(fixture.runId, 19);
+      const normalizedA = normalizePhone(phoneA);
+      const normalizedB = normalizePhone(phoneB);
+      assert.ok(normalizedA && normalizedB);
+
+      const clientA = await prisma.client.create({
+        data: {
+          fullName: fixtureClientName(fixture.runId, "MappedClientA"),
+          phone: phoneA,
+          normalizedPhone: normalizedA,
+          status: "NEW",
+        },
+      });
+      const clientB = await prisma.client.create({
+        data: {
+          fullName: fixtureClientName(fixture.runId, "MappedClientB"),
+          phone: phoneB,
+          normalizedPhone: normalizedB,
+          status: "NEW",
+        },
+      });
+
+      await prisma.botClientIdentityLink.create({
+        data: { clientRef, clientId: clientA.id },
+      });
+
+      const key = randomUUID();
+      trackedKeys.push(key);
+
+      const result = await createBotConfirmedBooking({
+        idempotencyKey: key,
+        slotId: fixture.slotId,
+        clientName: fixtureClientName(fixture.runId, "MappedClientRefReq"),
+        phone: phoneB,
+        clientRef,
+        personalDataConsent: true,
+        offerAcknowledgement: true,
+      });
+
+      assert.equal(result.ok, true, "TEST #4 mapping wins over phone");
+      if (result.ok) {
+        const appt = await prisma.appointment.findUnique({
+          where: { id: result.body.bookingId },
+          select: { clientId: true },
+        });
+        assert.equal(appt?.clientId, clientA.id);
+      }
+
+      record("clientref-mapped-resolution-ignores-phone", "PASSED");
+    }
+
+    // --- TEST #5: unmapped clientRef + exactly one exact normalizedPhone match => mapping created ---
+    {
+      await cleanMasterState();
+
+      const clientRef = randomUUID();
+      const phone = nextFixturePhone(fixture.runId, 20);
+      const normalized = normalizePhone(phone);
+      assert.ok(normalized);
+
+      const existing = await prisma.client.create({
+        data: {
+          fullName: fixtureClientName(fixture.runId, "BootstrapOneExactMatch"),
+          phone,
+          normalizedPhone: normalized,
+          status: "NEW",
+        },
+      });
+
+      const key = randomUUID();
+      trackedKeys.push(key);
+
+      const result = await createBotConfirmedBooking({
+        idempotencyKey: key,
+        slotId: fixture.slotId,
+        clientName: fixtureClientName(fixture.runId, "BootstrapReqOne"),
+        phone,
+        clientRef,
+        personalDataConsent: true,
+        offerAcknowledgement: true,
+      });
+
+      assert.equal(result.ok, true, "TEST #5 succeeds");
+      if (result.ok) {
+        const mapping = await prisma.botClientIdentityLink.findUnique({
+          where: { clientRef },
+          select: { clientId: true },
+        });
+        assert.equal(mapping?.clientId, existing.id);
+
+        const appt = await prisma.appointment.findUnique({
+          where: { id: result.body.bookingId },
+          select: { clientId: true },
+        });
+        assert.equal(appt?.clientId, existing.id);
+      }
+
+      record("clientref-bootstrap-one-exact", "PASSED");
+    }
+
+    // --- TEST #6: unmapped clientRef + zero exact normalizedPhone match => Client + mapping created ---
+    {
+      await cleanMasterState();
+
+      const clientRef = randomUUID();
+      const phone = nextFixturePhone(fixture.runId, 21);
+      const normalized = normalizePhone(phone);
+      assert.ok(normalized);
+
+      const before = await prisma.client.count({
+        where: { normalizedPhone: normalized },
+      });
+      assert.equal(before, 0, "TEST #6 starts with 0 canonical clients");
+
+      const key = randomUUID();
+      trackedKeys.push(key);
+
+      const result = await createBotConfirmedBooking({
+        idempotencyKey: key,
+        slotId: fixture.slotId,
+        clientName: fixtureClientName(fixture.runId, "BootstrapReqZero"),
+        phone,
+        clientRef,
+        personalDataConsent: true,
+        offerAcknowledgement: true,
+      });
+
+      assert.equal(result.ok, true, "TEST #6 succeeds");
+      if (result.ok) {
+        const mapping = await prisma.botClientIdentityLink.findUnique({
+          where: { clientRef },
+          select: { clientId: true },
+        });
+        assert.ok(mapping?.clientId);
+
+        const client = await prisma.client.findUnique({
+          where: { id: mapping!.clientId },
+          select: { normalizedPhone: true },
+        });
+        assert.equal(client?.normalizedPhone, normalized);
+
+        const clients = await prisma.client.findMany({
+          where: { normalizedPhone: normalized },
+          select: { id: true },
+        });
+        assert.equal(clients.length, 1, "TEST #6 created exactly one Client");
+
+        const appt = await prisma.appointment.findUnique({
+          where: { id: result.body.bookingId },
+          select: { clientId: true },
+        });
+        assert.equal(appt?.clientId, mapping!.clientId);
+      }
+
+      record("clientref-bootstrap-zero-exact", "PASSED");
+    }
+
+    // --- TEST #7: unmapped clientRef + >1 exact normalizedPhone match => fail closed ---
+    {
+      await cleanMasterState();
+
+      const clientRef = randomUUID();
+      const phone = nextFixturePhone(fixture.runId, 22);
+      const normalized = normalizePhone(phone);
+      assert.ok(normalized);
+
+      const c1 = await prisma.client.create({
+        data: {
+          fullName: fixtureClientName(fixture.runId, "BootstrapDupExact1"),
+          phone,
+          normalizedPhone: normalized,
+          status: "NEW",
+        },
+      });
+      const c2 = await prisma.client.create({
+        data: {
+          fullName: fixtureClientName(fixture.runId, "BootstrapDupExact2"),
+          phone,
+          normalizedPhone: normalized,
+          status: "NEW",
+        },
+      });
+      assert.notEqual(c1.id, c2.id);
+
+      const key = randomUUID();
+      trackedKeys.push(key);
+
+      const result = await createBotConfirmedBooking({
+        idempotencyKey: key,
+        slotId: fixture.slotId,
+        clientName: fixtureClientName(fixture.runId, "BootstrapReqDup"),
+        phone,
+        clientRef,
+        personalDataConsent: true,
+        offerAcknowledgement: true,
+      });
+
+      assert.equal(result.ok, false, "TEST #7 must fail closed");
+      if (!result.ok) {
+        assert.equal(result.code, "CLIENT_AMBIGUOUS");
+      }
+
+      const mapping = await prisma.botClientIdentityLink.findUnique({
+        where: { clientRef },
+        select: { clientId: true },
+      });
+      assert.equal(mapping, null, "TEST #7 mapping must not be created");
+
+      const apptCount = await prisma.appointment.count({
+        where: { masterId: fixture.masterId },
+      });
+      assert.equal(apptCount, 0, "TEST #7 appointment must not be created");
+
+      record("clientref-bootstrap-multi-exact-fail", "PASSED");
+    }
+
+    // --- TEST #8: unmapped clientRef must NOT bootstrap via phone suffix/fuzzy matching ---
+    {
+      await cleanMasterState();
+
+      const clientRef = randomUUID();
+      const requestPhone = nextFixturePhone(fixture.runId, 23);
+      const requestNormalized = normalizePhone(requestPhone);
+      assert.ok(requestNormalized);
+
+      const suffix = requestNormalized.slice(-10);
+      const existingNormalizedCandidate = `9${suffix}`;
+      const existingNormalized =
+        existingNormalizedCandidate === requestNormalized
+          ? `8${suffix}`
+          : existingNormalizedCandidate;
+
+      const existing = await prisma.client.create({
+        data: {
+          fullName: fixtureClientName(fixture.runId, "BootstrapSuffixClient"),
+          phone: `+${existingNormalized}`,
+          normalizedPhone: existingNormalized,
+          status: "NEW",
+        },
+      });
+
+      const key = randomUUID();
+      trackedKeys.push(key);
+
+      const result = await createBotConfirmedBooking({
+        idempotencyKey: key,
+        slotId: fixture.slotId,
+        clientName: fixtureClientName(fixture.runId, "BootstrapReqSuffixNoFuzzy"),
+        phone: requestPhone,
+        clientRef,
+        personalDataConsent: true,
+        offerAcknowledgement: true,
+      });
+
+      assert.equal(result.ok, true, "TEST #8 succeeds (0 exact matches => create new Client)");
+      if (result.ok) {
+        const mapping = await prisma.botClientIdentityLink.findUnique({
+          where: { clientRef },
+          select: { clientId: true },
+        });
+        assert.ok(mapping?.clientId);
+        assert.notEqual(mapping!.clientId, existing.id, "must not bind to suffix-match legacy client");
+
+        const createdClient = await prisma.client.findUnique({
+          where: { id: mapping!.clientId },
+          select: { normalizedPhone: true },
+        });
+        assert.equal(createdClient?.normalizedPhone, requestNormalized);
+      }
+
+      record("clientref-bootstrap-no-suffix-fuzzy", "PASSED");
+    }
+
+    // --- TEST #9: concurrent first-use of same clientRef => no split mappings / no duplicate Clients ---
+    {
+      await cleanMasterState();
+
+      const clientRef = randomUUID();
+      const phone = nextFixturePhone(fixture.runId, 24);
+      const normalized = normalizePhone(phone);
+      assert.ok(normalized);
+
+      const before = await prisma.client.count({
+        where: { normalizedPhone: normalized },
+      });
+      assert.equal(before, 0, "TEST #9 starts with 0 clients for normalizedPhone");
+
+      const key1 = randomUUID();
+      const key2 = randomUUID();
+      trackedKeys.push(key1, key2);
+
+      const barrier = createCountdownBarrier(2);
+      setBotBookingCreateTestHooks({
+        beforeClientResolve: () => barrier.wait(),
+      });
+
+      try {
+        const [r1, r2] = await Promise.all([
+          createBotConfirmedBooking({
+            idempotencyKey: key1,
+            slotId: fixture.slotId,
+            clientName: fixtureClientName(fixture.runId, "ConcurrentFirstUseA"),
+            phone,
+            clientRef,
+            personalDataConsent: true,
+            offerAcknowledgement: true,
+          }),
+          createBotConfirmedBooking({
+            idempotencyKey: key2,
+            slotId: nonConflictingSlotId,
+            clientName: fixtureClientName(fixture.runId, "ConcurrentFirstUseB"),
+            phone,
+            clientRef,
+            personalDataConsent: true,
+            offerAcknowledgement: true,
+          }),
+        ]);
+
+        assert.equal(r1.ok, true, "TEST #9 booking A ok");
+        assert.equal(r2.ok, true, "TEST #9 booking B ok");
+
+        const mapping = await prisma.botClientIdentityLink.findUnique({
+          where: { clientRef },
+          select: { clientId: true },
+        });
+        assert.ok(mapping?.clientId);
+
+        const clients = await prisma.client.findMany({
+          where: { normalizedPhone: normalized },
+          select: { id: true },
+        });
+        assert.equal(clients.length, 1, "TEST #9 created exactly one Client");
+        assert.equal(clients[0]!.id, mapping!.clientId);
+
+        const appt1 = await prisma.appointment.findUnique({
+          where: { id: (r1 as any).body.bookingId },
+          select: { clientId: true },
+        });
+        const appt2 = await prisma.appointment.findUnique({
+          where: { id: (r2 as any).body.bookingId },
+          select: { clientId: true },
+        });
+        assert.equal(appt1?.clientId, mapping!.clientId);
+        assert.equal(appt2?.clientId, mapping!.clientId);
+
+        record("clientref-concurrent-first-use-safe", "PASSED");
+      } finally {
+        clearBotBookingCreateTestHooks();
+        barrier.cancel();
+      }
+    }
+
+    // --- TEST #10: conflicting concurrent mapping attempts must fail closed (unique clientRef conflict) ---
+    {
+      await cleanMasterState();
+
+      const clientRef = randomUUID();
+      const phoneA = nextFixturePhone(fixture.runId, 25);
+      let phoneB = nextFixturePhone(fixture.runId, 26);
+      let normalizedA = normalizePhone(phoneA);
+      let normalizedB = normalizePhone(phoneB);
+      assert.ok(normalizedA && normalizedB);
+      if (normalizedA === normalizedB) {
+        phoneB = nextFixturePhone(fixture.runId, 27);
+        normalizedB = normalizePhone(phoneB);
+        assert.ok(normalizedB);
+      }
+      assert.notEqual(normalizedA, normalizedB);
+
+      const clientA = await prisma.client.create({
+        data: {
+          fullName: fixtureClientName(fixture.runId, "ConflictClientA"),
+          phone: phoneA,
+          normalizedPhone: normalizedA,
+          status: "NEW",
+        },
+      });
+      const clientB = await prisma.client.create({
+        data: {
+          fullName: fixtureClientName(fixture.runId, "ConflictClientB"),
+          phone: phoneB,
+          normalizedPhone: normalizedB,
+          status: "NEW",
+        },
+      });
+
+      const key1 = randomUUID();
+      const key2 = randomUUID();
+      trackedKeys.push(key1, key2);
+
+      const barrier = createCountdownBarrier(2);
+      setBotBookingCreateTestHooks({
+        beforeClientResolve: () => barrier.wait(),
+      });
+
+      try {
+        const [r1, r2] = await Promise.all([
+          createBotConfirmedBooking({
+            idempotencyKey: key1,
+            slotId: fixture.slotId,
+            clientName: fixtureClientName(fixture.runId, "ConflictReqA"),
+            phone: phoneA,
+            clientRef,
+            personalDataConsent: true,
+            offerAcknowledgement: true,
+          }),
+          createBotConfirmedBooking({
+            idempotencyKey: key2,
+            slotId: nonConflictingSlotId,
+            clientName: fixtureClientName(fixture.runId, "ConflictReqB"),
+            phone: phoneB,
+            clientRef,
+            personalDataConsent: true,
+            offerAcknowledgement: true,
+          }),
+        ]);
+
+        const success = [r1, r2].filter((r) => r.ok);
+        const failures = [r1, r2].filter((r) => !r.ok);
+        assert.ok(success.length >= 1, "TEST #10 must create mapping and allow at least one booking");
+        if (failures.length === 1) {
+          assert.equal(failures[0].code, "INTERNAL_ERROR");
+        }
+
+        const mapping = await prisma.botClientIdentityLink.findUnique({
+          where: { clientRef },
+          select: { clientId: true },
+        });
+        assert.ok(mapping?.clientId);
+
+        assert.equal(
+          mapping!.clientId === clientA.id || mapping!.clientId === clientB.id,
+          true,
+          "TEST #10 mapping must point to one of the exact-phone Clients",
+        );
+
+        for (const row of success) {
+          const appt = await prisma.appointment.findUnique({
+            where: { id: (row as any).body.bookingId },
+            select: { clientId: true },
+          });
+          assert.equal(appt?.clientId, mapping!.clientId);
+        }
+
+        const mappedClient = await prisma.client.findUnique({
+          where: { id: mapping!.clientId },
+          select: { normalizedPhone: true },
+        });
+
+        assert.equal(
+          mappedClient?.normalizedPhone === normalizedA ||
+            mappedClient?.normalizedPhone === normalizedB,
+          true,
+        );
+
+        const countA = await prisma.client.count({
+          where: { normalizedPhone: normalizedA },
+        });
+        const countB = await prisma.client.count({
+          where: { normalizedPhone: normalizedB },
+        });
+        assert.equal(countA, 1, "TEST #10 must not create extra Clients for phoneA");
+        assert.equal(countB, 1, "TEST #10 must not create extra Clients for phoneB");
+
+        record("clientref-concurrent-conflict-fail", "PASSED");
+      } finally {
+        clearBotBookingCreateTestHooks();
+        barrier.cancel();
+      }
+    }
+
+    // --- TEST #11: merged Client mapping resolves safely to surviving Client ---
+    {
+      await cleanMasterState();
+
+      const clientRef = randomUUID();
+      const phoneTarget = nextFixturePhone(fixture.runId, 27);
+      const phoneSource = nextFixturePhone(fixture.runId, 28);
+      const normalizedTarget = normalizePhone(phoneTarget);
+      const normalizedSource = normalizePhone(phoneSource);
+      assert.ok(normalizedTarget && normalizedSource);
+
+      const target = await prisma.client.create({
+        data: {
+          fullName: fixtureClientName(fixture.runId, "MergedTarget"),
+          phone: phoneTarget,
+          normalizedPhone: normalizedTarget,
+          status: "NEW",
+          isArchived: false,
+        },
+      });
+
+      const source = await prisma.client.create({
+        data: {
+          fullName: fixtureClientName(fixture.runId, "MergedSource"),
+          phone: phoneSource,
+          normalizedPhone: normalizedSource,
+          status: "NEW",
+          isArchived: false,
+        },
+      });
+
+      // Simulate existing canonical Client merge semantics.
+      await prisma.client.update({
+        where: { id: source.id },
+        data: {
+          mergedIntoClientId: target.id,
+          mergedAt: new Date(),
+          isArchived: true,
+        },
+      });
+
+      await prisma.botClientIdentityLink.create({
+        data: { clientRef, clientId: source.id },
+      });
+
+      const key = randomUUID();
+      trackedKeys.push(key);
+
+      const result = await createBotConfirmedBooking({
+        idempotencyKey: key,
+        slotId: fixture.slotId,
+        clientName: fixtureClientName(fixture.runId, "MergedMappingReq"),
+        phone: phoneTarget, // phone input must not matter while clientRef is mapped
+        clientRef,
+        personalDataConsent: true,
+        offerAcknowledgement: true,
+      });
+
+      assert.equal(result.ok, true, "TEST #11 succeeds");
+      if (result.ok) {
+        const appt = await prisma.appointment.findUnique({
+          where: { id: result.body.bookingId },
+          select: { clientId: true },
+        });
+        assert.equal(appt?.clientId, target.id);
+      }
+
+      record("clientref-merged-resolution-safe", "PASSED");
+    }
+
+    // --- TEST #12: same clientRef concurrent first-use with DIFFERENT phones (no initial clients) ---
+    {
+      await cleanMasterState();
+
+      const clientRef = randomUUID();
+      const phoneA = nextFixturePhone(fixture.runId, 29);
+      let phoneB = nextFixturePhone(fixture.runId, 30);
+      let normalizedA = normalizePhone(phoneA);
+      let normalizedB = normalizePhone(phoneB);
+      assert.ok(normalizedA && normalizedB);
+      if (normalizedA === normalizedB) {
+        phoneB = nextFixturePhone(fixture.runId, 32);
+        normalizedB = normalizePhone(phoneB);
+        assert.ok(normalizedB);
+      }
+      assert.notEqual(normalizedA, normalizedB);
+
+      const beforeA = await prisma.client.count({
+        where: { normalizedPhone: normalizedA },
+      });
+      const beforeB = await prisma.client.count({
+        where: { normalizedPhone: normalizedB },
+      });
+      assert.equal(beforeA, 0, "TEST #12 starts with 0 clients for phoneA");
+      assert.equal(beforeB, 0, "TEST #12 starts with 0 clients for phoneB");
+
+      const key1 = randomUUID();
+      const key2 = randomUUID();
+      trackedKeys.push(key1, key2);
+
+      const barrier = createCountdownBarrier(2);
+      setBotBookingCreateTestHooks({
+        beforeClientResolve: () => barrier.wait(),
+      });
+
+      try {
+        const [r1, r2] = await Promise.all([
+          createBotConfirmedBooking({
+            idempotencyKey: key1,
+            slotId: fixture.slotId,
+            clientName: fixtureClientName(fixture.runId, "FirstUseDiffPhoneA"),
+            phone: phoneA,
+            clientRef,
+            personalDataConsent: true,
+            offerAcknowledgement: true,
+          }),
+          createBotConfirmedBooking({
+            idempotencyKey: key2,
+            slotId: nonConflictingSlotId,
+            clientName: fixtureClientName(fixture.runId, "FirstUseDiffPhoneB"),
+            phone: phoneB,
+            clientRef,
+            personalDataConsent: true,
+            offerAcknowledgement: true,
+          }),
+        ]);
+
+        const success = [r1, r2].filter((r) => r.ok);
+        const failures = [r1, r2].filter((r) => !r.ok);
+
+        assert.ok(success.length >= 1, "TEST #12 expects at least one booking success");
+        if (failures.length === 1) {
+          assert.equal(failures[0].code, "INTERNAL_ERROR");
+        }
+
+        const mapping = await prisma.botClientIdentityLink.findUnique({
+          where: { clientRef },
+          select: { clientId: true },
+        });
+        assert.ok(mapping?.clientId, "TEST #12 mapping must exist");
+
+        const mappedClient = await prisma.client.findUnique({
+          where: { id: mapping!.clientId },
+          select: { normalizedPhone: true },
+        });
+        assert.ok(
+          mappedClient?.normalizedPhone === normalizedA ||
+            mappedClient?.normalizedPhone === normalizedB,
+        );
+
+        const countA = await prisma.client.count({
+          where: { normalizedPhone: normalizedA },
+        });
+        const countB = await prisma.client.count({
+          where: { normalizedPhone: normalizedB },
+        });
+
+        assert.equal(
+          countA + countB,
+          1,
+          "TEST #12 must not create duplicate/orphan Clients for competing phones",
+        );
+
+        for (const row of success) {
+          const appt = await prisma.appointment.findUnique({
+            where: { id: (row as any).body.bookingId },
+            select: { clientId: true },
+          });
+          assert.equal(appt?.clientId, mapping!.clientId);
+        }
+
+        record("clientref-concurrent-different-phone-firstuse-safe", "PASSED");
+      } finally {
+        clearBotBookingCreateTestHooks();
+        barrier.cancel();
+      }
+    }
+
+    // --- TEST #13: different clientRefs concurrent first-use with SAME phone (no duplicate Clients) ---
+    {
+      await cleanMasterState();
+
+      const phone = nextFixturePhone(fixture.runId, 31);
+      const normalized = normalizePhone(phone);
+      assert.ok(normalized);
+
+      const before = await prisma.client.count({
+        where: { normalizedPhone: normalized },
+      });
+      assert.equal(before, 0, "TEST #13 starts with 0 Clients for normalizedPhone");
+
+      const clientRef1 = randomUUID();
+      const clientRef2 = randomUUID();
+
+      const key1 = randomUUID();
+      const key2 = randomUUID();
+      trackedKeys.push(key1, key2);
+
+      const barrier = createCountdownBarrier(2);
+      setBotBookingCreateTestHooks({
+        beforeClientResolve: () => barrier.wait(),
+      });
+
+      try {
+        const [r1, r2] = await Promise.all([
+          createBotConfirmedBooking({
+            idempotencyKey: key1,
+            slotId: fixture.slotId,
+            clientName: fixtureClientName(fixture.runId, "DiffRefSamePhoneA"),
+            phone,
+            clientRef: clientRef1,
+            personalDataConsent: true,
+            offerAcknowledgement: true,
+          }),
+          createBotConfirmedBooking({
+            idempotencyKey: key2,
+            slotId: nonConflictingSlotId,
+            clientName: fixtureClientName(fixture.runId, "DiffRefSamePhoneB"),
+            phone,
+            clientRef: clientRef2,
+            personalDataConsent: true,
+            offerAcknowledgement: true,
+          }),
+        ]);
+
+        assert.equal(r1.ok, true, "TEST #13 booking A ok");
+        assert.equal(r2.ok, true, "TEST #13 booking B ok");
+
+        const clients = await prisma.client.findMany({
+          where: { normalizedPhone: normalized },
+          select: { id: true },
+        });
+        assert.equal(clients.length, 1, "TEST #13 exactly one Client created");
+
+        const mapping1 = await prisma.botClientIdentityLink.findUnique({
+          where: { clientRef: clientRef1 },
+          select: { clientId: true },
+        });
+        const mapping2 = await prisma.botClientIdentityLink.findUnique({
+          where: { clientRef: clientRef2 },
+          select: { clientId: true },
+        });
+
+        assert.ok(mapping1?.clientId);
+        assert.ok(mapping2?.clientId);
+        assert.equal(mapping1!.clientId, clients[0]!.id);
+        assert.equal(mapping2!.clientId, clients[0]!.id);
+
+        const appt1 = await prisma.appointment.findUnique({
+          where: { id: (r1 as any).body.bookingId },
+          select: { clientId: true },
+        });
+        const appt2 = await prisma.appointment.findUnique({
+          where: { id: (r2 as any).body.bookingId },
+          select: { clientId: true },
+        });
+
+        assert.equal(appt1?.clientId, clients[0]!.id);
+        assert.equal(appt2?.clientId, clients[0]!.id);
+
+        record("clientref-different-refs-same-phone-safe", "PASSED");
+      } finally {
+        clearBotBookingCreateTestHooks();
+        barrier.cancel();
+      }
     }
 
     // --- Rotation: claim-level fingerprint match across previous secret ---

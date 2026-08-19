@@ -4,6 +4,7 @@
  */
 import "server-only";
 
+import { Prisma } from "@prisma/client";
 import type { Prisma as PrismaNs } from "@prisma/client";
 import {
   BotIdempotencyHmacConfigError,
@@ -235,6 +236,84 @@ function addMinutesToTime(
 
 async function resolveBotClientId(
   tx: PrismaNs.TransactionClient,
+  input: { fullName: string; phone: string; clientRef?: string },
+): Promise<string> {
+  if (input.clientRef) {
+    return resolveBotClientIdByClientRef(tx, {
+      fullName: input.fullName,
+      phone: input.phone,
+      clientRef: input.clientRef,
+    });
+  }
+  return resolveBotClientIdByLegacyPhone(tx, input);
+}
+
+function failClosedBotClientRefConsistency(): never {
+  throw new BotBookingCreateError(
+    "INTERNAL_ERROR",
+    fixedErrorMessage("INTERNAL_ERROR"),
+    { retryable: false, finalForIdempotency: true },
+  );
+}
+
+async function resolveCanonicalClientIdForIdentityLink(
+  tx: PrismaNs.TransactionClient,
+  linkedClientId: string,
+): Promise<string> {
+  const linked = await tx.client.findUnique({
+    where: { id: linkedClientId },
+    select: { id: true, mergedIntoClientId: true, isArchived: true },
+  });
+
+  if (!linked) {
+    failClosedBotClientRefConsistency();
+  }
+
+  if (linked.mergedIntoClientId) {
+    const target = await tx.client.findUnique({
+      where: { id: linked.mergedIntoClientId },
+      select: { id: true, mergedIntoClientId: true, isArchived: true },
+    });
+    if (!target || target.isArchived || target.mergedIntoClientId) {
+      failClosedBotClientRefConsistency();
+    }
+    return target.id;
+  }
+
+  if (linked.isArchived) {
+    failClosedBotClientRefConsistency();
+  }
+
+  return linked.id;
+}
+
+async function assertCanonicalClientPhoneMatchesForBootstrap(
+  tx: PrismaNs.TransactionClient,
+  canonicalClientId: string,
+  normalizedPhone: string,
+): Promise<void> {
+  const canonical = await tx.client.findUnique({
+    where: { id: canonicalClientId },
+    select: {
+      id: true,
+      normalizedPhone: true,
+      mergedIntoClientId: true,
+      isArchived: true,
+    },
+  });
+
+  if (
+    !canonical ||
+    canonical.isArchived ||
+    canonical.mergedIntoClientId ||
+    canonical.normalizedPhone !== normalizedPhone
+  ) {
+    failClosedBotClientRefConsistency();
+  }
+}
+
+async function resolveBotClientIdByLegacyPhone(
+  tx: PrismaNs.TransactionClient,
   input: { fullName: string; phone: string },
 ): Promise<string> {
   const matchKey = resolveClientPhoneMatchKey(input.phone);
@@ -302,6 +381,157 @@ async function resolveBotClientId(
   );
 
   return created.id;
+}
+
+async function resolveBotClientIdByClientRef(
+  tx: PrismaNs.TransactionClient,
+  input: { fullName: string; phone: string; clientRef: string },
+): Promise<string> {
+  const normalizedPhone = normalizePhone(input.phone);
+  if (!normalizedPhone) {
+    throw new BotBookingCreateError(
+      "VALIDATION_ERROR",
+      fixedErrorMessage("VALIDATION_ERROR"),
+      { finalForIdempotency: true },
+    );
+  }
+
+  // 1) Exact clientRef mapping is authoritative.
+  const mapped = await tx.botClientIdentityLink.findUnique({
+    where: { clientRef: input.clientRef },
+    select: { clientId: true },
+  });
+
+  if (mapped) {
+    return resolveCanonicalClientIdForIdentityLink(tx, mapped.clientId);
+  }
+
+  // 3) One-time bootstrap only, inside this protected tx.
+  await getBotBookingCreateTestHooks().beforeClientResolve?.();
+
+  // Deterministic locking order prevents split identity races:
+  // always lock clientRef first, then normalizedPhone.
+  await tx.$executeRaw`
+    SELECT pg_advisory_xact_lock(hashtext(${input.clientRef}))
+  `;
+  await tx.$executeRaw`
+    SELECT pg_advisory_xact_lock(hashtext(${normalizedPhone}))
+  `;
+
+  // If another waiter already claimed this clientRef, resolve to it deterministically.
+  const afterLockMapped = await tx.botClientIdentityLink.findUnique({
+    where: { clientRef: input.clientRef },
+    select: { clientId: true },
+  });
+
+  if (afterLockMapped) {
+    const canonicalId = await resolveCanonicalClientIdForIdentityLink(
+      tx,
+      afterLockMapped.clientId,
+    );
+    await assertCanonicalClientPhoneMatchesForBootstrap(
+      tx,
+      canonicalId,
+      normalizedPhone,
+    );
+    return canonicalId;
+  }
+
+  const matches = await tx.client.findMany({
+    where: {
+      isArchived: false,
+      mergedIntoClientId: null,
+      normalizedPhone,
+    },
+    select: { id: true },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  if (matches.length > 1) {
+    throw new BotBookingCreateError(
+      "CLIENT_AMBIGUOUS",
+      fixedErrorMessage("CLIENT_AMBIGUOUS"),
+      { finalForIdempotency: true },
+    );
+  }
+
+  if (matches.length === 1) {
+    try {
+      await tx.botClientIdentityLink.create({
+        data: { clientRef: input.clientRef, clientId: matches[0]!.id },
+      });
+      return resolveCanonicalClientIdForIdentityLink(tx, matches[0]!.id);
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        const existing = await tx.botClientIdentityLink.findUnique({
+          where: { clientRef: input.clientRef },
+          select: { clientId: true },
+        });
+        if (!existing) {
+          failClosedBotClientRefConsistency();
+        }
+
+        const canonicalId = await resolveCanonicalClientIdForIdentityLink(
+          tx,
+          existing.clientId,
+        );
+        await assertCanonicalClientPhoneMatchesForBootstrap(
+          tx,
+          canonicalId,
+          normalizedPhone,
+        );
+        return canonicalId;
+      }
+      throw error;
+    }
+  }
+
+  await getBotBookingCreateTestHooks().beforeZeroClientCreate?.();
+
+  const created = await createClientFromLead(
+    {
+      fullName: input.fullName,
+      phone: input.phone,
+      source: "unknown",
+      tags: ["бот-запись"],
+    },
+    tx,
+  );
+
+  try {
+    await tx.botClientIdentityLink.create({
+      data: { clientRef: input.clientRef, clientId: created.id },
+    });
+    return resolveCanonicalClientIdForIdentityLink(tx, created.id);
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      const existing = await tx.botClientIdentityLink.findUnique({
+        where: { clientRef: input.clientRef },
+        select: { clientId: true },
+      });
+      if (!existing) {
+        failClosedBotClientRefConsistency();
+      }
+
+      const canonicalId = await resolveCanonicalClientIdForIdentityLink(
+        tx,
+        existing.clientId,
+      );
+      await assertCanonicalClientPhoneMatchesForBootstrap(
+        tx,
+        canonicalId,
+        normalizedPhone,
+      );
+      return canonicalId;
+    }
+    throw error;
+  }
 }
 
 export type CreateBotConfirmedBookingResult =
@@ -374,6 +604,9 @@ export async function createBotConfirmedBooking(
       slotId: request.slotId,
       clientName: request.clientName,
       phone: request.phone,
+      ...(request.clientRef !== undefined
+        ? { clientRef: request.clientRef }
+        : {}),
       personalDataConsent: request.personalDataConsent,
       offerAcknowledgement: request.offerAcknowledgement,
     });
@@ -557,6 +790,7 @@ export async function createBotConfirmedBooking(
       const clientId = await resolveBotClientId(tx, {
         fullName: request.clientName,
         phone: request.phone,
+        clientRef: request.clientRef,
       });
 
       getBotBookingCreateTestHooks().afterClientResolve?.();
