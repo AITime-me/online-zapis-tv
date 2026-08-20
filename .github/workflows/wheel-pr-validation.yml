@@ -4,8 +4,10 @@ on:
   pull_request:
     branches:
       - main
+      - production/wheel-conversion-hardening
     paths:
       - ".github/workflows/wheel-pr-validation.yml"
+      - "Dockerfile"
       - "package.json"
       - "package-lock.json"
       - "next.config.*"
@@ -47,10 +49,10 @@ jobs:
       - name: Checkout PR branch
         uses: actions/checkout@v4
 
-      - name: Set up Node.js 20
+      - name: Set up Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
 
       - name: Install dependencies
