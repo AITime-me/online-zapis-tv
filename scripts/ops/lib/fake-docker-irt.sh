@@ -109,6 +109,13 @@ case "$cmd" in
       exit 1
     fi
     joined="$*"
+    if [[ "$MODE" == "proof-prisma-command" ]]; then
+      if [[ "$joined" != *"--network container:"* || "$joined" != *"--read-only"* || "$joined" != *"--tmpfs /tmp:rw,noexec,nosuid,size=64m"* || "$joined" != *"type=bind,"*"dst=/app/prisma,readonly"* || ( "$joined" != *" /app/node_modules/.bin/prisma migrate deploy"* && "$joined" != *" /app/node_modules/.bin/prisma migrate status"* ) ]]; then
+        echo "invalid proof prisma command" >&2
+        exit 94
+      fi
+      exit 0
+    fi
     if [[ "$joined" == *"--publish"* || "$joined" == *" -p "* ]]; then
       echo "unsafe publish" >&2
       exit 99

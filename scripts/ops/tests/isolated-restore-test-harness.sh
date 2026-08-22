@@ -1401,6 +1401,33 @@ EOF
     && ok "offline_runner_readonly_source_mount" || bad "offline_runner_readonly_source_mount" "mount missing"
 }
 
+scenario_proof_prisma_cli_invocation() {
+  setup_case proof-prisma-command
+  local image="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  if grep -Fq '"$IRT_PROOF_IMAGE" /app/node_modules/.bin/prisma migrate "${command#migrate }"' "$SCRIPT" \
+    && ! grep -Fq '"$IRT_PROOF_IMAGE" migrate "${command#migrate }"' "$SCRIPT"; then
+    ok "proof_prisma_local_cli_source"
+  else
+    bad "proof_prisma_local_cli_source" "host invocation is not explicit local Prisma CLI"
+  fi
+  set +e
+  "$BIN/docker" run --rm \
+    --network "container:abcdef0123456789" \
+    --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+    --mount "type=bind,src=${CASE_DIR}/prisma,dst=/app/prisma,readonly" \
+    -e 'DATABASE_URL=postgresql://postgres:proof@127.0.0.1:5432/restore_test' \
+    "$image" /app/node_modules/.bin/prisma migrate deploy
+  local rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]] && grep -Fq \
+    "run --rm --network container:abcdef0123456789 --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m --mount type=bind,src=${CASE_DIR}/prisma,dst=/app/prisma,readonly -e DATABASE_URL=postgresql://postgres:proof@127.0.0.1:5432/restore_test ${image} /app/node_modules/.bin/prisma migrate deploy" \
+    "${STATE}/docker.log"; then
+    ok "proof_prisma_fake_docker_explicit_cli"
+  else
+    bad "proof_prisma_fake_docker_explicit_cli" "explicit Prisma CLI command not received"
+  fi
+}
+
 # notready with override: patch common via env if we add it
 ensure_ready_timeout_override() {
   # Inject by exporting — add to common if missing
@@ -1438,6 +1465,7 @@ main() {
   scenario_reaper
   scenario_forbidden_mutate
   scenario_offline_runner_contract
+  scenario_proof_prisma_cli_invocation
 
   echo "=== summary PASS=${PASS} FAIL=${FAIL} SKIP=${SKIP} ==="
   if [[ "$FAIL" -gt 0 ]]; then

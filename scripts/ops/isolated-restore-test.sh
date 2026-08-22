@@ -937,7 +937,7 @@ irt_proof_prisma() {
     --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
     --mount "type=bind,src=${IRT_PROOF_SOURCE_DIR}/prisma,dst=/app/prisma,readonly" \
     -e "DATABASE_URL=${database_url}" \
-    "$IRT_PROOF_IMAGE" migrate "${command#migrate }"
+    "$IRT_PROOF_IMAGE" /app/node_modules/.bin/prisma migrate "${command#migrate }"
   local rc=$?
   set -e
   trap on_err ERR
