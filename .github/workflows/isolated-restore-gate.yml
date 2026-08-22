@@ -1,0 +1,48 @@
+name: Isolated Restore Gate
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/isolated-restore-gate.yml"
+      - "scripts/ops/isolated-restore-test.sh"
+      - "scripts/ops/lib/isolated-restore-test-common.sh"
+      - "scripts/ops/lib/isolated-restore-test-policy.sh"
+      - "scripts/ops/install-isolated-restore-test.sh"
+      - "scripts/ops/tests/isolated-restore-test-harness.sh"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: isolated-restore-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  isolated-restore-gate:
+    name: Isolated restore behavioral gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Shell syntax
+        shell: bash
+        run: |
+          bash -n scripts/ops/isolated-restore-test.sh
+          bash -n scripts/ops/lib/isolated-restore-test-common.sh
+          bash -n scripts/ops/lib/isolated-restore-test-policy.sh
+          bash -n scripts/ops/install-isolated-restore-test.sh
+          bash -n scripts/ops/tests/isolated-restore-test-harness.sh
+
+      - name: Diff whitespace check
+        shell: bash
+        run: git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
+
+      - name: Existing behavioral harness
+        shell: bash
+        run: bash scripts/ops/tests/isolated-restore-test-harness.sh
