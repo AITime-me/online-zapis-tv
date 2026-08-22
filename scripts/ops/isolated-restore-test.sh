@@ -18,6 +18,8 @@ IRT_ENV_ARG=""
 IRT_DUMP_ARG=""
 IRT_CIDFILE_ARG=""
 IRT_RUN_ID_ARG=""
+IRT_MIGRATION_PROOF=0
+IRT_TARGET_REV_ARG=""
 
 IRT_STARTED_EPOCH=0
 IRT_FINISHED_EPOCH=0
@@ -62,6 +64,12 @@ IRT_DUMP_MTIME_EPOCH=0
 IRT_WAIT_PID=""
 # Set only by parent INT/TERM trap — never inferred from child exit status alone.
 IRT_SIGNAL_RECEIVED=0
+IRT_PROOF_SOURCE_DIR=""
+IRT_PROOF_IMAGE=""
+IRT_PROOF_20260806="not_run"
+IRT_PROOF_20260807="not_run"
+IRT_PROOF_20260819="not_run"
+IRT_PROOF_FINAL_STATUS="not_run"
 
 usage() {
   cat <<'EOF'
@@ -80,6 +88,8 @@ Options:
   --dry-run             Validate inputs and print plan only
   --emergency-cleanup   Post-stop / SIGKILL recovery via cidfile + labels
   --reap-orphans        Remove only labeled stopped orphans older than TTL
+  --migration-proof     Restore, then prove the approved Prisma migrations in order
+  --target-revision SHA Exact Git revision used only to build the disposable proof runner
   --cidfile PATH        cidfile for emergency-cleanup
   --run-id ID           Expected run-id label for emergency-cleanup
   --help                Show help
@@ -130,6 +140,14 @@ parse_args() {
         ;;
       --reap-orphans)
         IRT_MODE="reap-orphans"
+        ;;
+      --migration-proof)
+        IRT_MIGRATION_PROOF=1
+        ;;
+      --target-revision)
+        shift
+        [[ $# -gt 0 ]] || irt_die "--target-revision requires a value"
+        IRT_TARGET_REV_ARG="$1"
         ;;
       --cidfile)
         shift
@@ -847,6 +865,137 @@ run_integrity_checks() {
   IRT_INTEGRITY_OK=1
 }
 
+# --- optional migration proof ----------------------------------------------
+# This mode is deliberately part of the existing restore contour: it uses the
+# same disposable PostgreSQL container, its network namespace (which is
+# --network none), snapshot, lock, evidence and finalizer.  It never addresses
+# a production database or executes ad-hoc SQL mutations.
+
+irt_proof_require_target_revision() {
+  [[ "$IRT_TARGET_REV_ARG" =~ ^[a-f0-9]{40}$ ]] || fail 70 "PROOF_TARGET_REVISION_INVALID"
+  IRT_TARGET_REV_ARG="$(git -C "$IRT_CHECKOUT" rev-parse --verify "${IRT_TARGET_REV_ARG}^{commit}" 2>/dev/null || true)"
+  [[ "$IRT_TARGET_REV_ARG" =~ ^[a-f0-9]{40}$ ]] || fail 70 "PROOF_TARGET_REVISION_UNKNOWN"
+}
+
+irt_proof_prepare_source() {
+  IRT_PHASE="proof_source"
+  IRT_PROOF_SOURCE_DIR="${IRT_RUN_DIR}/proof-source"
+  rm -rf -- "$IRT_PROOF_SOURCE_DIR"
+  mkdir -p "$IRT_PROOF_SOURCE_DIR"
+  git -C "$IRT_CHECKOUT" archive --format=tar "$IRT_TARGET_REV_ARG" | tar -x -C "$IRT_PROOF_SOURCE_DIR" || fail 70 "PROOF_SOURCE_ARCHIVE_FAILED"
+  [[ -f "${IRT_PROOF_SOURCE_DIR}/Dockerfile" && -d "${IRT_PROOF_SOURCE_DIR}/prisma/migrations" ]] \
+    || fail 70 "PROOF_SOURCE_INVALID"
+}
+
+irt_proof_prune_later_migrations() {
+  local stage="$1"
+  local migration
+  case "$stage" in
+    20260806120000_internal_bot_booking_create)
+      for migration in 20260807120000_master_command_api 20260819170000_bot_client_identity_link; do
+        rm -rf -- "${IRT_PROOF_SOURCE_DIR}/prisma/migrations/${migration}"
+      done
+      ;;
+    20260807120000_master_command_api)
+      rm -rf -- "${IRT_PROOF_SOURCE_DIR}/prisma/migrations/20260819170000_bot_client_identity_link"
+      ;;
+    20260819170000_bot_client_identity_link)
+      ;;
+    *) fail 70 "PROOF_STAGE_INVALID" ;;
+  esac
+}
+
+irt_proof_build_runner() {
+  IRT_PHASE="proof_build"
+  IRT_PROOF_IMAGE="oz-rt-proof-${IRT_ENV}-${IRT_RUN_ID}"
+  # No pulls and no build-network: a cold/missing cache is a safe failure.
+  irt_interruptible_run docker build --pull=false --network none --target migrator -t "$IRT_PROOF_IMAGE" "$IRT_PROOF_SOURCE_DIR" >/dev/null \
+    || fail 20 "PROOF_RUNNER_BUILD_FAILED"
+}
+
+irt_proof_database_url() {
+  printf 'postgresql://postgres:%s@127.0.0.1:5432/restore_test' "$IRT_TEMP_PASSWORD"
+}
+
+irt_proof_prisma() {
+  local command="$1"
+  local output_file="$2"
+  local database_url
+  database_url="$(irt_proof_database_url)"
+  IRT_PHASE="proof_${command// /_}"
+  trap - ERR
+  set +e
+  case "$command" in
+    'migrate deploy'|'migrate status') ;;
+    *) fail 70 "PROOF_PRISMA_COMMAND_INVALID" ;;
+  esac
+  irt_interruptible_capture_merged "$output_file" docker run --rm \
+    --network "container:${IRT_TEMP_CID}" \
+    --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+    -e "DATABASE_URL=${database_url}" \
+    "$IRT_PROOF_IMAGE" migrate "${command#migrate }"
+  local rc=$?
+  set -e
+  trap on_err ERR
+  irt_require_cmd_ok "$rc" 40 "PROOF_PRISMA_${command^^}_FAILED"
+}
+
+irt_proof_assert_sql() {
+  local assertion="$1"
+  IRT_PHASE="proof_schema_${assertion}"
+  local sql
+  case "$assertion" in
+    20260806)
+      sql="SELECT to_regclass('public.internal_bot_booking_operations') IS NOT NULL AND EXISTS (SELECT 1 FROM pg_type WHERE typname='InternalBotBookingOperationState')"
+      ;;
+    20260807)
+      sql="SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='schedule_blocks' AND column_name='origin' AND is_nullable='NO') AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='extra_work_windows' AND column_name='origin' AND is_nullable='NO') AND EXISTS (SELECT 1 FROM pg_type WHERE typname='ScheduleResourceOrigin')"
+      ;;
+    20260819)
+      sql="SELECT to_regclass('public.bot_client_identity_links') IS NOT NULL AND EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE table_schema='public' AND table_name='bot_client_identity_links' AND constraint_type='FOREIGN KEY')"
+      ;;
+    *) fail 70 "PROOF_SCHEMA_ASSERTION_INVALID" ;;
+  esac
+  local value
+  value="$(docker exec -e "PGPASSWORD=${IRT_TEMP_PASSWORD}" "$IRT_TEMP_CID" psql -U postgres -d restore_test -At -v ON_ERROR_STOP=1 -c "$sql" 2>/dev/null || true)"
+  [[ "$value" == "t" ]] || fail 40 "PROOF_SCHEMA_${assertion}_FAILED"
+}
+
+irt_proof_apply_stage() {
+  local migration="$1"
+  local short="$2"
+  local stage_result_var="$3"
+  local stage_dir="${IRT_RUN_DIR}/proof-${short}"
+  local deploy_out="${stage_dir}.deploy.log"
+  local status_out="${stage_dir}.status.log"
+
+  irt_proof_prepare_source
+  irt_proof_prune_later_migrations "$migration"
+  irt_proof_build_runner
+  irt_proof_prisma "migrate deploy" "$deploy_out"
+  irt_proof_prisma "migrate status" "$status_out"
+  irt_proof_assert_sql "$short"
+  printf -v "$stage_result_var" '%s' 'applied_and_asserted'
+  docker image rm -f "$IRT_PROOF_IMAGE" >/dev/null 2>&1 || true
+  IRT_PROOF_IMAGE=""
+  rm -rf -- "$IRT_PROOF_SOURCE_DIR"
+  IRT_PROOF_SOURCE_DIR=""
+}
+
+run_migration_proof() {
+  [[ "$IRT_MIGRATION_PROOF" -eq 1 ]] || return 0
+  irt_proof_require_target_revision
+  irt_proof_apply_stage 20260806120000_internal_bot_booking_create 20260806 IRT_PROOF_20260806
+  irt_proof_apply_stage 20260807120000_master_command_api 20260807 IRT_PROOF_20260807
+  irt_proof_apply_stage 20260819170000_bot_client_identity_link 20260819 IRT_PROOF_20260819
+  # The full target migration set must now be current; this is not inferred from
+  # the three stage checks.
+  irt_proof_prepare_source
+  irt_proof_build_runner
+  irt_proof_prisma "migrate status" "${IRT_RUN_DIR}/proof-final.status.log"
+  IRT_PROOF_FINAL_STATUS="up_to_date"
+}
+
 # --- cleanup ----------------------------------------------------------------
 
 # Remove known per-run temp files inside a validated runtime/<run-id> directory.
@@ -862,7 +1011,17 @@ irt_purge_run_dir_files() {
     "${run_dir}/schemas.count" \
     "${run_dir}/tables.count" \
     "${run_dir}/pg_restore.log" \
+    "${run_dir}/proof-20260806.deploy.log" \
+    "${run_dir}/proof-20260806.status.log" \
+    "${run_dir}/proof-20260807.deploy.log" \
+    "${run_dir}/proof-20260807.status.log" \
+    "${run_dir}/proof-20260819.deploy.log" \
+    "${run_dir}/proof-20260819.status.log" \
+    "${run_dir}/proof-final.status.log" \
     2>/dev/null || true
+  if [[ -d "${run_dir}/proof-source" ]]; then
+    rm -rf -- "${run_dir}/proof-source"
+  fi
   if [[ "$keep_cid" != "1" ]]; then
     rm -f -- "${run_dir}/container.cid" 2>/dev/null || true
   fi
@@ -946,6 +1105,11 @@ cleanup_temp_resources() {
   fi
 
   IRT_TEMP_PASSWORD=""
+
+  if [[ -n "${IRT_PROOF_IMAGE:-}" ]]; then
+    docker image rm -f "$IRT_PROOF_IMAGE" >/dev/null 2>&1 || true
+    IRT_PROOF_IMAGE=""
+  fi
 
   if [[ "$container_ok" -eq 1 && "$snapshot_ok" -eq 1 && "$marker_ok" -eq 1 && "$rundir_ok" -eq 1 ]]; then
     IRT_CLEANUP_OK=1
@@ -1083,6 +1247,12 @@ SQL_CONNECT_OK=${sql_ok}
 USER_SCHEMA_COUNT=${IRT_USER_SCHEMA_COUNT}
 USER_TABLE_COUNT=${IRT_USER_TABLE_COUNT}
 INTEGRITY_OK=${IRT_INTEGRITY_OK}
+MIGRATION_PROOF=${IRT_MIGRATION_PROOF}
+TARGET_REVISION=$(irt_escape_manifest_value "${IRT_TARGET_REV_ARG:-}")
+MIGRATION_20260806=$(irt_escape_manifest_value "$IRT_PROOF_20260806")
+MIGRATION_20260807=$(irt_escape_manifest_value "$IRT_PROOF_20260807")
+MIGRATION_20260819=$(irt_escape_manifest_value "$IRT_PROOF_20260819")
+FINAL_MIGRATION_STATUS=$(irt_escape_manifest_value "$IRT_PROOF_FINAL_STATUS")
 CLEANUP_OK=${IRT_CLEANUP_OK}
 TEMP_RESOURCES_ABSENT=${IRT_TEMP_ABSENT}
 SNAPSHOT_ABSENT=${IRT_SNAPSHOT_ABSENT}
@@ -1497,6 +1667,7 @@ run_test() {
   run_restore
   run_integrity_checks
   verify_snapshot_after_restore
+  run_migration_proof
   assert_forbidden_unchanged
 
   IRT_WORK_OK=1
@@ -1547,6 +1718,10 @@ main() {
       ;;
     run)
       irt_require_commands docker flock date stat
+      if [[ "$IRT_MIGRATION_PROOF" -eq 1 ]]; then
+        [[ "$IRT_DRY_RUN" -eq 0 ]] || irt_die "--migration-proof cannot be used with --dry-run"
+        irt_require_commands git tar
+      fi
       run_test
       ;;
     *)
