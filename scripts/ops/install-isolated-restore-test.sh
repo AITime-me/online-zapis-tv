@@ -121,15 +121,19 @@ apply_install() {
     "${IRT_INSTALL_LIB_DIR}/isolated-restore-test.sh"
   sudo cp -- "${root}/scripts/ops/lib/isolated-restore-test-common.sh" \
     "${IRT_INSTALL_LIB_DIR}/lib/isolated-restore-test-common.sh"
+  sudo cp -- "${root}/scripts/ops/lib/isolated-restore-test-offline-runner.sh" \
+    "${IRT_INSTALL_LIB_DIR}/lib/isolated-restore-test-offline-runner.sh"
   sudo cp -- "${root}/scripts/ops/lib/isolated-restore-test-policy.sh" \
     "${IRT_INSTALL_LIB_DIR}/lib/isolated-restore-test-policy.sh"
   sudo chown root:deploy \
     "${IRT_INSTALL_LIB_DIR}/isolated-restore-test.sh" \
     "${IRT_INSTALL_LIB_DIR}/lib/isolated-restore-test-common.sh" \
+    "${IRT_INSTALL_LIB_DIR}/lib/isolated-restore-test-offline-runner.sh" \
     "${IRT_INSTALL_LIB_DIR}/lib/isolated-restore-test-policy.sh"
   sudo chmod 0750 \
     "${IRT_INSTALL_LIB_DIR}/isolated-restore-test.sh" \
-    "${IRT_INSTALL_LIB_DIR}/lib/isolated-restore-test-common.sh"
+    "${IRT_INSTALL_LIB_DIR}/lib/isolated-restore-test-common.sh" \
+    "${IRT_INSTALL_LIB_DIR}/lib/isolated-restore-test-offline-runner.sh"
   # Policy is sourced by IHM + restore-test; keep non-executable, owner-readable.
   sudo chmod 0640 "${IRT_INSTALL_LIB_DIR}/lib/isolated-restore-test-policy.sh"
 

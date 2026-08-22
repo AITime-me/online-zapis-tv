@@ -6,6 +6,7 @@ on:
       - ".github/workflows/isolated-restore-gate.yml"
       - "scripts/ops/isolated-restore-test.sh"
       - "scripts/ops/lib/isolated-restore-test-common.sh"
+      - "scripts/ops/lib/isolated-restore-test-offline-runner.sh"
       - "scripts/ops/lib/isolated-restore-test-policy.sh"
       - "scripts/ops/install-isolated-restore-test.sh"
       - "scripts/ops/tests/isolated-restore-test-harness.sh"
@@ -35,6 +36,7 @@ jobs:
         run: |
           bash -n scripts/ops/isolated-restore-test.sh
           bash -n scripts/ops/lib/isolated-restore-test-common.sh
+          bash -n scripts/ops/lib/isolated-restore-test-offline-runner.sh
           bash -n scripts/ops/lib/isolated-restore-test-policy.sh
           bash -n scripts/ops/install-isolated-restore-test.sh
           bash -n scripts/ops/tests/isolated-restore-test-harness.sh

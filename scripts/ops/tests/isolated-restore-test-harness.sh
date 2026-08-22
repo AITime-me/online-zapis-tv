@@ -6,6 +6,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SCRIPT="${ROOT}/scripts/ops/isolated-restore-test.sh"
 FAKE_SRC="${ROOT}/scripts/ops/lib/fake-docker-irt.sh"
+OFFLINE_HELPER="${ROOT}/scripts/ops/lib/isolated-restore-test-offline-runner.sh"
 PASS=0
 FAIL=0
 SKIP=0
@@ -1295,6 +1296,65 @@ EOF
   export IRT_SKIP_FORBIDDEN_CHECK=1
 }
 
+scenario_offline_runner_contract() {
+  setup_case ok
+  local target="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" source artifact manifest archive docker_sha lock_sha archive_sha
+  source="${CASE_DIR}/proof-source"
+  artifact="${CASE_DIR}/offline-runner"
+  mkdir -p "$source" "$artifact"
+  printf 'FROM scratch\n' >"${source}/Dockerfile"
+  printf '{"lockfileVersion":3}\n' >"${source}/package-lock.json"
+  printf 'OCI-ARCHIVE-TEST\n' >"${artifact}/runner-${target}.oci.tar"
+  manifest="${artifact}/runner-${target}.manifest"
+  archive="${artifact}/runner-${target}.oci.tar"
+  docker_sha="$(sha256sum "$source/Dockerfile" | awk '{print $1}')"
+  lock_sha="$(sha256sum "$source/package-lock.json" | awk '{print $1}')"
+  archive_sha="$(sha256sum "$archive" | awk '{print $1}')"
+  cat >"$manifest" <<EOF
+TARGET_REVISION=${target}
+OCI_ARCHIVE_SHA256=${archive_sha}
+DOCKERFILE_SHA256=${docker_sha}
+PACKAGE_LOCK_SHA256=${lock_sha}
+IMAGE_ID=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+EOF
+  cat >"${BIN}/stat" <<EOF
+#!/usr/bin/env bash
+if [[ "\$*" == *"offline-runner"* && "\$*" == *"%U:%G:%a"* ]]; then echo root:deploy:640; else exec /usr/bin/stat "\$@"; fi
+EOF
+  chmod +x "${BIN}/stat"
+  IRT_TARGET_REV_ARG="$target"
+  IRT_PROOF_SOURCE_DIR="$source"
+  IRT_OFFLINE_RUNNER_ROOT="$artifact"
+  source "$OFFLINE_HELPER"
+  IRT_OFFLINE_RUNNER_ROOT="$artifact"
+  if irt_offline_runner_verify; then ok "offline_runner_valid"; else bad "offline_runner_valid" "$IRT_OFFLINE_RUNNER_ERROR"; fi
+  [[ "${IRT_PROOF_IMAGE:-}" == sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ]] \
+    && ok "offline_runner_image_pinned" || bad "offline_runner_image_pinned" "wrong image id"
+  if grep -Eq '(^| )build( |$)|(^| )pull( |$)' "${STATE}/docker.log"; then bad "offline_runner_no_build_pull" "build/pull invoked"; else ok "offline_runner_no_build_pull"; fi
+  rm -f -- "$manifest"
+  if ! irt_offline_runner_verify && [[ "$IRT_OFFLINE_RUNNER_ERROR" == "ARTIFACT_MISSING" ]]; then ok "offline_runner_missing"; else bad "offline_runner_missing" "$IRT_OFFLINE_RUNNER_ERROR"; fi
+  cat >"$manifest" <<EOF
+TARGET_REVISION=${target}
+OCI_ARCHIVE_SHA256=$(printf '0%.0s' {1..64})
+DOCKERFILE_SHA256=${docker_sha}
+PACKAGE_LOCK_SHA256=${lock_sha}
+IMAGE_ID=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+EOF
+  if ! irt_offline_runner_verify && [[ "$IRT_OFFLINE_RUNNER_ERROR" == "ARCHIVE_SHA256_MISMATCH" ]]; then ok "offline_runner_archive_sha"; else bad "offline_runner_archive_sha" "$IRT_OFFLINE_RUNNER_ERROR"; fi
+  sed -i "s/^TARGET_REVISION=.*/TARGET_REVISION=cccccccccccccccccccccccccccccccccccccccc/; s/^OCI_ARCHIVE_SHA256=.*/OCI_ARCHIVE_SHA256=${archive_sha}/" "$manifest"
+  if ! irt_offline_runner_verify && [[ "$IRT_OFFLINE_RUNNER_ERROR" == "TARGET_REVISION_MISMATCH" ]]; then ok "offline_runner_target_revision"; else bad "offline_runner_target_revision" "$IRT_OFFLINE_RUNNER_ERROR"; fi
+  sed -i "s/^TARGET_REVISION=.*/TARGET_REVISION=${target}/; s/^DOCKERFILE_SHA256=.*/DOCKERFILE_SHA256=$(printf 'd%.0s' {1..64})/" "$manifest"
+  if ! irt_offline_runner_verify && [[ "$IRT_OFFLINE_RUNNER_ERROR" == "DOCKERFILE_SHA256_MISMATCH" ]]; then ok "offline_runner_dockerfile_sha"; else bad "offline_runner_dockerfile_sha" "$IRT_OFFLINE_RUNNER_ERROR"; fi
+  sed -i "s/^DOCKERFILE_SHA256=.*/DOCKERFILE_SHA256=${docker_sha}/; s/^PACKAGE_LOCK_SHA256=.*/PACKAGE_LOCK_SHA256=$(printf 'e%.0s' {1..64})/" "$manifest"
+  if ! irt_offline_runner_verify && [[ "$IRT_OFFLINE_RUNNER_ERROR" == "PACKAGE_LOCK_SHA256_MISMATCH" ]]; then ok "offline_runner_lock_sha"; else bad "offline_runner_lock_sha" "$IRT_OFFLINE_RUNNER_ERROR"; fi
+  sed -i "s/^PACKAGE_LOCK_SHA256=.*/PACKAGE_LOCK_SHA256=${lock_sha}/" "$manifest"
+  FAKE_DOCKER_MODE=offline-label-mismatch
+  if ! irt_offline_runner_verify && [[ "$IRT_OFFLINE_RUNNER_ERROR" == "OCI_LABEL_MISMATCH" ]]; then ok "offline_runner_label"; else bad "offline_runner_label" "$IRT_OFFLINE_RUNNER_ERROR"; fi
+  FAKE_DOCKER_MODE=ok
+  grep -Fq -- '--mount "type=bind,src=${IRT_PROOF_SOURCE_DIR}/prisma,dst=/app/prisma,readonly"' "$SCRIPT" \
+    && ok "offline_runner_readonly_source_mount" || bad "offline_runner_readonly_source_mount" "mount missing"
+}
+
 # notready with override: patch common via env if we add it
 ensure_ready_timeout_override() {
   # Inject by exporting — add to common if missing
@@ -1331,6 +1391,7 @@ main() {
   scenario_emergency_symlink_cidfile
   scenario_reaper
   scenario_forbidden_mutate
+  scenario_offline_runner_contract
 
   echo "=== summary PASS=${PASS} FAIL=${FAIL} SKIP=${SKIP} ==="
   if [[ "$FAIL" -gt 0 ]]; then
