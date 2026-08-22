@@ -110,6 +110,7 @@
     "test:security:bot-internal-booking-create-db:required": "tsx scripts/security-bot-internal-booking-create-db-check.ts --require-postgres",
     "test:security:bot-internal-compose-wiring": "tsx scripts/security-bot-internal-compose-wiring-check.ts",
     "test:security:bot-internal-route-coverage": "tsx scripts/security-bot-internal-route-coverage-check.ts",
+    "test:security:bot-identity-lookup": "tsx scripts/security-bot-identity-lookup-check.ts",
     "test:security:bot-master-command": "tsx scripts/security-bot-master-command-check.ts",
     "test:security:bot-master-command-db": "tsx --env-file=.env scripts/security-bot-master-command-db-check.ts",
     "test:security:bot-master-command-db:required": "tsx scripts/security-bot-master-command-db-check.ts --require-postgres",
