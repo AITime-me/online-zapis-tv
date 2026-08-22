@@ -1,0 +1,100 @@
+name: Build Offline Proof Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_revision:
+        description: Exact approved 40-character Git commit SHA
+        required: true
+        type: string
+        default: a72e1782eaf206cc032c860aff5a24e9aa3c2590
+
+permissions:
+  contents: read
+
+concurrency:
+  group: offline-proof-runner-${{ inputs.target_revision }}
+  cancel-in-progress: false
+
+jobs:
+  build-offline-proof-runner:
+    name: Build pinned offline proof runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      APPROVED_TARGET_REVISION: a72e1782eaf206cc032c860aff5a24e9aa3c2590
+      EXPECTED_DOCKERFILE_SHA256: 017fc4563c91384f71b303068f9b259a94b148b5b741070197d6a1f6f04f93bf
+      EXPECTED_PACKAGE_LOCK_SHA256: 4c66c0bedaa6e4bd7f383b5a088373673b8299727a4219bb778c612ccd65f989
+
+    steps:
+      - name: Validate approved target revision
+        id: target
+        shell: bash
+        env:
+          INPUT_TARGET_REVISION: ${{ inputs.target_revision }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$INPUT_TARGET_REVISION" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$INPUT_TARGET_REVISION" == "$APPROVED_TARGET_REVISION" ]]
+          printf 'revision=%s\n' "$INPUT_TARGET_REVISION" >>"$GITHUB_OUTPUT"
+
+      - name: Checkout exact target
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.target.outputs.revision }}
+          fetch-depth: 1
+
+      - name: Verify source provenance
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$(git rev-parse HEAD)" == "$APPROVED_TARGET_REVISION" ]]
+          [[ "$(sha256sum Dockerfile | awk '{print $1}')" == "$EXPECTED_DOCKERFILE_SHA256" ]]
+          [[ "$(sha256sum package-lock.json | awk '{print $1}')" == "$EXPECTED_PACKAGE_LOCK_SHA256" ]]
+
+      - name: Build exact migrator runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          target="$APPROVED_TARGET_REVISION"
+          docker build --pull=false --target migrator \
+            --tag "online-zapis-tv-offline-proof-runner:${target}" \
+            --label "org.opencontainers.image.revision=${target}" \
+            --label "com.online-zapis-tv.dockerfile-sha256=${EXPECTED_DOCKERFILE_SHA256}" \
+            --label "com.online-zapis-tv.package-lock-sha256=${EXPECTED_PACKAGE_LOCK_SHA256}" \
+            .
+
+      - name: Verify image and export artifact
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          target="$APPROVED_TARGET_REVISION"
+          image="online-zapis-tv-offline-proof-runner:${target}"
+          archive="runner-${target}.oci.tar"
+          manifest="runner-${target}.manifest"
+          image_id="$(docker image inspect --format '{{.Id}}' "$image")"
+          [[ "$image_id" =~ ^sha256:[a-f0-9]{64}$ ]]
+          [[ "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")" == "$target" ]]
+          [[ "$(docker image inspect --format '{{ index .Config.Labels "com.online-zapis-tv.dockerfile-sha256" }}' "$image")" == "$EXPECTED_DOCKERFILE_SHA256" ]]
+          [[ "$(docker image inspect --format '{{ index .Config.Labels "com.online-zapis-tv.package-lock-sha256" }}' "$image")" == "$EXPECTED_PACKAGE_LOCK_SHA256" ]]
+          docker save --output "$archive" "$image"
+          tar -tf "$archive" >/dev/null
+          archive_sha256="$(sha256sum "$archive" | awk '{print $1}')"
+          [[ "$archive_sha256" =~ ^[a-f0-9]{64}$ ]]
+          printf '%s\n' \
+            "TARGET_REVISION=${target}" \
+            "OCI_ARCHIVE_SHA256=${archive_sha256}" \
+            "DOCKERFILE_SHA256=${EXPECTED_DOCKERFILE_SHA256}" \
+            "PACKAGE_LOCK_SHA256=${EXPECTED_PACKAGE_LOCK_SHA256}" \
+            "IMAGE_ID=${image_id}" >"$manifest"
+          [[ "$(wc -l <"$manifest")" -eq 5 ]]
+
+      - name: Upload offline runner artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-proof-runner-${{ inputs.target_revision }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            runner-${{ inputs.target_revision }}.oci.tar
+            runner-${{ inputs.target_revision }}.manifest
