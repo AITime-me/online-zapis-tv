@@ -77,6 +77,27 @@ case "$cmd" in
     if [[ "$MODE" == "noimage" ]]; then
       exit 1
     fi
+    if [[ "${1-}" == "inspect" ]]; then
+      shift
+      fmt=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --format|-f) fmt="$2"; shift 2 ;;
+          *) shift ;;
+        esac
+      done
+      [[ "$MODE" != "offline-image-missing" ]] || exit 1
+      if [[ "$fmt" == *'.Id'* ]]; then
+        echo "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      elif [[ "$fmt" == *'org.opencontainers.image.revision'* ]]; then
+        [[ "$MODE" == "offline-label-mismatch" ]] && echo "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" || echo "${IRT_TARGET_REV_ARG:-}"
+      elif [[ "$fmt" == *'dockerfile-sha256'* ]]; then
+        echo "${IRT_OFFLINE_DOCKERFILE_SHA256:-}"
+      elif [[ "$fmt" == *'package-lock-sha256'* ]]; then
+        echo "${IRT_OFFLINE_LOCK_SHA256:-}"
+      fi
+      exit 0
+    fi
     exit 0
     ;;
   run)

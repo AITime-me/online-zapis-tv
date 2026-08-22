@@ -10,6 +10,8 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/isolated-restore-test-common.sh
 source "${SCRIPT_DIR}/lib/isolated-restore-test-common.sh"
+# shellcheck source=lib/isolated-restore-test-offline-runner.sh
+source "${SCRIPT_DIR}/lib/isolated-restore-test-offline-runner.sh"
 
 IRT_HELP=0
 IRT_DRY_RUN=0
@@ -89,7 +91,7 @@ Options:
   --emergency-cleanup   Post-stop / SIGKILL recovery via cidfile + labels
   --reap-orphans        Remove only labeled stopped orphans older than TTL
   --migration-proof     Restore, then prove the approved Prisma migrations in order
-  --target-revision SHA Exact Git revision used only to build the disposable proof runner
+  --target-revision SHA Exact Git revision used only for source/archive provenance
   --cidfile PATH        cidfile for emergency-cleanup
   --run-id ID           Expected run-id label for emergency-cleanup
   --help                Show help
@@ -906,11 +908,12 @@ irt_proof_prune_later_migrations() {
 }
 
 irt_proof_build_runner() {
-  IRT_PHASE="proof_build"
-  IRT_PROOF_IMAGE="oz-rt-proof-${IRT_ENV}-${IRT_RUN_ID}"
-  # No pulls and no build-network: a cold/missing cache is a safe failure.
-  irt_interruptible_run docker build --pull=false --network none --target migrator -t "$IRT_PROOF_IMAGE" "$IRT_PROOF_SOURCE_DIR" >/dev/null \
-    || fail 20 "PROOF_RUNNER_BUILD_FAILED"
+  IRT_PHASE="proof_runner_preflight"
+  # There is intentionally no build, pull, or load in a proof run. The root-owned
+  # offline artifact must already be present and provenance-bound to this source.
+  if ! irt_offline_runner_verify; then
+    fail 20 "PROOF_RUNNER_${IRT_OFFLINE_RUNNER_ERROR:-ARTIFACT_INVALID}"
+  fi
 }
 
 irt_proof_database_url() {
@@ -932,6 +935,7 @@ irt_proof_prisma() {
   irt_interruptible_capture_merged "$output_file" docker run --rm \
     --network "container:${IRT_TEMP_CID}" \
     --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+    --mount "type=bind,src=${IRT_PROOF_SOURCE_DIR}/prisma,dst=/app/prisma,readonly" \
     -e "DATABASE_URL=${database_url}" \
     "$IRT_PROOF_IMAGE" migrate "${command#migrate }"
   local rc=$?
@@ -976,8 +980,6 @@ irt_proof_apply_stage() {
   irt_proof_prisma "migrate status" "$status_out"
   irt_proof_assert_sql "$short"
   printf -v "$stage_result_var" '%s' 'applied_and_asserted'
-  docker image rm -f "$IRT_PROOF_IMAGE" >/dev/null 2>&1 || true
-  IRT_PROOF_IMAGE=""
   rm -rf -- "$IRT_PROOF_SOURCE_DIR"
   IRT_PROOF_SOURCE_DIR=""
 }
@@ -1106,10 +1108,7 @@ cleanup_temp_resources() {
 
   IRT_TEMP_PASSWORD=""
 
-  if [[ -n "${IRT_PROOF_IMAGE:-}" ]]; then
-    docker image rm -f "$IRT_PROOF_IMAGE" >/dev/null 2>&1 || true
-    IRT_PROOF_IMAGE=""
-  fi
+  # Offline runner is a pre-provisioned shared artifact; proof cleanup never removes it.
 
   if [[ "$container_ok" -eq 1 && "$snapshot_ok" -eq 1 && "$marker_ok" -eq 1 && "$rundir_ok" -eq 1 ]]; then
     IRT_CLEANUP_OK=1
