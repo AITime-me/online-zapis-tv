@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/isolated-restore-gate.yml"
+      - ".github/workflows/offline-proof-runner-build.yml"
       - "scripts/ops/isolated-restore-test.sh"
       - "scripts/ops/lib/isolated-restore-test-common.sh"
       - "scripts/ops/lib/isolated-restore-test-offline-runner.sh"
