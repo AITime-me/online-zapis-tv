@@ -15,6 +15,27 @@ irt_offline_runner_sha256_file() {
   sha256sum -- "$1" 2>/dev/null | awk '{print $1}'
 }
 
+irt_offline_runner_oci_manifest_digest() {
+  local archive="$1" index entry_count
+  entry_count="$(tar -tf "$archive" 2>/dev/null | awk '$0 == "index.json" { count++ } END { print count + 0 }')"
+  [[ "$entry_count" == "1" ]] || return 1
+  index="$(tar -xOf "$archive" index.json 2>/dev/null)" || return 1
+  printf '%s' "$index" | jq -er '
+    if type != "object" or .schemaVersion != 2 or (.manifests | type != "array") or (.manifests | length != 1) then
+      error("invalid OCI index")
+    else
+      .manifests[0] as $manifest
+      | if ($manifest | type) != "object"
+          or $manifest.mediaType != "application/vnd.oci.image.manifest.v1+json"
+          or ($manifest.digest | type) != "string"
+          or ($manifest.digest | test("^sha256:[0-9a-f]{64}$") | not)
+        then error("invalid OCI manifest descriptor")
+        else $manifest.digest
+        end
+    end
+  ' 2>/dev/null
+}
+
 irt_offline_runner_read_manifest() {
   local manifest="$1" key value seen=""
   IRT_OFFLINE_ARCHIVE_SHA256=""
@@ -47,7 +68,7 @@ irt_offline_runner_read_manifest() {
 }
 
 irt_offline_runner_verify() {
-  local root manifest archive actual expected label image_ref
+  local root manifest archive actual expected label image_ref oci_manifest_id image_id
   IRT_OFFLINE_RUNNER_ERROR=""
   root="$(realpath -e -- "$IRT_OFFLINE_RUNNER_ROOT" 2>/dev/null || true)"
   [[ -n "$root" && -d "$root" && ! -L "$root" ]] || { irt_offline_runner_fail "ARTIFACT_MISSING"; return 1; }
@@ -69,12 +90,15 @@ irt_offline_runner_verify() {
   [[ "$expected" == "$IRT_OFFLINE_DOCKERFILE_SHA256" ]] || { irt_offline_runner_fail "DOCKERFILE_SHA256_MISMATCH"; return 1; }
   expected="$(irt_offline_runner_sha256_file "${IRT_PROOF_SOURCE_DIR}/package-lock.json" || true)"
   [[ "$expected" == "$IRT_OFFLINE_LOCK_SHA256" ]] || { irt_offline_runner_fail "PACKAGE_LOCK_SHA256_MISMATCH"; return 1; }
+  oci_manifest_id="$(irt_offline_runner_oci_manifest_digest "$archive" || true)"
+  [[ "$oci_manifest_id" =~ ^sha256:[a-f0-9]{64}$ ]] || { irt_offline_runner_fail "OCI_INDEX_INVALID"; return 1; }
   image_ref="online-zapis-tv-offline-proof-runner:${IRT_TARGET_REV_ARG}"
   # Exported solely for the child `docker image inspect` invocation; these values
   # are non-secret provenance hashes and do not enter the proof container.
   export IRT_TARGET_REV_ARG IRT_OFFLINE_DOCKERFILE_SHA256 IRT_OFFLINE_LOCK_SHA256
-  actual="$(docker image inspect --format '{{.Id}}' "$image_ref" 2>/dev/null || true)"
-  [[ "$actual" == "$IRT_OFFLINE_IMAGE_ID" ]] || { irt_offline_runner_fail "IMAGE_ID_MISMATCH"; return 1; }
+  image_id="$(docker image inspect --format '{{.Id}}' "$image_ref" 2>/dev/null || true)"
+  [[ "$image_id" == "$IRT_OFFLINE_IMAGE_ID" || "$image_id" == "$oci_manifest_id" ]] \
+    || { irt_offline_runner_fail "IMAGE_ID_MISMATCH"; return 1; }
   for label in \
     "org.opencontainers.image.revision=${IRT_TARGET_REV_ARG}" \
     "com.online-zapis-tv.dockerfile-sha256=${IRT_OFFLINE_DOCKERFILE_SHA256}" \
@@ -85,6 +109,6 @@ irt_offline_runner_verify() {
     actual="$(docker image inspect --format "{{ index .Config.Labels \"${key}\" }}" "$image_ref" 2>/dev/null || true)"
     [[ "$actual" == "$expected" ]] || { irt_offline_runner_fail "OCI_LABEL_MISMATCH"; return 1; }
   done
-  IRT_PROOF_IMAGE="$IRT_OFFLINE_IMAGE_ID"
+  IRT_PROOF_IMAGE="$image_id"
   return 0
 }

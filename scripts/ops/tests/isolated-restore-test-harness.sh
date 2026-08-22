@@ -1298,15 +1298,39 @@ EOF
 
 scenario_offline_runner_contract() {
   setup_case ok
-  local target="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" source artifact manifest archive docker_sha lock_sha archive_sha
+  local target="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" source artifact manifest archive docker_sha lock_sha archive_sha layout
   source="${CASE_DIR}/proof-source"
   artifact="${CASE_DIR}/offline-runner"
-  mkdir -p "$source" "$artifact"
+  layout="${CASE_DIR}/oci-layout"
+  mkdir -p "$source" "$artifact" "$layout"
   printf 'FROM scratch\n' >"${source}/Dockerfile"
   printf '{"lockfileVersion":3}\n' >"${source}/package-lock.json"
-  printf 'OCI-ARCHIVE-TEST\n' >"${artifact}/runner-${target}.oci.tar"
   manifest="${artifact}/runner-${target}.manifest"
   archive="${artifact}/runner-${target}.oci.tar"
+  write_oci_index() {
+    local mode="$1"
+    rm -rf -- "$layout"
+    mkdir -p "$layout"
+    case "$mode" in
+      valid)
+        printf '%s\n' '{"schemaVersion":2,"manifests":[{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","size":1}]}' >"${layout}/index.json"
+        tar -C "$layout" -cf "$archive" index.json
+        ;;
+      missing)
+        : >"${layout}/oci-layout"
+        tar -C "$layout" -cf "$archive" oci-layout
+        ;;
+      malformed)
+        printf '%s\n' '{not-json' >"${layout}/index.json"
+        tar -C "$layout" -cf "$archive" index.json
+        ;;
+      multiple)
+        printf '%s\n' '{"schemaVersion":2,"manifests":[{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","size":1},{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","size":1}]}' >"${layout}/index.json"
+        tar -C "$layout" -cf "$archive" index.json
+        ;;
+    esac
+  }
+  write_oci_index valid
   docker_sha="$(sha256sum "$source/Dockerfile" | awk '{print $1}')"
   lock_sha="$(sha256sum "$source/package-lock.json" | awk '{print $1}')"
   archive_sha="$(sha256sum "$archive" | awk '{print $1}')"
@@ -1330,6 +1354,13 @@ EOF
   if irt_offline_runner_verify; then ok "offline_runner_valid"; else bad "offline_runner_valid" "$IRT_OFFLINE_RUNNER_ERROR"; fi
   [[ "${IRT_PROOF_IMAGE:-}" == sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ]] \
     && ok "offline_runner_image_pinned" || bad "offline_runner_image_pinned" "wrong image id"
+  FAKE_DOCKER_MODE=offline-oci-manifest-id
+  if irt_offline_runner_verify; then ok "offline_runner_oci_manifest_id"; else bad "offline_runner_oci_manifest_id" "$IRT_OFFLINE_RUNNER_ERROR"; fi
+  [[ "${IRT_PROOF_IMAGE:-}" == sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ]] \
+    && ok "offline_runner_oci_image_pinned" || bad "offline_runner_oci_image_pinned" "wrong OCI image id"
+  FAKE_DOCKER_MODE=offline-third-image-id
+  if ! irt_offline_runner_verify && [[ "$IRT_OFFLINE_RUNNER_ERROR" == "IMAGE_ID_MISMATCH" ]]; then ok "offline_runner_third_image_id"; else bad "offline_runner_third_image_id" "$IRT_OFFLINE_RUNNER_ERROR"; fi
+  FAKE_DOCKER_MODE=ok
   if grep -Eq '(^| )build( |$)|(^| )pull( |$)' "${STATE}/docker.log"; then bad "offline_runner_no_build_pull" "build/pull invoked"; else ok "offline_runner_no_build_pull"; fi
   rm -f -- "$manifest"
   if ! irt_offline_runner_verify && [[ "$IRT_OFFLINE_RUNNER_ERROR" == "ARTIFACT_MISSING" ]]; then ok "offline_runner_missing"; else bad "offline_runner_missing" "$IRT_OFFLINE_RUNNER_ERROR"; fi
@@ -1348,6 +1379,21 @@ EOF
   sed -i "s/^DOCKERFILE_SHA256=.*/DOCKERFILE_SHA256=${docker_sha}/; s/^PACKAGE_LOCK_SHA256=.*/PACKAGE_LOCK_SHA256=$(printf 'e%.0s' {1..64})/" "$manifest"
   if ! irt_offline_runner_verify && [[ "$IRT_OFFLINE_RUNNER_ERROR" == "PACKAGE_LOCK_SHA256_MISMATCH" ]]; then ok "offline_runner_lock_sha"; else bad "offline_runner_lock_sha" "$IRT_OFFLINE_RUNNER_ERROR"; fi
   sed -i "s/^PACKAGE_LOCK_SHA256=.*/PACKAGE_LOCK_SHA256=${lock_sha}/" "$manifest"
+  write_oci_index missing
+  archive_sha="$(sha256sum "$archive" | awk '{print $1}')"
+  sed -i "s/^OCI_ARCHIVE_SHA256=.*/OCI_ARCHIVE_SHA256=${archive_sha}/" "$manifest"
+  if ! irt_offline_runner_verify && [[ "$IRT_OFFLINE_RUNNER_ERROR" == "OCI_INDEX_INVALID" ]]; then ok "offline_runner_oci_index_missing"; else bad "offline_runner_oci_index_missing" "$IRT_OFFLINE_RUNNER_ERROR"; fi
+  write_oci_index malformed
+  archive_sha="$(sha256sum "$archive" | awk '{print $1}')"
+  sed -i "s/^OCI_ARCHIVE_SHA256=.*/OCI_ARCHIVE_SHA256=${archive_sha}/" "$manifest"
+  if ! irt_offline_runner_verify && [[ "$IRT_OFFLINE_RUNNER_ERROR" == "OCI_INDEX_INVALID" ]]; then ok "offline_runner_oci_index_malformed"; else bad "offline_runner_oci_index_malformed" "$IRT_OFFLINE_RUNNER_ERROR"; fi
+  write_oci_index multiple
+  archive_sha="$(sha256sum "$archive" | awk '{print $1}')"
+  sed -i "s/^OCI_ARCHIVE_SHA256=.*/OCI_ARCHIVE_SHA256=${archive_sha}/" "$manifest"
+  if ! irt_offline_runner_verify && [[ "$IRT_OFFLINE_RUNNER_ERROR" == "OCI_INDEX_INVALID" ]]; then ok "offline_runner_oci_index_multiple"; else bad "offline_runner_oci_index_multiple" "$IRT_OFFLINE_RUNNER_ERROR"; fi
+  write_oci_index valid
+  archive_sha="$(sha256sum "$archive" | awk '{print $1}')"
+  sed -i "s/^OCI_ARCHIVE_SHA256=.*/OCI_ARCHIVE_SHA256=${archive_sha}/" "$manifest"
   FAKE_DOCKER_MODE=offline-label-mismatch
   if ! irt_offline_runner_verify && [[ "$IRT_OFFLINE_RUNNER_ERROR" == "OCI_LABEL_MISMATCH" ]]; then ok "offline_runner_label"; else bad "offline_runner_label" "$IRT_OFFLINE_RUNNER_ERROR"; fi
   FAKE_DOCKER_MODE=ok
