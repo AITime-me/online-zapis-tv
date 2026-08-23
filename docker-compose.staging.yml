@@ -11,6 +11,10 @@ services:
     image: postgres:17-alpine
     container_name: tvoe-vremya-staging-postgres
     restart: unless-stopped
+    # Staging-only cgroup ceilings (capacity review). Not applied to production.
+    mem_limit: 512m
+    cpus: 0.50
+    pids_limit: 256
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -33,6 +37,10 @@ services:
       dockerfile: Dockerfile
     container_name: tvoe-vremya-staging-app
     restart: unless-stopped
+    # Staging-only cgroup ceilings (capacity review). Not applied to production.
+    mem_limit: 768m
+    cpus: 1.00
+    pids_limit: 256
     depends_on:
       postgres:
         condition: service_healthy

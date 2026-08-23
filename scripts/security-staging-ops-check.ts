@@ -625,6 +625,53 @@ function assertComposeMigrator(): void {
   assert.match(migratorService, /ops/);
 }
 
+function extractComposeServiceBlock(compose: string, serviceName: string): string {
+  const match = compose.match(
+    new RegExp(`\\r?\\n  ${serviceName}:\\r?\\n[\\s\\S]*?(?=\\r?\\n  [a-z0-9-]+:|\\r?\\nnetworks:|\\r?\\nvolumes:|$)`),
+  );
+  assert.ok(match?.[0], `${serviceName} service must exist in staging compose`);
+  return match[0];
+}
+
+function assertServiceResourceLimits(
+  serviceBlock: string,
+  serviceName: string,
+  expected: { mem: string; cpus: string; pids: number },
+): void {
+  assert.match(
+    serviceBlock,
+    new RegExp(`mem_limit:\\s*${expected.mem}\\b`),
+    `${serviceName} must set mem_limit ${expected.mem}`,
+  );
+  assert.match(
+    serviceBlock,
+    new RegExp(`cpus:\\s*${expected.cpus}\\b`),
+    `${serviceName} must set cpus ${expected.cpus}`,
+  );
+  assert.match(
+    serviceBlock,
+    new RegExp(`pids_limit:\\s*${expected.pids}\\b`),
+    `${serviceName} must set pids_limit ${expected.pids}`,
+  );
+}
+
+function assertStagingResourceLimits(): void {
+  const compose = readFile("docker-compose.staging.yml");
+  assertServiceResourceLimits(extractComposeServiceBlock(compose, "postgres"), "postgres", {
+    mem: "512m",
+    cpus: "0\\.50",
+    pids: 256,
+  });
+  assertServiceResourceLimits(extractComposeServiceBlock(compose, "app"), "app", {
+    mem: "768m",
+    cpus: "1\\.00",
+    pids: 256,
+  });
+  const migrator = extractComposeServiceBlock(compose, "migrator");
+  assert.doesNotMatch(migrator, /mem_limit:/, "migrator must not set mem_limit");
+  assert.doesNotMatch(migrator, /pids_limit:/, "migrator must not set pids_limit");
+}
+
 function assertNoHostNodePrerequisites(): void {
   const hostNodeCommands = ["node", "npm", "npx"] as const;
 
@@ -1152,6 +1199,7 @@ function run(): void {
   assertSystemdBackupUnits();
   assertManifestSafety();
   assertComposeMigrator();
+  assertStagingResourceLimits();
   assertCommonHelpers();
   console.log("security-staging-ops-check: OK");
 }
