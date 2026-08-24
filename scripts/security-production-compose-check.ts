@@ -49,6 +49,60 @@ function testPostgresNotPublished(): void {
   assert.doesNotMatch(postgresBlock, /ports:/);
 }
 
+function extractComposeServiceBlock(compose: string, serviceName: string): string {
+  const match = compose.match(
+    new RegExp(
+      `\\r?\\n  ${serviceName}:\\r?\\n[\\s\\S]*?(?=\\r?\\n  [a-z0-9-]+:|\\r?\\nnetworks:|\\r?\\nvolumes:|$)`,
+    ),
+  );
+  assert.ok(match?.[0], `${serviceName} service must exist in production compose`);
+  return match[0];
+}
+
+function assertServiceResourceLimits(
+  serviceBlock: string,
+  serviceName: string,
+  expected: { mem: string; cpus: string; pids: number },
+): void {
+  assert.match(
+    serviceBlock,
+    new RegExp(`mem_limit:\\s*${expected.mem}\\b`),
+    `${serviceName} must set mem_limit ${expected.mem}`,
+  );
+  assert.match(
+    serviceBlock,
+    new RegExp(`cpus:\\s*${expected.cpus}\\b`),
+    `${serviceName} must set cpus ${expected.cpus}`,
+  );
+  assert.match(
+    serviceBlock,
+    new RegExp(`pids_limit:\\s*${expected.pids}\\b`),
+    `${serviceName} must set pids_limit ${expected.pids}`,
+  );
+}
+
+function testProductionResourceLimits(): void {
+  const compose = read(COMPOSE_FILE);
+  assertServiceResourceLimits(extractComposeServiceBlock(compose, "postgres"), "postgres", {
+    mem: "768m",
+    cpus: "0\\.75",
+    pids: 256,
+  });
+  assertServiceResourceLimits(extractComposeServiceBlock(compose, "app"), "app", {
+    mem: "1g",
+    cpus: "1\\.00",
+    pids: 256,
+  });
+  const migrator = extractComposeServiceBlock(compose, "migrator");
+  assert.doesNotMatch(migrator, /mem_limit:/, "migrator must not set mem_limit");
+  assert.doesNotMatch(migrator, /pids_limit:/, "migrator must not set pids_limit");
+
+  const staging = read("docker-compose.staging.yml");
+  assert.match(staging, /mem_limit:\s*512m/);
+  assert.match(staging, /mem_limit:\s*768m/);
+  assert.doesNotMatch(staging, /mem_limit:\s*1g\b/);
+}
+
 function testEnvProductionExample(): void {
   const example = read(".env.production.example");
   const gitignore = read(".gitignore");
@@ -107,6 +161,8 @@ function testDockerComposeConfig(): void {
   assert.match(rendered, /host_ip:\s*127\.0\.0\.1/);
   assert.match(rendered, /published:\s*"3100"/);
   assert.match(rendered, /target:\s*3000/);
+  assert.match(rendered, /mem_limit:\s*["']?1073741824["']?|mem_limit:\s*1g\b/);
+  assert.match(rendered, /pids_limit:\s*256/);
 }
 
 function resolveTsModule(fromRel: string, spec: string): string | null {
@@ -217,6 +273,7 @@ function main(): void {
   testProductionComposeStructure();
   testNoStagingLeakage();
   testPostgresNotPublished();
+  testProductionResourceLimits();
   testEnvProductionExample();
   testRunbookDocumentsIsolation();
   testMigratorIncludesProductionSeedRuntime();
