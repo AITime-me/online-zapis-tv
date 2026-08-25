@@ -89,7 +89,8 @@ export const API_RATE_LIMIT_RULES: ApiRateLimitRouteRule[] = [
     policyId: "botInternalBookingCreate",
     match: (pathname, method) =>
       method === "POST" &&
-      exactPath(pathname, "/api/internal/bot/v1/bookings"),
+      (exactPath(pathname, "/api/internal/bot/v1/bookings") ||
+        exactPath(pathname, "/api/internal/bot/v1/booking-requests/book")),
   },
   {
     policyId: "botInternalMasterCommand",
@@ -104,6 +105,7 @@ export const API_RATE_LIMIT_RULES: ApiRateLimitRouteRule[] = [
       method === "POST" &&
       pathname.startsWith("/api/internal/bot/v1/") &&
       !exactPath(pathname, "/api/internal/bot/v1/bookings") &&
+      !exactPath(pathname, "/api/internal/bot/v1/booking-requests/book") &&
       !(
         pathname.startsWith("/api/internal/bot/v1/master/") &&
         !exactPath(pathname, "/api/internal/bot/v1/master/schedule")
@@ -166,6 +168,10 @@ export const RATE_LIMITED_API_PATHS = API_RATE_LIMIT_RULES.flatMap((rule) => {
     case "botInternalBookingCreate":
       return [
         { method: "POST", pathname: "/api/internal/bot/v1/bookings" },
+        {
+          method: "POST",
+          pathname: "/api/internal/bot/v1/booking-requests/book",
+        },
       ];
     case "botInternalMasterCommand":
       return [
@@ -197,6 +203,16 @@ export const RATE_LIMITED_API_PATHS = API_RATE_LIMIT_RULES.flatMap((rule) => {
         { method: "POST", pathname: "/api/internal/bot/v1/available-days" },
         { method: "POST", pathname: "/api/internal/bot/v1/slots" },
         { method: "POST", pathname: "/api/internal/bot/v1/master/schedule" },
+        { method: "POST", pathname: "/api/internal/bot/v1/booking-requests/feed" },
+        { method: "POST", pathname: "/api/internal/bot/v1/booking-requests/get" },
+        {
+          method: "POST",
+          pathname: "/api/internal/bot/v1/booking-requests/availability",
+        },
+        {
+          method: "POST",
+          pathname: "/api/internal/bot/v1/booking-requests/appointments-lookup",
+        },
       ];
     default:
       return [];
