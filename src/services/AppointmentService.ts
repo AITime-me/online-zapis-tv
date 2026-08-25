@@ -549,6 +549,40 @@ export async function createBotOnlineAppointment(
   return { appointment: result.appointment };
 }
 
+/**
+ * Book-from-request path for internal bot S2S (BookingRequest contour).
+ * INTERNAL service policy (active + masterService enabled only — no online flags),
+ * source=BOT, no manage token, no public legal acceptances.
+ */
+export async function createBotRequestAppointment(
+  input: Omit<
+    AppointmentWriteInput,
+    "status" | "source" | "recordPublicLegalAcceptances"
+  > & {
+    serviceId: string;
+  },
+  runtime: AppointmentServiceRuntime = DEFAULT_APPOINTMENT_SERVICE_RUNTIME,
+): Promise<{ appointment: AppointmentDto }> {
+  const result = await createAppointmentRecord(
+    {
+      ...input,
+      status: "SCHEDULED",
+      source: "BOT",
+    },
+    null,
+    { servicePolicy: "INTERNAL" },
+    runtime,
+  );
+
+  if (result.issuedManageToken) {
+    throw new AppointmentValidationError(
+      "BOT booking must not issue manage token",
+    );
+  }
+
+  return { appointment: result.appointment };
+}
+
 type AppointmentCreateRecordResult = {
   appointment: AppointmentDto;
   issuedManageToken: string | null;
