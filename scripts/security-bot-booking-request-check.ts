@@ -172,12 +172,46 @@ function testStaticArchitecture(): void {
   assert.match(service, /FOR UPDATE/);
   assert.match(service, /RECONCILIATION_REQUIRED/);
   assert.match(service, /CONSULTATION_SERVICE_REQUIRED/);
+  assert.match(service, /beforeSerializableWrite/);
   assert.match(service, /buildGameBookingRequestDisplay/);
   assert.match(service, /managerConfirmationRequired:\s*true/);
   assert.doesNotMatch(serviceCode, /\bassertOnlineBookable\b/);
   assert.doesNotMatch(serviceCode, /\bcreateBotOnlineAppointment\b/);
   assert.doesNotMatch(serviceCode, /\bChangeEvent\b|\bchangeEvent\b/);
   assert.doesNotMatch(service, /console\.(log|info|debug)/);
+
+  const hooks = read("src/lib/bot-api/booking-request-test-hooks.ts");
+  assert.match(hooks, /SECURITY_BATCH_TEST/);
+  assert.match(hooks, /NODE_ENV === "production"/);
+
+  const pkg = JSON.parse(read("package.json")) as {
+    scripts: Record<string, string>;
+  };
+  assert.ok(pkg.scripts["test:security:bot-booking-request-db"]);
+  assert.match(
+    pkg.scripts["test:security:bot-booking-request-db:required"] ?? "",
+    /--require-postgres/,
+  );
+
+  const workflow = read(
+    ".github/workflows/bot-internal-booking-create-pg-gate.yml",
+  );
+  assert.match(
+    workflow,
+    /^\s+- name: BookingRequest unit and security checks$/m,
+  );
+  assert.match(
+    workflow,
+    /^\s+run: npm run test:security:bot-booking-request$/m,
+  );
+  assert.match(
+    workflow,
+    /^\s+- name: BookingRequest required PostgreSQL Gate$/m,
+  );
+  assert.match(
+    workflow,
+    /^\s+run: npm run test:security:bot-booking-request-db:required$/m,
+  );
   // clientPhone is in DTO for CRM — must not be logged.
   assert.doesNotMatch(
     serviceCode,

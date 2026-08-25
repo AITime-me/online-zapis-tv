@@ -33,6 +33,26 @@ export const MASTER_COMMAND_REQUIRED_NPM =
 export const MASTER_COMMAND_REQUIRED_PACKAGE_SCRIPT =
   "test:security:bot-master-command-db:required";
 
+/** BookingRequest contour — static security check in the same PG Gate workflow. */
+export const BOOKING_REQUEST_STATIC_GATE_STEP_NAME =
+  "BookingRequest unit and security checks";
+
+export const BOOKING_REQUEST_STATIC_NPM =
+  "npm run test:security:bot-booking-request";
+
+export const BOOKING_REQUEST_STATIC_PACKAGE_SCRIPT =
+  "test:security:bot-booking-request";
+
+/** BookingRequest required PostgreSQL Gate (same workflow file). */
+export const BOOKING_REQUEST_REQUIRED_GATE_STEP_NAME =
+  "BookingRequest required PostgreSQL Gate";
+
+export const BOOKING_REQUEST_REQUIRED_NPM =
+  "npm run test:security:bot-booking-request-db:required";
+
+export const BOOKING_REQUEST_REQUIRED_PACKAGE_SCRIPT =
+  "test:security:bot-booking-request-db:required";
+
 /** Paths that must be covered by both pull_request and push filters. */
 export const BOT_BOOKING_CREATE_REQUIRED_PATH_TARGETS = [
   {
@@ -573,6 +593,102 @@ export function assertMasterCommandRequiredPgGateWired(
       MASTER_COMMAND_REQUIRED_NPM,
     ),
     `step "${MASTER_COMMAND_REQUIRED_GATE_STEP_NAME}" must execute ${MASTER_COMMAND_REQUIRED_NPM}`,
+  );
+}
+
+/**
+ * Fail-closed: BookingRequest static security step must execute the npm script.
+ */
+export function assertBookingRequestStaticGateWired(
+  workflowText: string,
+): void {
+  let doc: WorkflowDoc;
+  try {
+    doc = yaml.load(workflowText) as WorkflowDoc;
+  } catch (error) {
+    assert.fail(
+      `BookingRequest CI workflow YAML parse failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+
+  const jobs = doc.jobs ?? {};
+  const steps = Object.values(jobs).flatMap((job) => job.steps ?? []);
+  const named = steps.filter(
+    (step) => step.name === BOOKING_REQUEST_STATIC_GATE_STEP_NAME,
+  );
+  assert.equal(
+    named.length,
+    1,
+    `expected exactly one step named "${BOOKING_REQUEST_STATIC_GATE_STEP_NAME}", found ${named.length}`,
+  );
+
+  const gate = named[0]!;
+  assert.equal(
+    gate.if,
+    undefined,
+    "BookingRequest static gate step must not have if-condition",
+  );
+  assert.notEqual(
+    gate["continue-on-error"],
+    true,
+    "BookingRequest static gate step continue-on-error forbidden",
+  );
+  assert.ok(
+    runTextExecutesExactNpmCommand(
+      stepRunText(gate),
+      BOOKING_REQUEST_STATIC_NPM,
+    ),
+    `step "${BOOKING_REQUEST_STATIC_GATE_STEP_NAME}" must execute ${BOOKING_REQUEST_STATIC_NPM}`,
+  );
+}
+
+/**
+ * Fail-closed: BookingRequest required PG gate step must execute the npm script.
+ */
+export function assertBookingRequestRequiredPgGateWired(
+  workflowText: string,
+): void {
+  let doc: WorkflowDoc;
+  try {
+    doc = yaml.load(workflowText) as WorkflowDoc;
+  } catch (error) {
+    assert.fail(
+      `BookingRequest CI workflow YAML parse failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+
+  const jobs = doc.jobs ?? {};
+  const steps = Object.values(jobs).flatMap((job) => job.steps ?? []);
+  const named = steps.filter(
+    (step) => step.name === BOOKING_REQUEST_REQUIRED_GATE_STEP_NAME,
+  );
+  assert.equal(
+    named.length,
+    1,
+    `expected exactly one step named "${BOOKING_REQUEST_REQUIRED_GATE_STEP_NAME}", found ${named.length}`,
+  );
+
+  const gate = named[0]!;
+  assert.equal(
+    gate.if,
+    undefined,
+    "BookingRequest required gate step must not have if-condition",
+  );
+  assert.notEqual(
+    gate["continue-on-error"],
+    true,
+    "BookingRequest required gate step continue-on-error forbidden",
+  );
+  assert.ok(
+    runTextExecutesExactNpmCommand(
+      stepRunText(gate),
+      BOOKING_REQUEST_REQUIRED_NPM,
+    ),
+    `step "${BOOKING_REQUEST_REQUIRED_GATE_STEP_NAME}" must execute ${BOOKING_REQUEST_REQUIRED_NPM}`,
   );
 }
 

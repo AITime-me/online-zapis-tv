@@ -10,15 +10,18 @@ on:
       - "docker-compose.production.yml"
       - "docker-compose.staging.yml"
       - "src/app/api/internal/bot/v1/bookings/**"
+      - "src/app/api/internal/bot/v1/booking-requests/**"
       - "src/app/api/internal/bot/v1/master/**"
       - "src/lib/bot-api/booking-create*"
       - "src/lib/bot-api/booking-create-idempotency*"
+      - "src/lib/bot-api/booking-request*"
       - "src/lib/bot-api/master-command*"
       - "src/lib/bot-api/internal-bot-operation-idempotency.ts"
       - "src/lib/booking/bot-slot-id.ts"
       - "src/lib/auth/bot-internal-api.ts"
       - "src/lib/auth/bot-internal-auth.ts"
       - "src/services/BotBookingCreateService.ts"
+      - "src/services/BotBookingRequestService.ts"
       - "src/services/MasterCommandService.ts"
       - "src/services/AppointmentService.ts"
       - "src/services/BookingService.ts"
@@ -26,8 +29,10 @@ on:
       - "src/services/ExtraWorkWindowService.ts"
       - "src/lib/security/rate-limit/**"
       - "scripts/security-bot-internal-booking-create*"
+      - "scripts/security-bot-booking-request*"
       - "scripts/security-bot-master-command*"
       - "scripts/lib/bot-booking-create-*.ts"
+      - "scripts/lib/bot-booking-request-*.ts"
       - "docs/architecture/bot-internal-api-pr-a.md"
       - "docs/architecture/bot-master-command-api.md"
   push:
@@ -35,6 +40,7 @@ on:
       - main
       - "feat/cursor-24-*"
       - "feat/cursor-26-*"
+      - "feat/teya-booking-requests"
     paths:
       - ".github/workflows/bot-internal-booking-create-pg-gate.yml"
       - "package.json"
@@ -43,15 +49,18 @@ on:
       - "docker-compose.production.yml"
       - "docker-compose.staging.yml"
       - "src/app/api/internal/bot/v1/bookings/**"
+      - "src/app/api/internal/bot/v1/booking-requests/**"
       - "src/app/api/internal/bot/v1/master/**"
       - "src/lib/bot-api/booking-create*"
       - "src/lib/bot-api/booking-create-idempotency*"
+      - "src/lib/bot-api/booking-request*"
       - "src/lib/bot-api/master-command*"
       - "src/lib/bot-api/internal-bot-operation-idempotency.ts"
       - "src/lib/booking/bot-slot-id.ts"
       - "src/lib/auth/bot-internal-api.ts"
       - "src/lib/auth/bot-internal-auth.ts"
       - "src/services/BotBookingCreateService.ts"
+      - "src/services/BotBookingRequestService.ts"
       - "src/services/MasterCommandService.ts"
       - "src/services/AppointmentService.ts"
       - "src/services/BookingService.ts"
@@ -59,8 +68,10 @@ on:
       - "src/services/ExtraWorkWindowService.ts"
       - "src/lib/security/rate-limit/**"
       - "scripts/security-bot-internal-booking-create*"
+      - "scripts/security-bot-booking-request*"
       - "scripts/security-bot-master-command*"
       - "scripts/lib/bot-booking-create-*.ts"
+      - "scripts/lib/bot-booking-request-*.ts"
   workflow_dispatch:
 
 permissions:
@@ -133,6 +144,12 @@ jobs:
 
       - name: CURSOR-26 required PostgreSQL Gate
         run: npm run test:security:bot-master-command-db:required
+
+      - name: BookingRequest unit and security checks
+        run: npm run test:security:bot-booking-request
+
+      - name: BookingRequest required PostgreSQL Gate
+        run: npm run test:security:bot-booking-request-db:required
 
       - name: Typecheck
         run: npx tsc --noEmit

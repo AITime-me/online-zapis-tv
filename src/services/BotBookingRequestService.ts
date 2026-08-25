@@ -21,6 +21,12 @@ import {
   toBookingRequestBookSuccessBody,
   type SafeBookingRequestBookResultSnapshot,
 } from "@/lib/bot-api/booking-request-idempotency";
+import {
+  clearBotBookingRequestTestHooks,
+  createCountdownBarrier,
+  getBotBookingRequestTestHooks,
+  setBotBookingRequestTestHooks,
+} from "@/lib/bot-api/booking-request-test-hooks";
 import type {
   BotAppointmentCandidateDto,
   BotBookingRequestAppointmentsLookupRequest,
@@ -859,6 +865,8 @@ export async function bookBotBookingRequest(
       | { kind: "success"; snapshot: SafeBookingRequestBookResultSnapshot }
       | { kind: "reconciliation_required" };
 
+    await getBotBookingRequestTestHooks().beforeSerializableWrite?.();
+
     const outcome = await runSerializableAppointmentWrite(async (tx) => {
       const lockedOp = await tx.$queryRaw<
         Array<{ id: string; state: string }>
@@ -1177,3 +1185,10 @@ export async function bookBotBookingRequest(
 /** Exported for static architecture checks / docs. */
 export const BOT_BOOKING_REQUEST_BOOK_OPERATION_KIND =
   BOOKING_REQUEST_BOOK_OPERATION_KIND;
+
+/** Test-only race barriers (SECURITY_BATCH_TEST); no-op in production. */
+export {
+  clearBotBookingRequestTestHooks,
+  createCountdownBarrier,
+  setBotBookingRequestTestHooks,
+};
