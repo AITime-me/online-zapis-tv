@@ -133,6 +133,9 @@ jobs:
       - name: Apply migrations
         run: npx prisma migrate deploy
 
+      - name: Appointment creator provenance (required PG)
+        run: npm run test:security:appointment-creator-provenance:required
+
       - name: CURSOR-24 unit and security checks
         run: npm run test:security:bot-internal-booking-create
 

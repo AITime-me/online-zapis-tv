@@ -1086,6 +1086,7 @@ export async function masterCreateBooking(
           clientId,
           comment: null,
         },
+        "MASTER",
         runtime,
       );
 

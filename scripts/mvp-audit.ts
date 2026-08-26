@@ -154,6 +154,7 @@ async function main() {
           source: "INTERNAL",
         },
         owner.id,
+      { creatorKind: "MANAGER" },
       );
       createdAppointmentIds.push(first.id);
 
@@ -182,6 +183,7 @@ async function main() {
             source: "INTERNAL",
           },
           owner.id,
+      { creatorKind: "MANAGER" },
         );
       } catch (error) {
         blockedAt1100 = error instanceof AppointmentConflictError;
@@ -205,6 +207,7 @@ async function main() {
           source: "INTERNAL",
         },
         owner.id,
+      { creatorKind: "MANAGER" },
       );
       createdAppointmentIds.push(allowed.id);
       record(

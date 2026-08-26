@@ -30,6 +30,19 @@ enum AppointmentSource {
   OTHER
 }
 
+/**
+ * Durable creator provenance for appointments (TEYA analytics A1).
+ * Independent of AppointmentSource (channel). NULL = legacy / unproven.
+ * Never accept this from client body — set only by trusted server entrypoints.
+ */
+enum AppointmentCreatorKind {
+  SELF_SERVICE
+  TEYA
+  MANAGER
+  MASTER
+  OTHER
+}
+
 enum ScheduleBlockType {
   DAY_OFF
   VACATION
@@ -378,6 +391,11 @@ model Appointment {
   timingCanonicalStoredAt   DateTime?         @map("timing_canonical_stored_at") @db.Timestamptz
   status                    AppointmentStatus @default(SCHEDULED)
   source                    AppointmentSource @default(INTERNAL)
+  /**
+   * Who created the appointment (creator provenance).
+   * NULL for pre-A1 / import / unproven rows — never backfill guesses.
+   */
+  creatorKind               AppointmentCreatorKind? @map("creator_kind")
   promoCode                 String?           @map("promo_code")
   appliedPromotions         Json?             @map("applied_promotions")
   botSessionId              String?           @map("bot_session_id")

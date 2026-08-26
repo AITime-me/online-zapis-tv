@@ -1,9 +1,11 @@
 import {
+  AppointmentCreatorKind,
   AppointmentSource,
   AppointmentStatus,
   Prisma,
   type Appointment,
 } from "@prisma/client";
+export { creatorKindFromAuthenticatedRole } from "@/lib/schedule/appointment-creator-kind";
 import { isBlockingAppointmentStatus } from "@/lib/schedule/non-blocking-appointment-statuses";
 import { prisma } from "@/lib/db";
 import { safeLogError } from "@/lib/logging/redact";
@@ -71,6 +73,8 @@ export {
 } from "@/lib/schedule/appointment-write-conflicts";
 
 export type { AppointmentClientLinkResult };
+
+export { AppointmentCreatorKind };
 
 /** Максимум попыток Serializable-транзакции при serialization failure. */
 export const APPOINTMENT_WRITE_SERIALIZABLE_RETRIES = 3;
@@ -245,6 +249,8 @@ export type AppointmentDto = {
   source: string;
   statusCode: AppointmentStatus;
   sourceCode: AppointmentSource;
+  /** Creator provenance; null for legacy / unproven rows. */
+  creatorKind: AppointmentCreatorKind | null;
   appliedPromotions: AppliedPromotionRecord[];
 };
 
@@ -287,6 +293,7 @@ function mapAppointment(
     source: APPOINTMENT_SOURCE_LABELS[appointment.source],
     statusCode: appointment.status,
     sourceCode: appointment.source,
+    creatorKind: appointment.creatorKind ?? null,
     appliedPromotions: parseAppliedPromotions(appointment.appliedPromotions),
   };
 }
@@ -443,11 +450,18 @@ async function assertNoBlockingConflict(
 export type CreateAppointmentOptions = {
   /** Только ручной create: строго true разрешает overlap с другой записью мастера. */
   allowAppointmentOverlap?: boolean;
+  /**
+   * Creator provenance from authenticated actor (admin route / trusted caller).
+   * Required — never defaulted; never taken from client body.
+   */
+  creatorKind: AppointmentCreatorKind;
 };
 
 type CreateAppointmentRecordOptions = CreateAppointmentOptions & {
   /** Выбирается только серверным entrypoint, не принимается из HTTP payload. */
   servicePolicy: AppointmentServicePolicy;
+  /** Server-side only; never from HTTP body. */
+  creatorKind: AppointmentCreatorKind;
 };
 
 export type UpdateAppointmentOptions = {
@@ -465,12 +479,18 @@ export type UpdateAppointmentOptions = {
 export async function createAppointment(
   input: AppointmentWriteInput,
   createdByUserId: string,
-  options?: CreateAppointmentOptions,
+  options: CreateAppointmentOptions,
   runtime: AppointmentServiceRuntime = DEFAULT_APPOINTMENT_SERVICE_RUNTIME,
 ): Promise<AppointmentMutationResult> {
+  if (options.creatorKind == null) {
+    throw new AppointmentValidationError(
+      "creatorKind is required for appointment create",
+    );
+  }
   const result = await createAppointmentRecord(input, createdByUserId, {
-    allowAppointmentOverlap: options?.allowAppointmentOverlap === true,
+    allowAppointmentOverlap: options.allowAppointmentOverlap === true,
     servicePolicy: "INTERNAL",
+    creatorKind: options.creatorKind,
   }, runtime);
 
   const shouldSync = result.appointment.statusCode === "COMPLETED";
@@ -501,7 +521,10 @@ export async function createOnlineAppointment(
       recordPublicLegalAcceptances: true,
     },
     null,
-    { servicePolicy: "PUBLIC_ONLINE" },
+    {
+      servicePolicy: "PUBLIC_ONLINE",
+      creatorKind: AppointmentCreatorKind.SELF_SERVICE,
+    },
     runtime,
   );
 
@@ -518,14 +541,18 @@ export async function createOnlineAppointment(
 }
 
 /**
- * Confirmed self-booking from internal bot S2S (CURSOR-24).
+ * Confirmed self-booking from internal bot S2S (CURSOR-24) or master command.
  * Same PUBLIC_ONLINE policy / overlap / timing as online create;
  * source=BOT, no manage token, legal source BOT.
+ * Creator provenance is explicit (TEYA vs MASTER) — not inferred from source=BOT.
  */
 export async function createBotOnlineAppointment(
   input: Omit<AppointmentWriteInput, "status" | "source"> & {
     serviceId: string;
   },
+  creatorKind:
+    | typeof AppointmentCreatorKind.TEYA
+    | typeof AppointmentCreatorKind.MASTER,
   runtime: AppointmentServiceRuntime = DEFAULT_APPOINTMENT_SERVICE_RUNTIME,
 ): Promise<{ appointment: AppointmentDto }> {
   const result = await createAppointmentRecord(
@@ -536,7 +563,7 @@ export async function createBotOnlineAppointment(
       recordPublicLegalAcceptances: true,
     },
     null,
-    { servicePolicy: "PUBLIC_ONLINE" },
+    { servicePolicy: "PUBLIC_ONLINE", creatorKind },
     runtime,
   );
 
@@ -570,7 +597,10 @@ export async function createBotRequestAppointment(
       source: "BOT",
     },
     null,
-    { servicePolicy: "INTERNAL" },
+    {
+      servicePolicy: "INTERNAL",
+      creatorKind: AppointmentCreatorKind.TEYA,
+    },
     runtime,
   );
 
@@ -686,6 +716,7 @@ async function createAppointmentRecord(
       isBold: input.isBold ?? false,
       status: input.status,
       source: input.source,
+      creatorKind: options.creatorKind,
       // Phase A EXPAND dual-write: plaintext kept so rollback image (pre-hash) can still resolve manage-link.
       manageToken: issuedManageToken,
       manageTokenHash,
@@ -718,6 +749,7 @@ async function createAppointmentRecord(
         desiredFreeAt: desiredFreeAt.toISOString(),
         status: input.status,
         source: input.source,
+        creatorKind: options.creatorKind,
         appliedPromotionsCount: input.appliedPromotions?.length ?? 0,
         serviceDurationMinutes: timingWrite.serviceDurationMinutes,
         breakAfterMinutes: timingWrite.breakAfterMinutes,

@@ -812,6 +812,7 @@ export async function createBotConfirmedBooking(
           clientId,
           comment: null,
         },
+        "TEYA",
         runtime,
       );
 

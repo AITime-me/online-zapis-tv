@@ -1111,7 +1111,7 @@ async function runDbIntegrationSuite(): Promise<void> {
           source: "INTERNAL",
         },
         user.id,
-        { allowAppointmentOverlap: true },
+        { allowAppointmentOverlap: true, creatorKind: "MANAGER" },
       );
       createdAppointmentIds.push(created.appointment.id);
       assert.equal(created.clientLink.status, "not_applicable");
@@ -1287,7 +1287,7 @@ async function runDbIntegrationSuite(): Promise<void> {
           clientId: client.id,
         },
         user.id,
-        { allowAppointmentOverlap: true },
+        { allowAppointmentOverlap: true, creatorKind: "MANAGER" },
       );
       createdAppointmentIds.push(created.appointment.id);
       assert.equal(created.appointment.clientId, client.id);
@@ -1323,7 +1323,7 @@ async function runDbIntegrationSuite(): Promise<void> {
           source: "INTERNAL",
         },
         user.id,
-        { allowAppointmentOverlap: true },
+        { allowAppointmentOverlap: true, creatorKind: "MANAGER" },
       );
       createdAppointmentIds.push(created.appointment.id);
       const linked = await updateAppointment(created.appointment.id, {
@@ -1385,7 +1385,7 @@ async function runDbIntegrationSuite(): Promise<void> {
           source: "INTERNAL",
         },
         user.id,
-        { allowAppointmentOverlap: true },
+        { allowAppointmentOverlap: true, creatorKind: "MANAGER" },
       );
       createdAppointmentIds.push(created.appointment.id);
 

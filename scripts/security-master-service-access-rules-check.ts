@@ -342,7 +342,7 @@ async function testRealProductionAppointmentEntrypoints(): Promise<void> {
     await service.createAppointment(
       manualCreateInput(),
       "44444444-4444-4444-8444-444444444444",
-      undefined,
+      { creatorKind: "MANAGER" },
       harness.runtime,
     );
     assert.ok(
@@ -378,7 +378,7 @@ async function testRealProductionAppointmentEntrypoints(): Promise<void> {
       service.createAppointment(
         manualCreateInput(),
         "44444444-4444-4444-8444-444444444444",
-        undefined,
+        { creatorKind: "MANAGER" },
         harness.runtime,
       ),
     );
@@ -402,7 +402,7 @@ async function testRealProductionAppointmentEntrypoints(): Promise<void> {
           await service.createAppointment(
             manualCreateInput(),
             "44444444-4444-4444-8444-444444444444",
-            undefined,
+            { creatorKind: "MANAGER" },
             harness.runtime,
           );
           assert.equal(harness.events.includes("appointment.create"), true);
@@ -445,7 +445,7 @@ async function testRealProductionAppointmentEntrypoints(): Promise<void> {
     await service.updateAppointment(
       APPOINTMENT_ID,
       { masterId: M2, serviceId: S2 },
-      undefined,
+      { creatorKind: "MANAGER" },
       harness.runtime,
     );
     assert.deepEqual(
@@ -471,7 +471,7 @@ async function testRealProductionAppointmentEntrypoints(): Promise<void> {
     await service.updateAppointment(
       APPOINTMENT_ID,
       { comment: "stale PATCH B comment" },
-      undefined,
+      { creatorKind: "MANAGER" },
       harness.runtime,
     );
     assert.equal(harness.getState().masterId, M2);
