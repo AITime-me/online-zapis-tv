@@ -256,6 +256,7 @@ async function tryPrismaIntegration(): Promise<"ok" | "skipped"> {
         clientPhone: "+79990000101",
       },
       user.id,
+      { creatorKind: "MANAGER" },
     );
     createdIds.push(a.appointment.id);
 
@@ -267,6 +268,7 @@ async function tryPrismaIntegration(): Promise<"ok" | "skipped"> {
           clientPhone: "+79990000102",
         },
         user.id,
+      { creatorKind: "MANAGER" },
       );
       assert.fail("expected APPOINTMENT_OVERLAP");
     } catch (error) {
@@ -281,7 +283,7 @@ async function tryPrismaIntegration(): Promise<"ok" | "skipped"> {
         clientPhone: "+79990000102",
       },
       user.id,
-      { allowAppointmentOverlap: true },
+      { allowAppointmentOverlap: true, creatorKind: "MANAGER" },
     );
     createdIds.push(b.appointment.id);
 
@@ -293,6 +295,7 @@ async function tryPrismaIntegration(): Promise<"ok" | "skipped"> {
           clientPhone: "+79990000103",
         },
         user.id,
+      { creatorKind: "MANAGER" },
       );
       assert.fail("expected APPOINTMENT_OVERLAP after A+B");
     } catch (error) {
@@ -307,7 +310,7 @@ async function tryPrismaIntegration(): Promise<"ok" | "skipped"> {
         clientPhone: "+79990000103",
       },
       user.id,
-      { allowAppointmentOverlap: true },
+      { allowAppointmentOverlap: true, creatorKind: "MANAGER" },
     );
     createdIds.push(c.appointment.id);
 
@@ -318,7 +321,7 @@ async function tryPrismaIntegration(): Promise<"ok" | "skipped"> {
         clientPhone: "+79990000104",
       },
       user.id,
-      { allowAppointmentOverlap: true },
+      { allowAppointmentOverlap: true, creatorKind: "MANAGER" },
     );
     createdIds.push(d.appointment.id);
 
@@ -349,7 +352,7 @@ async function tryPrismaIntegration(): Promise<"ok" | "skipped"> {
           clientPhone: "+79990000105",
         },
         user.id,
-        { allowAppointmentOverlap: true },
+        { allowAppointmentOverlap: true, creatorKind: "MANAGER" },
       );
       assert.fail("expected SCHEDULE_BLOCK");
     } catch (error) {
@@ -379,7 +382,7 @@ async function tryPrismaIntegration(): Promise<"ok" | "skipped"> {
           clientPhone: "+79990000106",
         },
         user.id,
-        { allowAppointmentOverlap: true },
+        { allowAppointmentOverlap: true, creatorKind: "MANAGER" },
       );
       assert.fail("expected FULL_DAY_BLOCK");
     } catch (error) {

@@ -52,6 +52,7 @@ async function main() {
         source: "INTERNAL",
       },
       user.id,
+      { creatorKind: "MANAGER" },
     );
     createdIds.push(first.appointment.id);
 
@@ -78,6 +79,7 @@ async function main() {
           source: "INTERNAL",
         },
         user.id,
+      { creatorKind: "MANAGER" },
       );
     } catch (error) {
       conflictAt1100 = error instanceof AppointmentConflictError;
@@ -100,6 +102,7 @@ async function main() {
         source: "INTERNAL",
       },
       user.id,
+      { creatorKind: "MANAGER" },
     );
     createdIds.push(second.appointment.id);
 

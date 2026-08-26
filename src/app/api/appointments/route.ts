@@ -4,6 +4,7 @@ import {
   WRITE_SCHEDULE_ROLES,
   requireProtectedMutatingApi,
 } from "@/lib/auth/api-access";
+import { creatorKindFromAuthenticatedRole } from "@/lib/schedule/appointment-creator-kind";
 import {
   AppointmentConflictError,
   AppointmentValidationError,
@@ -13,6 +14,7 @@ import {
 
 type ManualCreateAppointmentBody = AppointmentWriteInput & {
   allowAppointmentOverlap?: unknown;
+  creatorKind?: unknown;
 };
 
 export async function POST(request: Request) {
@@ -32,11 +34,19 @@ export async function POST(request: Request) {
       appointmentInput as Record<string, unknown>,
       "allowAppointmentOverlap",
     );
+    // Never trust client-supplied creator provenance.
+    Reflect.deleteProperty(
+      appointmentInput as Record<string, unknown>,
+      "creatorKind",
+    );
 
     const result = await createAppointment(
       appointmentInput,
       authResult.user.id,
-      { allowAppointmentOverlap },
+      {
+        allowAppointmentOverlap,
+        creatorKind: creatorKindFromAuthenticatedRole(authResult.user.role),
+      },
     );
     return NextResponse.json({
       ok: true,
