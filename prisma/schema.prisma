@@ -426,6 +426,7 @@ model Appointment {
   @@index([masterId, startsAt, endsAt])
   @@index([startsAt])
   @@index([clientId])
+  @@index([creatorKind, createdAt, id], map: "appointments_creator_kind_created_at_id_idx")
   @@map("appointments")
 }
 
