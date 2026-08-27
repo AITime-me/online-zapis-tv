@@ -28,6 +28,7 @@ import {
   clearBookingFlowSiteAttribution,
   type SiteAttribution,
 } from "@/lib/attribution/site-attribution";
+import { clearBookingFlowAcquisitionEvidence } from "@/lib/attribution/trusted-acquisition";
 
 export type BookingRequestFormType =
   | "MANAGER_REQUEST"
@@ -39,6 +40,7 @@ type BookingManagerRequestFormProps = {
   master?: BookingCatalogMaster | null;
   service?: { id: string; publicName: string } | null;
   attribution: SiteAttribution;
+  acquisitionEvidenceToken?: string | null;
   onAttributionCompleted: () => void;
   onClose: () => void;
 };
@@ -49,6 +51,7 @@ export function BookingManagerRequestForm({
   master,
   service = null,
   attribution,
+  acquisitionEvidenceToken = null,
   onAttributionCompleted,
   onClose,
 }: BookingManagerRequestFormProps) {
@@ -170,6 +173,7 @@ export function BookingManagerRequestForm({
           personalDataConsent,
           offerAcknowledgement,
           attribution,
+          acquisitionEvidenceToken,
         }),
       });
       const data = (await response.json()) as {
@@ -189,6 +193,7 @@ export function BookingManagerRequestForm({
       }
       clearIdempotencyKey(idempotencyScope);
       clearBookingFlowSiteAttribution(window.sessionStorage);
+      clearBookingFlowAcquisitionEvidence(window.sessionStorage);
       onAttributionCompleted();
       setSuccess(true);
     } catch (submitError) {

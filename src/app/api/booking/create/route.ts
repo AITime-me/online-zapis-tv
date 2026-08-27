@@ -25,6 +25,10 @@ import { PublicMorningSlotCutoffError } from "@/lib/booking/public-morning-slot-
 import { buildManageUrl } from "@/lib/booking/manage-token";
 import { LegalDocumentsNotReadyError } from "@/services/LegalDocumentService";
 import { parseSiteAttribution } from "@/lib/attribution/site-attribution";
+import {
+  discardClientSourceMarker,
+  normalizeAcquisitionEvidenceTokenInput,
+} from "@/lib/attribution/trusted-acquisition";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -40,6 +44,7 @@ type CreateBookingBody = {
   personalDataConsent?: boolean;
   offerAcknowledgement?: boolean;
   attribution?: unknown;
+  acquisitionEvidenceToken?: unknown;
 };
 
 function toPublicCreatedAppointment(appointment: Awaited<
@@ -158,7 +163,10 @@ export async function POST(request: Request) {
       comment: comment || undefined,
       personalDataConsent: true,
       offerAcknowledgement: true,
-      attribution: attribution.value,
+      attribution: discardClientSourceMarker(attribution.value),
+      acquisitionEvidenceToken: normalizeAcquisitionEvidenceTokenInput(
+        body.acquisitionEvidenceToken,
+      ),
     });
 
     if (!created.issuedManageToken) {

@@ -90,7 +90,7 @@ function testCaptureAndNormalization(): void {
     utm_content: "book",
     utm_term: "plasma",
     referrer: "https://vk.com",
-    source_marker: "campaign-link",
+    source_marker: null,
   });
   assert.equal(hasObservedSiteAttribution(captured), true);
 

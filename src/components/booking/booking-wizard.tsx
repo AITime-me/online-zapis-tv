@@ -72,6 +72,11 @@ import {
   EMPTY_SITE_ATTRIBUTION,
   getOrCreateBookingFlowSiteAttribution,
 } from "@/lib/attribution/site-attribution";
+import {
+  clearBookingFlowAcquisitionEvidence,
+  getOrCreateBookingFlowAcquisitionEvidence,
+  stripAcquisitionEvidenceFromHash,
+} from "@/lib/attribution/trusted-acquisition";
 
 type Step = "service" | "master" | "date" | "time" | "confirm" | "success";
 
@@ -158,6 +163,16 @@ export function BookingWizard() {
           document.referrer || null,
         ),
   );
+  const [acquisitionEvidenceToken, setAcquisitionEvidenceToken] = useState<
+    string | null
+  >(() =>
+    typeof window === "undefined"
+      ? null
+      : getOrCreateBookingFlowAcquisitionEvidence(
+          window.sessionStorage,
+          window.location.hash,
+        ),
+  );
   const [step, setStep] = useState<Step>("service");
   const [bookingPath, setBookingPath] = useState<BookingPathMode>("by-service");
   const [categories, setCategories] = useState<BookingCatalogCategory[]>([]);
@@ -205,7 +220,9 @@ export function BookingWizard() {
 
   const completeAttributionFlow = useCallback(() => {
     clearBookingFlowSiteAttribution(window.sessionStorage);
+    clearBookingFlowAcquisitionEvidence(window.sessionStorage);
     setSiteAttribution(EMPTY_SITE_ATTRIBUTION);
+    setAcquisitionEvidenceToken(null);
   }, []);
 
   const captureBookingFlowSiteAttribution = useCallback(() => {
@@ -214,6 +231,24 @@ export function BookingWizard() {
       new URLSearchParams(window.location.search),
       document.referrer || null,
     );
+  }, []);
+
+  const captureBookingFlowAcquisitionEvidence = useCallback(() => {
+    return getOrCreateBookingFlowAcquisitionEvidence(
+      window.sessionStorage,
+      window.location.hash,
+    );
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const remainingHash = stripAcquisitionEvidenceFromHash(window.location.hash);
+    if (remainingHash !== window.location.hash) {
+      const nextUrl = `${window.location.pathname}${window.location.search}${remainingHash}`;
+      window.history.replaceState(window.history.state, "", nextUrl);
+    }
   }, []);
 
   const openBookingRequestForm = useCallback(
@@ -225,13 +260,15 @@ export function BookingWizard() {
       // Re-arm after a completed BookingRequest (session cleared) without remount.
       // Mid-flow reopen restores the frozen first-touch snapshot via getOrCreate.
       setSiteAttribution(captureBookingFlowSiteAttribution());
+      setAcquisitionEvidenceToken(captureBookingFlowAcquisitionEvidence());
       setRequestForm(next);
     },
-    [captureBookingFlowSiteAttribution],
+    [captureBookingFlowSiteAttribution, captureBookingFlowAcquisitionEvidence],
   );
 
   const resetWizard = useCallback(() => {
     setSiteAttribution(captureBookingFlowSiteAttribution());
+    setAcquisitionEvidenceToken(captureBookingFlowAcquisitionEvidence());
     setStep("service");
     setBookingPath("by-service");
     setSelection({
@@ -252,7 +289,7 @@ export function BookingWizard() {
     setMasterFirstView("masters");
     setAvailableDays([]);
     setSlots([]);
-  }, [captureBookingFlowSiteAttribution]);
+  }, [captureBookingFlowSiteAttribution, captureBookingFlowAcquisitionEvidence]);
 
   const confirmPhone = useMemo(
     () => buildFullPhoneNumber(selection.countryCode, selection.phoneLocal),
@@ -726,6 +763,7 @@ export function BookingWizard() {
       personalDataConsent: selection.personalDataConsent,
       offerAcknowledgement: selection.offerAcknowledgement,
       attribution: siteAttribution,
+      acquisitionEvidenceToken,
     };
 
     clientDebugLog("booking.submit.request", { route: "/api/booking/create" });
@@ -993,6 +1031,7 @@ export function BookingWizard() {
         master={requestForm?.master}
         service={requestForm?.service}
         attribution={siteAttribution}
+        acquisitionEvidenceToken={acquisitionEvidenceToken}
         onAttributionCompleted={completeAttributionFlow}
         onClose={() => setRequestForm(null)}
       />

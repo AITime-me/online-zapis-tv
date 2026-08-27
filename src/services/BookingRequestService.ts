@@ -76,8 +76,13 @@ import {
   resolveAcceptanceSourceForBookingRequestType,
 } from "@/services/LegalAcceptanceService";
 import { assertRequiredLegalDocumentsPublished } from "@/services/LegalDocumentService";
-import type { SiteAttribution } from "@/lib/attribution/site-attribution";
+import {
+  EMPTY_SITE_ATTRIBUTION,
+  type SiteAttribution,
+} from "@/lib/attribution/site-attribution";
 import { createBookingRequestSiteAttribution } from "@/services/SiteAttributionService";
+import { claimAcquisitionEvidenceForBookingRequest } from "@/services/AcquisitionAttributionService";
+import { applyTrustedSourceMarker } from "@/lib/attribution/trusted-acquisition";
 
 export class BookingRequestValidationError extends Error {
   constructor(message: string) {
@@ -120,6 +125,11 @@ export type CreateBookingRequestInput = {
    */
   now?: Date;
   attribution?: SiteAttribution;
+  /**
+   * Opaque one-time acquisition evidence bearer. Claimed only inside the
+   * create transaction on first success — never on idempotent replay.
+   */
+  acquisitionEvidenceToken?: string | null;
 };
 
 type ResolvedBookingRequestService = {
@@ -698,7 +708,16 @@ async function createGameBookingRequest(
     await createBookingRequestSiteAttribution(
       tx,
       created.id,
-      input.attribution,
+      applyTrustedSourceMarker(
+        input.attribution ?? EMPTY_SITE_ATTRIBUTION,
+        (
+          await claimAcquisitionEvidenceForBookingRequest(
+            tx,
+            input.acquisitionEvidenceToken,
+            created.id,
+          )
+        )?.sourceKey ?? null,
+      ),
     );
 
     await recordRequiredPublicFormAcceptances(tx, {
@@ -846,7 +865,16 @@ async function createRegularBookingRequest(
       await createBookingRequestSiteAttribution(
         tx,
         created.id,
-        input.attribution,
+        applyTrustedSourceMarker(
+          input.attribution ?? EMPTY_SITE_ATTRIBUTION,
+          (
+            await claimAcquisitionEvidenceForBookingRequest(
+              tx,
+              input.acquisitionEvidenceToken,
+              created.id,
+            )
+          )?.sourceKey ?? null,
+        ),
       );
 
       await recordRequiredPublicFormAcceptances(tx, {
@@ -970,6 +998,7 @@ export async function createBookingRequest(
     gamePlayId: resolvedGamePlayId,
     gameSessionId,
     attribution: input.attribution,
+    acquisitionEvidenceToken: input.acquisitionEvidenceToken,
   });
   const payloadHash = computeIdempotencyPayloadHash(payload);
 

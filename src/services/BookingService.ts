@@ -118,6 +118,7 @@ export type OnlineBookingInput = {
   personalDataConsent: boolean;
   offerAcknowledgement: boolean;
   attribution?: SiteAttribution;
+  acquisitionEvidenceToken?: string | null;
 };
 
 /**
@@ -1148,5 +1149,6 @@ export async function createOnlineBooking(
     appliedPromotions,
     clientId: clientLink.clientId,
     siteAttribution: input.attribution,
+    acquisitionEvidenceToken: input.acquisitionEvidenceToken,
   });
 }
