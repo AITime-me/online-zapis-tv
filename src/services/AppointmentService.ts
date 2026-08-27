@@ -763,7 +763,11 @@ async function createAppointmentRecord(
       if (input.clientId) {
         try {
           await assertLinkableClientForAppointment(input.clientId, tx);
-        } catch {
+        } catch (error) {
+          // Preserve SSI failures so Serializable retries still apply.
+          if (isAppointmentSerializationFailure(error)) {
+            throw error;
+          }
           throw new AppointmentValidationError(
             "Выбранный клиент недоступен для привязки",
           );
@@ -1062,7 +1066,10 @@ export async function updateAppointment(
       } else if (typeof input.clientId === "string" && input.clientId.trim()) {
         try {
           await assertLinkableClientForAppointment(input.clientId.trim(), tx);
-        } catch {
+        } catch (error) {
+          if (isAppointmentSerializationFailure(error)) {
+            throw error;
+          }
           throw new AppointmentValidationError(
             "Выбранный клиент недоступен для привязки",
           );

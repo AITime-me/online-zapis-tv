@@ -1198,10 +1198,11 @@ function testStaticArchitecture(): void {
   assert.match(service, /assertOnlineBookable/);
   assert.match(service, /getAvailableTimeSlots/);
   assert.match(service, /parseBotSlotId/);
-  assert.match(service, /runSerializableAppointmentWrite/);
+  assert.match(service, /runBotBookingSerializableWrite/);
   assert.match(service, /CLIENT_AMBIGUOUS/);
   assert.match(service, /pg_advisory_xact_lock/);
   assert.match(service, /isAppointmentSerializationFailure/);
+  assert.match(service, /isBotBookingStartTaken/);
   assert.doesNotMatch(service, /createOnlineAppointment\(/);
   assert.doesNotMatch(service, /source:\s*"ONLINE"/);
   assert.doesNotMatch(service, /n8n|amoCRM|fetch\(/);
