@@ -166,7 +166,9 @@ export function captureSiteAttribution(
     utm_content: searchParams.get("utm_content"),
     utm_term: searchParams.get("utm_term"),
     referrer: referrer ?? null,
-    source_marker: searchParams.get("source_marker"),
+    // Query values are observable metadata, never trusted acquisition proof.
+    // Only booking route handlers may add a server-verified source marker.
+    source_marker: null,
   };
   return normalizeAttributionRecord(observed, "null");
 }

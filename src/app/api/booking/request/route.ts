@@ -22,6 +22,10 @@ import {
 } from "@/services/BookingRequestService";
 import { LegalDocumentsNotReadyError } from "@/services/LegalDocumentService";
 import { parseSiteAttribution } from "@/lib/attribution/site-attribution";
+import {
+  discardClientSourceMarker,
+  normalizeAcquisitionEvidenceTokenInput,
+} from "@/lib/attribution/trusted-acquisition";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -37,6 +41,7 @@ type CreateBookingRequestBody = {
   offerAcknowledgement?: boolean;
   gamePlayId?: string | null;
   attribution?: unknown;
+  acquisitionEvidenceToken?: unknown;
 };
 
 export async function POST(request: Request) {
@@ -148,7 +153,10 @@ export async function POST(request: Request) {
           : body.gamePlayId ?? null,
       idempotencyKey: idempotencyValidation.key,
       request,
-      attribution: attribution.value,
+      attribution: discardClientSourceMarker(attribution.value),
+      acquisitionEvidenceToken: normalizeAcquisitionEvidenceTokenInput(
+        body.acquisitionEvidenceToken,
+      ),
     });
 
     return NextResponse.json(

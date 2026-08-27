@@ -34,7 +34,10 @@ import { resolveServiceTimingForMaster } from "@/services/ServiceTimingService";
 import { createManageToken, createPublicRequestReference, hashManageToken } from "@/lib/booking/manage-token";
 import { recordRequiredPublicFormAcceptances } from "@/services/LegalAcceptanceService";
 import type { SiteAttribution } from "@/lib/attribution/site-attribution";
+import { EMPTY_SITE_ATTRIBUTION } from "@/lib/attribution/site-attribution";
 import { createAppointmentSiteAttribution } from "@/services/SiteAttributionService";
+import { claimAcquisitionEvidenceForAppointment } from "@/services/AcquisitionAttributionService";
+import { applyTrustedSourceMarker } from "@/lib/attribution/trusted-acquisition";
 import type { AppliedPromotionRecord } from "@/types/applied-promotion";
 import {
   APPOINTMENT_BUSY_CONFLICT_MESSAGE,
@@ -235,6 +238,11 @@ export type AppointmentWriteInput = {
   recordPublicLegalAcceptances?: boolean;
   /** Immutable browser-observed provenance; accepted only by the ONLINE entrypoint. */
   siteAttribution?: SiteAttribution;
+  /**
+   * Opaque one-time acquisition evidence bearer. Claimed only inside the
+   * ONLINE create transaction — never trusted from a pre-TX lookup.
+   */
+  acquisitionEvidenceToken?: string | null;
 };
 
 export type AppointmentDto = {
@@ -814,10 +822,18 @@ async function createAppointmentRecord(
       }
 
       if (input.source === "ONLINE") {
+        const claimed = await claimAcquisitionEvidenceForAppointment(
+          tx,
+          input.acquisitionEvidenceToken,
+          created.id,
+        );
         await createAppointmentSiteAttribution(
           tx,
           created.id,
-          input.siteAttribution,
+          applyTrustedSourceMarker(
+            input.siteAttribution ?? EMPTY_SITE_ATTRIBUTION,
+            claimed?.sourceKey ?? null,
+          ),
         );
       }
 

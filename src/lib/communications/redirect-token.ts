@@ -1,18 +1,21 @@
-import { createHash, randomBytes } from "node:crypto";
 import {
   appendCampaignUtmParams,
   assertNoPiiInUrl,
   assertSafeCommCtaLink,
 } from "@/lib/communications/cta-link-policy";
+import {
+  generateOpaqueToken,
+  hashOpaqueToken,
+} from "@/lib/security/opaque-token";
 
 export const COMM_REDIRECT_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 export function generateOpaqueRedirectToken(): string {
-  return randomBytes(32).toString("base64url");
+  return generateOpaqueToken();
 }
 
 export function hashRedirectToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
+  return hashOpaqueToken(token);
 }
 
 export function buildTrackedRedirectTarget(input: {

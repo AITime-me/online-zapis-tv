@@ -9,6 +9,10 @@ import {
   hasObservedSiteAttribution,
   type SiteAttribution,
 } from "@/lib/attribution/site-attribution";
+import {
+  hashOpaqueToken,
+  isPlausibleOpaqueToken,
+} from "@/lib/security/opaque-token";
 
 const DEV_FALLBACK_SECRET = "dev-idempotency-hmac-not-for-production";
 
@@ -41,6 +45,8 @@ export type BookingIdempotencyPayload = {
   gamePlayId: string | null;
   gameSessionId: string | null;
   attribution?: SiteAttribution;
+  /** Stable SHA-256 of the opaque evidence bearer when supplied. */
+  acquisitionEvidenceTokenHash?: string;
 };
 
 export function normalizeBookingClientName(name: string): string {
@@ -49,6 +55,15 @@ export function normalizeBookingClientName(name: string): string {
 
 export function normalizeBookingClientPhone(phone: string): string {
   return normalizePhone(phone) ?? phone.trim();
+}
+
+export function fingerprintAcquisitionEvidenceToken(
+  token: string | null | undefined,
+): string | undefined {
+  if (!token || !isPlausibleOpaqueToken(token)) {
+    return undefined;
+  }
+  return hashOpaqueToken(token);
 }
 
 export function buildBookingIdempotencyPayload(input: {
@@ -63,11 +78,19 @@ export function buildBookingIdempotencyPayload(input: {
   gamePlayId: string | null;
   gameSessionId: string | null;
   attribution?: SiteAttribution;
+  acquisitionEvidenceToken?: string | null;
 }): BookingIdempotencyPayload {
+  // Client source_marker is never part of trusted identity.
+  const observedAttribution = input.attribution
+    ? { ...input.attribution, source_marker: null }
+    : undefined;
   const attribution =
-    input.attribution && hasObservedSiteAttribution(input.attribution)
-      ? { ...input.attribution }
+    observedAttribution && hasObservedSiteAttribution(observedAttribution)
+      ? observedAttribution
       : undefined;
+  const acquisitionEvidenceTokenHash = fingerprintAcquisitionEvidenceToken(
+    input.acquisitionEvidenceToken,
+  );
   return {
     clientName: normalizeBookingClientName(input.clientName),
     clientPhone: normalizeBookingClientPhone(input.clientPhone),
@@ -80,6 +103,9 @@ export function buildBookingIdempotencyPayload(input: {
     gamePlayId: input.gamePlayId?.trim() || null,
     gameSessionId: input.gameSessionId?.trim() || null,
     ...(attribution ? { attribution } : {}),
+    ...(acquisitionEvidenceTokenHash
+      ? { acquisitionEvidenceTokenHash }
+      : {}),
   };
 }
 
@@ -97,6 +123,8 @@ function canonicalizePayload(payload: BookingIdempotencyPayload): string {
     type: payload.type,
   };
   if (payload.attribution) {
+    // Legacy A2.3a canonical form always included source_marker (null when
+    // untrusted). Omitting it breaks bare replay against pre-A2.3b1 rows.
     ordered.attribution = {
       utm_source: payload.attribution.utm_source,
       utm_medium: payload.attribution.utm_medium,
@@ -107,8 +135,19 @@ function canonicalizePayload(payload: BookingIdempotencyPayload): string {
       source_marker: payload.attribution.source_marker,
     };
   }
+  if (payload.acquisitionEvidenceTokenHash) {
+    ordered.acquisitionEvidenceTokenHash =
+      payload.acquisitionEvidenceTokenHash;
+  }
 
   return JSON.stringify(ordered);
+}
+
+/** Exported for fixed legacy fingerprint vector proofs only. */
+export function canonicalizeBookingIdempotencyPayloadForTests(
+  payload: BookingIdempotencyPayload,
+): string {
+  return canonicalizePayload(payload);
 }
 
 export function computeIdempotencyPayloadHash(

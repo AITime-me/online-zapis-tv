@@ -180,11 +180,13 @@ async function main(): Promise<void> {
       utm_content: "book",
       utm_term: "plasma",
       referrer: "https://vk.com/private/path?client=secret#fragment",
-      source_marker: "campaign-link",
+      source_marker: "forged-client-marker",
     };
+    // Client source_marker is never persisted without a claimed acquisition evidence.
     const attribution = {
       ...submittedAttribution,
       referrer: "https://vk.com",
+      source_marker: null,
     };
     const appointmentResult = await createOnlineAppointment(
       {
