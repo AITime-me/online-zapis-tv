@@ -43,6 +43,7 @@ import {
   AppointmentValidationError,
   createBotOnlineAppointment,
   createAppointmentServiceRuntime,
+  isAppointmentSerializationFailure,
   runSerializableAppointmentWrite,
 } from "@/services/AppointmentService";
 import {
@@ -841,9 +842,44 @@ export async function createBotConfirmedBooking(
       body: toBotBookingSuccessBody(snapshot, false),
     };
   } catch (error) {
-    const mapped = mapDomainFailure(error);
+    let mapped = mapDomainFailure(error);
     if (!(error instanceof BotBookingCreateError)) {
       safeLogError("bot-internal-booking-create", error);
+    }
+
+    // After Serializable retry exhaustion, a concurrent winner may already own
+    // the interval. Prefer durable domain conflict over INTERNAL_ERROR so
+    // callers/idempotency see SLOT_NO_LONGER_AVAILABLE (CURSOR-24 Race C/D).
+    if (
+      mapped.code === "INTERNAL_ERROR" &&
+      isAppointmentSerializationFailure(error)
+    ) {
+      try {
+        const slotRecheck = parseBotSlotId(request.slotId);
+        if (slotRecheck.ok) {
+          const now = options.now ?? getStudioNow();
+          const studioToday = formatStudioDateKey(now);
+          const availableSlots = await getAvailableTimeSlots(
+            slotRecheck.value.masterId,
+            slotRecheck.value.serviceId,
+            slotRecheck.value.dateKey,
+            studioToday,
+            { now },
+          );
+          if (!availableSlots.includes(slotRecheck.value.startTime)) {
+            mapped = new BotBookingCreateError(
+              "SLOT_NO_LONGER_AVAILABLE",
+              fixedErrorMessage("SLOT_NO_LONGER_AVAILABLE"),
+              { finalForIdempotency: true },
+            );
+          }
+        }
+      } catch (recheckError) {
+        safeLogError(
+          "bot-internal-booking-create-serial-recheck",
+          recheckError,
+        );
+      }
     }
 
     try {

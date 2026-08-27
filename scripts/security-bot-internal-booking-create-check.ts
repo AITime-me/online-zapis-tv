@@ -1201,6 +1201,7 @@ function testStaticArchitecture(): void {
   assert.match(service, /runSerializableAppointmentWrite/);
   assert.match(service, /CLIENT_AMBIGUOUS/);
   assert.match(service, /pg_advisory_xact_lock/);
+  assert.match(service, /isAppointmentSerializationFailure/);
   assert.doesNotMatch(service, /createOnlineAppointment\(/);
   assert.doesNotMatch(service, /source:\s*"ONLINE"/);
   assert.doesNotMatch(service, /n8n|amoCRM|fetch\(/);
