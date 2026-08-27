@@ -24,6 +24,7 @@ import {
 import { PublicMorningSlotCutoffError } from "@/lib/booking/public-morning-slot-cutoff";
 import { buildManageUrl } from "@/lib/booking/manage-token";
 import { LegalDocumentsNotReadyError } from "@/services/LegalDocumentService";
+import { parseSiteAttribution } from "@/lib/attribution/site-attribution";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -38,6 +39,7 @@ type CreateBookingBody = {
   comment?: string | null;
   personalDataConsent?: boolean;
   offerAcknowledgement?: boolean;
+  attribution?: unknown;
 };
 
 function toPublicCreatedAppointment(appointment: Awaited<
@@ -98,6 +100,12 @@ export async function POST(request: Request) {
     const clientPhone = typeof body.phone === "string" ? body.phone.trim() : "";
     const comment =
       typeof body.comment === "string" ? body.comment.trim() : "";
+    const attribution = parseSiteAttribution(body.attribution);
+    if (!attribution.ok) {
+      return errorResponse("Некорректные данные источника перехода", 400, {
+        code: "INVALID_ATTRIBUTION",
+      });
+    }
 
     if (!body.serviceId || !body.masterId || !body.date || !body.startTime) {
       return errorResponse("Заполните все поля", 400, {
@@ -150,6 +158,7 @@ export async function POST(request: Request) {
       comment: comment || undefined,
       personalDataConsent: true,
       offerAcknowledgement: true,
+      attribution: attribution.value,
     });
 
     if (!created.issuedManageToken) {

@@ -76,6 +76,8 @@ import {
   resolveAcceptanceSourceForBookingRequestType,
 } from "@/services/LegalAcceptanceService";
 import { assertRequiredLegalDocumentsPublished } from "@/services/LegalDocumentService";
+import type { SiteAttribution } from "@/lib/attribution/site-attribution";
+import { createBookingRequestSiteAttribution } from "@/services/SiteAttributionService";
 
 export class BookingRequestValidationError extends Error {
   constructor(message: string) {
@@ -117,6 +119,7 @@ export type CreateBookingRequestInput = {
    * Production API callers omit this and use server wall clock.
    */
   now?: Date;
+  attribution?: SiteAttribution;
 };
 
 type ResolvedBookingRequestService = {
@@ -692,6 +695,12 @@ async function createGameBookingRequest(
       include: bookingRequestInclude,
     });
 
+    await createBookingRequestSiteAttribution(
+      tx,
+      created.id,
+      input.attribution,
+    );
+
     await recordRequiredPublicFormAcceptances(tx, {
       source: resolveAcceptanceSourceForBookingRequestType(
         input.type === "MANAGER_REQUEST"
@@ -834,6 +843,12 @@ async function createRegularBookingRequest(
         include: bookingRequestInclude,
       });
 
+      await createBookingRequestSiteAttribution(
+        tx,
+        created.id,
+        input.attribution,
+      );
+
       await recordRequiredPublicFormAcceptances(tx, {
         source: resolveAcceptanceSourceForBookingRequestType(
           input.type === "MANAGER_REQUEST"
@@ -954,6 +969,7 @@ export async function createBookingRequest(
     offerAcknowledgement: input.offerAcknowledgement,
     gamePlayId: resolvedGamePlayId,
     gameSessionId,
+    attribution: input.attribution,
   });
   const payloadHash = computeIdempotencyPayloadHash(payload);
 

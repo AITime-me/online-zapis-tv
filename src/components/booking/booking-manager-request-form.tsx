@@ -24,6 +24,10 @@ import {
   getOrCreateIdempotencyKey,
   resetIdempotencyKey,
 } from "@/lib/booking-requests/idempotency-client";
+import {
+  clearBookingFlowSiteAttribution,
+  type SiteAttribution,
+} from "@/lib/attribution/site-attribution";
 
 export type BookingRequestFormType =
   | "MANAGER_REQUEST"
@@ -34,6 +38,8 @@ type BookingManagerRequestFormProps = {
   type: BookingRequestFormType;
   master?: BookingCatalogMaster | null;
   service?: { id: string; publicName: string } | null;
+  attribution: SiteAttribution;
+  onAttributionCompleted: () => void;
   onClose: () => void;
 };
 
@@ -42,6 +48,8 @@ export function BookingManagerRequestForm({
   type,
   master,
   service = null,
+  attribution,
+  onAttributionCompleted,
   onClose,
 }: BookingManagerRequestFormProps) {
   const [name, setName] = useState("");
@@ -161,6 +169,7 @@ export function BookingManagerRequestForm({
           type,
           personalDataConsent,
           offerAcknowledgement,
+          attribution,
         }),
       });
       const data = (await response.json()) as {
@@ -179,6 +188,8 @@ export function BookingManagerRequestForm({
         throw new Error(data.error ?? "Не удалось отправить заявку");
       }
       clearIdempotencyKey(idempotencyScope);
+      clearBookingFlowSiteAttribution(window.sessionStorage);
+      onAttributionCompleted();
       setSuccess(true);
     } catch (submitError) {
       setError(

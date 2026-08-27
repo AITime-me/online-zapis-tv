@@ -67,6 +67,7 @@ import {
   runSerializableAppointmentWrite,
 } from "@/services/AppointmentService";
 import { lookupClientIdForBotIdentity } from "@/services/BotIdentityLookupService";
+import { mapStoredSiteAttribution } from "@/services/SiteAttributionService";
 
 const FEED_TYPES: BookingRequestType[] = [
   "MANAGER_REQUEST",
@@ -191,6 +192,21 @@ const bookingRequestSelect = {
   appointmentId: true,
   gameCatalogId: true,
   comment: true,
+} as const;
+
+const bookingRequestContextSelect = {
+  ...bookingRequestSelect,
+  siteAttribution: {
+    select: {
+      utmSource: true,
+      utmMedium: true,
+      utmCampaign: true,
+      utmContent: true,
+      utmTerm: true,
+      referrer: true,
+      sourceMarker: true,
+    },
+  },
 } as const;
 
 type BookingRequestRow = {
@@ -381,7 +397,7 @@ export async function getBotBookingRequest(
   try {
     const row = await prisma.bookingRequest.findUnique({
       where: { id },
-      select: bookingRequestSelect,
+      select: bookingRequestContextSelect,
     });
     if (!row) {
       return fail("NOT_FOUND");
@@ -399,7 +415,16 @@ export async function getBotBookingRequest(
       return fail("NOT_FOUND");
     }
 
-    return { ok: true, body: { ok: true, item } };
+    return {
+      ok: true,
+      body: {
+        ok: true,
+        item: {
+          ...item,
+          attribution: mapStoredSiteAttribution(row.siteAttribution),
+        },
+      },
+    };
   } catch (error) {
     safeLogError("bot-booking-request-get", error);
     return fail("INTERNAL_ERROR");

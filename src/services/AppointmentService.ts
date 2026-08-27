@@ -33,6 +33,8 @@ import {
 import { resolveServiceTimingForMaster } from "@/services/ServiceTimingService";
 import { createManageToken, createPublicRequestReference, hashManageToken } from "@/lib/booking/manage-token";
 import { recordRequiredPublicFormAcceptances } from "@/services/LegalAcceptanceService";
+import type { SiteAttribution } from "@/lib/attribution/site-attribution";
+import { createAppointmentSiteAttribution } from "@/services/SiteAttributionService";
 import type { AppliedPromotionRecord } from "@/types/applied-promotion";
 import {
   APPOINTMENT_BUSY_CONFLICT_MESSAGE,
@@ -231,6 +233,8 @@ export type AppointmentWriteInput = {
    * ONLINE → ONLINE_BOOKING; BOT → BOT. Не использовать для INTERNAL.
    */
   recordPublicLegalAcceptances?: boolean;
+  /** Immutable browser-observed provenance; accepted only by the ONLINE entrypoint. */
+  siteAttribution?: SiteAttribution;
 };
 
 export type AppointmentDto = {
@@ -807,6 +811,14 @@ async function createAppointmentRecord(
             requestReference: publicRequestReference,
           });
         }
+      }
+
+      if (input.source === "ONLINE") {
+        await createAppointmentSiteAttribution(
+          tx,
+          created.id,
+          input.siteAttribution,
+        );
       }
 
       return created;

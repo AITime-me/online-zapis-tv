@@ -67,6 +67,11 @@ import {
   ONLINE_SERVICE_UNAVAILABLE_MESSAGE,
   SERVICE_UNAVAILABLE_CODE,
 } from "@/lib/booking/public-booking-errors";
+import {
+  clearBookingFlowSiteAttribution,
+  EMPTY_SITE_ATTRIBUTION,
+  getOrCreateBookingFlowSiteAttribution,
+} from "@/lib/attribution/site-attribution";
 
 type Step = "service" | "master" | "date" | "time" | "confirm" | "success";
 
@@ -144,6 +149,15 @@ function isServiceInCatalog(
 }
 
 export function BookingWizard() {
+  const [siteAttribution, setSiteAttribution] = useState(() =>
+    typeof window === "undefined"
+      ? EMPTY_SITE_ATTRIBUTION
+      : getOrCreateBookingFlowSiteAttribution(
+          window.sessionStorage,
+          new URLSearchParams(window.location.search),
+          document.referrer || null,
+        ),
+  );
   const [step, setStep] = useState<Step>("service");
   const [bookingPath, setBookingPath] = useState<BookingPathMode>("by-service");
   const [categories, setCategories] = useState<BookingCatalogCategory[]>([]);
@@ -178,6 +192,7 @@ export function BookingWizard() {
     startTime: null,
     ...EMPTY_CLIENT_FIELDS,
   });
+
   const [clientFieldErrors, setClientFieldErrors] = useState<ClientDataFieldErrors>(
     {},
   );
@@ -188,7 +203,35 @@ export function BookingWizard() {
     useState<RulesEngineResult | null>(null);
   const [successManageUrl, setSuccessManageUrl] = useState<string | null>(null);
 
+  const completeAttributionFlow = useCallback(() => {
+    clearBookingFlowSiteAttribution(window.sessionStorage);
+    setSiteAttribution(EMPTY_SITE_ATTRIBUTION);
+  }, []);
+
+  const captureBookingFlowSiteAttribution = useCallback(() => {
+    return getOrCreateBookingFlowSiteAttribution(
+      window.sessionStorage,
+      new URLSearchParams(window.location.search),
+      document.referrer || null,
+    );
+  }, []);
+
+  const openBookingRequestForm = useCallback(
+    (next: {
+      type: BookingRequestFormType;
+      master: BookingCatalogMaster | null;
+      service: { id: string; publicName: string } | null;
+    }) => {
+      // Re-arm after a completed BookingRequest (session cleared) without remount.
+      // Mid-flow reopen restores the frozen first-touch snapshot via getOrCreate.
+      setSiteAttribution(captureBookingFlowSiteAttribution());
+      setRequestForm(next);
+    },
+    [captureBookingFlowSiteAttribution],
+  );
+
   const resetWizard = useCallback(() => {
+    setSiteAttribution(captureBookingFlowSiteAttribution());
     setStep("service");
     setBookingPath("by-service");
     setSelection({
@@ -209,7 +252,7 @@ export function BookingWizard() {
     setMasterFirstView("masters");
     setAvailableDays([]);
     setSlots([]);
-  }, []);
+  }, [captureBookingFlowSiteAttribution]);
 
   const confirmPhone = useMemo(
     () => buildFullPhoneNumber(selection.countryCode, selection.phoneLocal),
@@ -451,7 +494,7 @@ export function BookingWizard() {
 
   const openManagerOnlyServiceRequest = (service: BookingCatalogService) => {
     if (!service.managerMasterId) {
-      setRequestForm({
+      openBookingRequestForm({
         type: "CONSULTATION_REQUEST",
         master: null,
         service: { id: service.id, publicName: service.publicName },
@@ -459,7 +502,7 @@ export function BookingWizard() {
       return;
     }
 
-    setRequestForm({
+    openBookingRequestForm({
       type: "MANAGER_REQUEST",
       master: {
         id: service.managerMasterId,
@@ -682,6 +725,7 @@ export function BookingWizard() {
       comment: selection.comment.trim() || undefined,
       personalDataConsent: selection.personalDataConsent,
       offerAcknowledgement: selection.offerAcknowledgement,
+      attribution: siteAttribution,
     };
 
     clientDebugLog("booking.submit.request", { route: "/api/booking/create" });
@@ -751,6 +795,7 @@ export function BookingWizard() {
 
       setSuccessRulesResult(bookingRulesResult);
       setSuccessManageUrl(data.manageUrl ?? null);
+      completeAttributionFlow();
       setStep("success");
     } catch (submitError) {
       setError(
@@ -947,6 +992,8 @@ export function BookingWizard() {
         type={requestForm?.type ?? "MANAGER_REQUEST"}
         master={requestForm?.master}
         service={requestForm?.service}
+        attribution={siteAttribution}
+        onAttributionCompleted={completeAttributionFlow}
         onClose={() => setRequestForm(null)}
       />
       <nav className="booking-step-nav" aria-label="Шаги записи">
@@ -1026,7 +1073,7 @@ export function BookingWizard() {
                   setMasterServices([]);
                 }}
                 onManagerRequest={(master) =>
-                  setRequestForm({
+                  openBookingRequestForm({
                     type: "MANAGER_REQUEST",
                     master,
                     service: null,
@@ -1036,7 +1083,7 @@ export function BookingWizard() {
             )}
             <BookingConsultationCard
               onRequestClick={() =>
-                setRequestForm({
+                openBookingRequestForm({
                   type: "CONSULTATION_REQUEST",
                   master: null,
                   service: null,

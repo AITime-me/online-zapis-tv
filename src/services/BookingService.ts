@@ -7,6 +7,7 @@ import {
   ONLINE_SERVICE_UNAVAILABLE_MESSAGE,
   SERVICE_UNAVAILABLE_CODE,
 } from "@/lib/booking/public-booking-errors";
+import type { SiteAttribution } from "@/lib/attribution/site-attribution";
 import type {
   BookingCatalogCategory,
   BookingCatalogMaster,
@@ -116,6 +117,7 @@ export type OnlineBookingInput = {
   comment?: string;
   personalDataConsent: boolean;
   offerAcknowledgement: boolean;
+  attribution?: SiteAttribution;
 };
 
 /**
@@ -1145,5 +1147,6 @@ export async function createOnlineBooking(
     comment: input.comment?.trim() || null,
     appliedPromotions,
     clientId: clientLink.clientId,
+    siteAttribution: input.attribution,
   });
 }

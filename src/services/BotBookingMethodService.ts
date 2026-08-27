@@ -12,6 +12,7 @@ import {
 } from "@/lib/bot-api/booking-method-types";
 import { prisma } from "@/lib/db";
 import { safeLogError } from "@/lib/logging/redact";
+import { mapStoredSiteAttribution } from "@/services/SiteAttributionService";
 
 type ServiceResult<T> =
   | { ok: true; body: T }
@@ -109,6 +110,17 @@ export async function getBotBookingMethodAppointmentContext(
         id: true,
         creatorKind: true,
         clientPhone: true,
+        siteAttribution: {
+          select: {
+            utmSource: true,
+            utmMedium: true,
+            utmCampaign: true,
+            utmContent: true,
+            utmTerm: true,
+            referrer: true,
+            sourceMarker: true,
+          },
+        },
       },
     });
     if (!row) {
@@ -128,6 +140,7 @@ export async function getBotBookingMethodAppointmentContext(
         appointmentId: row.id,
         creatorKind: row.creatorKind,
         phoneE164,
+        attribution: mapStoredSiteAttribution(row.siteAttribution),
       },
     };
   } catch (error) {

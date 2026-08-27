@@ -2,6 +2,7 @@
  * A2.2 booking-method feed + appointment context (bot internal API).
  * Minimal durable facts only — no name / schedule details in feed.
  */
+import type { SiteAttribution } from "@/lib/attribution/site-attribution";
 
 export type BotBookingMethodCreatorKind =
   | "SELF_SERVICE"
@@ -42,6 +43,7 @@ export type BotBookingMethodContextSuccess = {
   appointmentId: string;
   creatorKind: BotBookingMethodCreatorKind;
   phoneE164: string;
+  attribution: SiteAttribution | null;
 };
 
 export type BotBookingMethodErrorCode =

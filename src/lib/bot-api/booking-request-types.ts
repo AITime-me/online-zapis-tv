@@ -11,6 +11,7 @@ import {
   isValidMonthKey,
 } from "@/lib/datetime/date-layer";
 import type { GameGiftActivationMode } from "@/lib/game/gift-activation";
+import type { SiteAttribution } from "@/lib/attribution/site-attribution";
 
 export type BotBookingRequestErrorCode =
   | "VALIDATION_ERROR"
@@ -73,6 +74,10 @@ export type BotBookingRequestDto = {
   gameContext: BotGameContextDto | null;
 };
 
+export type BotBookingRequestContextDto = BotBookingRequestDto & {
+  attribution: SiteAttribution | null;
+};
+
 export type BotBookingRequestFeedCursor = {
   createdAt: string;
   id: string;
@@ -95,7 +100,7 @@ export type BotBookingRequestGetRequest = {
 
 export type BotBookingRequestGetSuccess = {
   ok: true;
-  item: BotBookingRequestDto;
+  item: BotBookingRequestContextDto;
 };
 
 export type BotBookingRequestAvailabilityRequest =

@@ -5,6 +5,10 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { BookingRequestType } from "@prisma/client";
 import { normalizePhone } from "@/lib/phone/normalize-phone";
+import {
+  hasObservedSiteAttribution,
+  type SiteAttribution,
+} from "@/lib/attribution/site-attribution";
 
 const DEV_FALLBACK_SECRET = "dev-idempotency-hmac-not-for-production";
 
@@ -36,6 +40,7 @@ export type BookingIdempotencyPayload = {
   offerAcknowledgement: boolean;
   gamePlayId: string | null;
   gameSessionId: string | null;
+  attribution?: SiteAttribution;
 };
 
 export function normalizeBookingClientName(name: string): string {
@@ -57,7 +62,12 @@ export function buildBookingIdempotencyPayload(input: {
   offerAcknowledgement: boolean;
   gamePlayId: string | null;
   gameSessionId: string | null;
+  attribution?: SiteAttribution;
 }): BookingIdempotencyPayload {
+  const attribution =
+    input.attribution && hasObservedSiteAttribution(input.attribution)
+      ? { ...input.attribution }
+      : undefined;
   return {
     clientName: normalizeBookingClientName(input.clientName),
     clientPhone: normalizeBookingClientPhone(input.clientPhone),
@@ -69,11 +79,12 @@ export function buildBookingIdempotencyPayload(input: {
     offerAcknowledgement: input.offerAcknowledgement === true,
     gamePlayId: input.gamePlayId?.trim() || null,
     gameSessionId: input.gameSessionId?.trim() || null,
+    ...(attribution ? { attribution } : {}),
   };
 }
 
 function canonicalizePayload(payload: BookingIdempotencyPayload): string {
-  const ordered: Record<string, string | boolean | null> = {
+  const ordered: Record<string, unknown> = {
     clientName: payload.clientName,
     clientPhone: payload.clientPhone,
     comment: payload.comment,
@@ -85,6 +96,17 @@ function canonicalizePayload(payload: BookingIdempotencyPayload): string {
     serviceId: payload.serviceId,
     type: payload.type,
   };
+  if (payload.attribution) {
+    ordered.attribution = {
+      utm_source: payload.attribution.utm_source,
+      utm_medium: payload.attribution.utm_medium,
+      utm_campaign: payload.attribution.utm_campaign,
+      utm_content: payload.attribution.utm_content,
+      utm_term: payload.attribution.utm_term,
+      referrer: payload.attribution.referrer,
+      source_marker: payload.attribution.source_marker,
+    };
+  }
 
   return JSON.stringify(ordered);
 }

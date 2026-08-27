@@ -21,6 +21,7 @@ import {
   createBookingRequest,
 } from "@/services/BookingRequestService";
 import { LegalDocumentsNotReadyError } from "@/services/LegalDocumentService";
+import { parseSiteAttribution } from "@/lib/attribution/site-attribution";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -35,6 +36,7 @@ type CreateBookingRequestBody = {
   personalDataConsent?: boolean;
   offerAcknowledgement?: boolean;
   gamePlayId?: string | null;
+  attribution?: unknown;
 };
 
 export async function POST(request: Request) {
@@ -76,6 +78,17 @@ export async function POST(request: Request) {
       typeof body.clientName === "string" ? body.clientName.trim() : "";
     const clientPhone =
       typeof body.clientPhone === "string" ? body.clientPhone.trim() : "";
+    const attribution = parseSiteAttribution(body.attribution);
+    if (!attribution.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Некорректные данные источника перехода",
+          code: "INVALID_ATTRIBUTION",
+        },
+        { status: 400 },
+      );
+    }
 
     if (
       !body.type ||
@@ -135,6 +148,7 @@ export async function POST(request: Request) {
           : body.gamePlayId ?? null,
       idempotencyKey: idempotencyValidation.key,
       request,
+      attribution: attribution.value,
     });
 
     return NextResponse.json(
