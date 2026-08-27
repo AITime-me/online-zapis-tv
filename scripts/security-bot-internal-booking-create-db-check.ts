@@ -571,8 +571,19 @@ async function runRequiredRaceSuite(): Promise<void> {
             (r.code === "SLOT_NO_LONGER_AVAILABLE" ||
               r.code === "BOOKING_CONFLICT"),
         );
-        assert.equal(successes.length, 1, "Race C: exactly one success");
-        assert.equal(losers.length, 1, "Race C: loser conflict code");
+        const resultCodes = results
+          .map((r) => (r.ok ? "OK" : r.code))
+          .join(",");
+        assert.equal(
+          successes.length,
+          1,
+          `Race C: exactly one success (codes=${resultCodes})`,
+        );
+        assert.equal(
+          losers.length,
+          1,
+          `Race C: loser conflict code (codes=${resultCodes})`,
+        );
 
         const apptCount = await prisma.appointment.count({
           where: { masterId: fixture.masterId },
@@ -639,8 +650,19 @@ async function runRequiredRaceSuite(): Promise<void> {
             (r.code === "SLOT_NO_LONGER_AVAILABLE" ||
               r.code === "BOOKING_CONFLICT"),
         );
-        assert.equal(successes.length, 1, "Race D: exactly one success");
-        assert.equal(losers.length, 1, "Race D: overlap loser");
+        const resultCodes = results
+          .map((r) => (r.ok ? "OK" : r.code))
+          .join(",");
+        assert.equal(
+          successes.length,
+          1,
+          `Race D: exactly one success (codes=${resultCodes})`,
+        );
+        assert.equal(
+          losers.length,
+          1,
+          `Race D: overlap loser (codes=${resultCodes})`,
+        );
 
         const apptCount = await prisma.appointment.count({
           where: { masterId: fixture.masterId },

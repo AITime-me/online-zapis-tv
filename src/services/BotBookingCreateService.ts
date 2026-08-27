@@ -39,11 +39,12 @@ import {
   resolveClientPhoneMatchKey,
 } from "@/lib/phone/normalize-phone";
 import {
+  APPOINTMENT_WRITE_SERIALIZABLE_RETRIES,
   AppointmentConflictError,
   AppointmentValidationError,
   createBotOnlineAppointment,
   createAppointmentServiceRuntime,
-  runSerializableAppointmentWrite,
+  isAppointmentSerializationFailure,
 } from "@/services/AppointmentService";
 import {
   assertOnlineBookable,
@@ -593,6 +594,66 @@ function mapDomainFailure(error: unknown): BotBookingCreateError {
   );
 }
 
+/**
+ * True when public availability no longer lists this start time — used after
+ * SSI aborts so a concurrent winner is observed as domain conflict (Race C/D)
+ * instead of INTERNAL_ERROR when retries never reach assertNoBlockingConflict.
+ */
+async function isBotBookingStartTaken(input: {
+  masterId: string;
+  serviceId: string;
+  dateKey: string;
+  startTime: string;
+  now: Date;
+}): Promise<boolean> {
+  const studioToday = formatStudioDateKey(input.now);
+  const availableSlots = await getAvailableTimeSlots(
+    input.masterId,
+    input.serviceId,
+    input.dateKey,
+    studioToday,
+    { now: input.now },
+  );
+  return !availableSlots.includes(input.startTime);
+}
+
+/**
+ * Serializable write with occupancy checks on SSI failure so same-slot losers
+ * convert to AppointmentConflictError once a concurrent winner commits,
+ * even if the abort happened during client.create (before conflict check).
+ */
+async function runBotBookingSerializableWrite<T>(
+  fn: (tx: PrismaNs.TransactionClient) => Promise<T>,
+  isStartTaken: () => Promise<boolean>,
+): Promise<T> {
+  for (
+    let attempt = 0;
+    attempt < APPOINTMENT_WRITE_SERIALIZABLE_RETRIES;
+    attempt += 1
+  ) {
+    if (attempt > 0 && (await isStartTaken())) {
+      throw new AppointmentConflictError();
+    }
+    try {
+      return await prisma.$transaction(fn, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
+    } catch (error) {
+      if (!isAppointmentSerializationFailure(error)) {
+        throw error;
+      }
+      if (await isStartTaken()) {
+        throw new AppointmentConflictError();
+      }
+      if (attempt >= APPOINTMENT_WRITE_SERIALIZABLE_RETRIES - 1) {
+        throw error;
+      }
+    }
+  }
+
+  throw new Error("appointment serializable transaction failed");
+}
+
 export async function createBotConfirmedBooking(
   request: BotBookingCreateRequest,
   options: { now?: Date } = {},
@@ -753,7 +814,9 @@ export async function createBotConfirmedBooking(
 
     await getBotBookingCreateTestHooks().beforeSerializableWrite?.();
 
-    const snapshot = await runSerializableAppointmentWrite(async (tx) => {
+    const writeNow = options.now ?? getStudioNow();
+    const snapshot = await runBotBookingSerializableWrite(
+      async (tx) => {
       const locked = await tx.$queryRaw<Array<{ id: string; state: string }>>`
         SELECT id, state::text AS state
         FROM internal_bot_booking_operations
@@ -834,16 +897,59 @@ export async function createBotConfirmedBooking(
       });
 
       return safeSnapshot;
-    });
+    },
+      () =>
+        isBotBookingStartTaken({
+          masterId: slot.value.masterId,
+          serviceId: slot.value.serviceId,
+          dateKey: slot.value.dateKey,
+          startTime: slot.value.startTime,
+          now: writeNow,
+        }),
+    );
 
     return {
       ok: true,
       body: toBotBookingSuccessBody(snapshot, false),
     };
   } catch (error) {
-    const mapped = mapDomainFailure(error);
+    let mapped = mapDomainFailure(error);
     if (!(error instanceof BotBookingCreateError)) {
       safeLogError("bot-internal-booking-create", error);
+    }
+
+    // After Serializable retry exhaustion, a concurrent winner may already own
+    // the interval. Prefer durable domain conflict over INTERNAL_ERROR so
+    // callers/idempotency see SLOT_NO_LONGER_AVAILABLE (CURSOR-24 Race C/D).
+    if (
+      mapped.code === "INTERNAL_ERROR" &&
+      isAppointmentSerializationFailure(error)
+    ) {
+      try {
+        const slotRecheck = parseBotSlotId(request.slotId);
+        if (slotRecheck.ok) {
+          const now = options.now ?? getStudioNow();
+          const taken = await isBotBookingStartTaken({
+            masterId: slotRecheck.value.masterId,
+            serviceId: slotRecheck.value.serviceId,
+            dateKey: slotRecheck.value.dateKey,
+            startTime: slotRecheck.value.startTime,
+            now,
+          });
+          if (taken) {
+            mapped = new BotBookingCreateError(
+              "SLOT_NO_LONGER_AVAILABLE",
+              fixedErrorMessage("SLOT_NO_LONGER_AVAILABLE"),
+              { finalForIdempotency: true },
+            );
+          }
+        }
+      } catch (recheckError) {
+        safeLogError(
+          "bot-internal-booking-create-serial-recheck",
+          recheckError,
+        );
+      }
     }
 
     try {
