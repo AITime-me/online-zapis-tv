@@ -1,5 +1,5 @@
 import type { SiteAttribution } from "@/lib/attribution/site-attribution";
-import { isPlausibleOpaqueToken } from "@/lib/security/opaque-token";
+import { isPlausibleOpaqueToken } from "@/lib/security/opaque-token-format";
 
 export const ACQUISITION_SOURCE_KEYS = [
   "VK_ADS",
