@@ -422,6 +422,7 @@ model Appointment {
   client        Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
   rescheduleRequests BookingRequest[]
   legalAcceptanceRecords LegalAcceptanceRecord[]
+  siteAttribution SiteAttribution?
 
   @@index([masterId, startsAt, endsAt])
   @@index([startsAt])
@@ -552,6 +553,7 @@ model BookingRequest {
   botEventLogs BotEventLog[]
   gamePlay     GamePlay?     @relation("GamePlayLead")
   legalAcceptanceRecords LegalAcceptanceRecord[]
+  siteAttribution SiteAttribution?
 
   @@index([status, createdAt(sort: Desc)])
   @@index([clientId])
@@ -560,6 +562,30 @@ model BookingRequest {
   @@index([clientPhoneNormalized])
   @@index([gameCatalogId])
   @@map("booking_requests")
+}
+
+/**
+ * Immutable first-touch site provenance for one Appointment or BookingRequest.
+ * Ownership XOR, semantic non-empty values, and UPDATE immutability are
+ * enforced by the SQL migration.
+ */
+model SiteAttribution {
+  id               String   @id @default(uuid()) @db.Uuid
+  appointmentId    String?  @unique @map("appointment_id") @db.Uuid
+  bookingRequestId String?  @unique @map("booking_request_id") @db.Uuid
+  utmSource        String?  @map("utm_source") @db.VarChar(256)
+  utmMedium        String?  @map("utm_medium") @db.VarChar(256)
+  utmCampaign      String?  @map("utm_campaign") @db.VarChar(256)
+  utmContent       String?  @map("utm_content") @db.VarChar(256)
+  utmTerm          String?  @map("utm_term") @db.VarChar(256)
+  referrer         String?  @db.VarChar(2048)
+  sourceMarker     String?  @map("source_marker") @db.VarChar(256)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  appointment    Appointment?    @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  bookingRequest BookingRequest? @relation(fields: [bookingRequestId], references: [id], onDelete: Cascade)
+
+  @@map("site_attributions")
 }
 
 model EmergencyExport {

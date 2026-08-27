@@ -69,6 +69,8 @@
     "test:security:manage-link-headers-smoke": "tsx scripts/security-manage-link-headers-smoke.ts",
     "test:security:appointment-creator-provenance": "tsx scripts/security-appointment-creator-provenance-check.ts",
     "test:security:appointment-creator-provenance:required": "tsx scripts/security-appointment-creator-provenance-check.ts --require-postgres",
+    "test:security:site-attribution": "tsx scripts/security-site-attribution-check.ts && tsx --import ./scripts/lib/stub-server-only.ts --env-file=.env scripts/security-site-attribution-db-check.ts",
+    "test:security:site-attribution:required": "tsx scripts/security-site-attribution-check.ts && tsx --import ./scripts/lib/stub-server-only.ts scripts/security-site-attribution-db-check.ts --require-postgres",
     "test:security:appointment-cancel-race": "tsx scripts/security-appointment-cancel-race-check.ts",
     "test:security:appointment-double-book": "tsx scripts/security-appointment-double-book-check.ts",
     "test:security:appointment-overlap-override": "tsx scripts/security-appointment-overlap-override-check.ts",
