@@ -625,6 +625,7 @@ model AcquisitionEvidence {
   acquisitionLinkId String    @map("acquisition_link_id") @db.Uuid
   expiresAt         DateTime  @map("expires_at") @db.Timestamptz
   consumedAt        DateTime? @map("consumed_at") @db.Timestamptz
+  feedOrder         BigInt?   @map("feed_order")
   appointmentId     String?   @unique @map("appointment_id") @db.Uuid
   bookingRequestId  String?   @unique @map("booking_request_id") @db.Uuid
   createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
@@ -634,7 +635,16 @@ model AcquisitionEvidence {
   bookingRequest  BookingRequest?  @relation(fields: [bookingRequestId], references: [id], onDelete: Cascade)
 
   @@index([consumedAt, expiresAt])
+  @@index([feedOrder, id], map: "acquisition_evidence_feed_order_idx")
   @@map("acquisition_evidence")
+}
+
+/** Singleton commit-ordered counter for acquisition evidence feed pagination. */
+model AcquisitionEvidenceFeedOrderClock {
+  id        String @id @db.Text
+  lastOrder BigInt @map("last_order")
+
+  @@map("acquisition_evidence_feed_order_clock")
 }
 
 model EmergencyExport {
