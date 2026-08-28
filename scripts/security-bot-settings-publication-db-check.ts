@@ -310,13 +310,6 @@ async function main(): Promise<void> {
     );
     await assertPublicationInvariants(prisma);
 
-    const runtime = await getActiveBotSettingsRuntimePublication();
-    assert.ok(runtime);
-    assert.equal(runtime.settings.operationalSafety.emergencyLockOwnedByBotCoreEnv, true);
-
-    const state = await getBotSettingsPublicationState();
-    assert.equal(state.hasUnpublishedChanges, true);
-
     const { hashBotSettingsPublicationPayload, buildBotSettingsPublicationPayloadFromDraft } =
       await loadPayload();
     const draft = await prisma.botSettings.findUniqueOrThrow({
@@ -341,16 +334,31 @@ async function main(): Promise<void> {
         updatedAt: true,
       },
     });
-    const payload = buildBotSettingsPublicationPayloadFromDraft(draft);
-    const checksum = hashBotSettingsPublicationPayload(payload);
-    assert.notEqual(checksum, runtime.checksum);
+    const currentDraftPayload = buildBotSettingsPublicationPayloadFromDraft(draft);
+    const currentDraftChecksum = hashBotSettingsPublicationPayload(currentDraftPayload);
 
-    const activeRow = await prisma.botSettingsPublication.findFirstOrThrow({
+    const activeAfterRace = await prisma.botSettingsPublication.findFirstOrThrow({
       where: {
         botSettingsId: "default",
         status: BotSettingsPublicationStatus.ACTIVE,
       },
     });
+    const expectedHasUnpublishedChanges =
+      activeAfterRace.payloadChecksum !== currentDraftChecksum;
+
+    const state = await getBotSettingsPublicationState();
+    assert.equal(
+      state.hasUnpublishedChanges,
+      expectedHasUnpublishedChanges,
+      "hasUnpublishedChanges must reflect ACTIVE vs current draft checksum after serialized publish/activate race",
+    );
+
+    const runtime = await getActiveBotSettingsRuntimePublication();
+    assert.ok(runtime);
+    assert.equal(runtime.checksum, activeAfterRace.payloadChecksum);
+    assert.equal(runtime.settings.operationalSafety.emergencyLockOwnedByBotCoreEnv, true);
+
+    const activeRow = activeAfterRace;
     const corruptedPayload = {
       ...(activeRow.payload as Prisma.JsonObject),
       corruptedField: "must-reject",
