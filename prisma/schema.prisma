@@ -214,6 +214,7 @@ model User {
   clientsMergedBy         Client[]                @relation("ClientMergedBy")
   clientMergeLogs         ClientMergeLog[]        @relation("ClientMergePerformedBy")
   botSettingsUpdated      BotSettings[]           @relation("BotSettingsUpdatedBy")
+  botSettingsPublicationsPublished BotSettingsPublication[] @relation("BotSettingsPublicationPublishedBy")
   passwordResetTokens     PasswordResetToken[]
   communicationImports    CommunicationImportJob[] @relation("CommunicationImportCreatedBy")
   communicationCampaignsCreated CommunicationCampaign[] @relation("CommunicationCampaignCreatedBy")
@@ -1164,8 +1165,14 @@ model ClientDuplicateReview {
   @@map("client_duplicate_reviews")
 }
 
+enum BotSettingsPublicationStatus {
+  ACTIVE
+  SUPERSEDED
+}
+
 /**
  * Singleton-настройки будущего AI-бота студии. Без API-ключей и внешних интеграций.
+ * Mutable draft row — runtime consumers must read ACTIVE BotSettingsPublication only.
  */
 model BotSettings {
   id String @id @default("default")
@@ -1186,12 +1193,41 @@ model BotSettings {
   errorLogRetentionDays Int      @default(90) @map("error_log_retention_days")
   maxStoredBotEvents    Int      @default(5000) @map("max_stored_bot_events")
   updatedByUserId       String?  @map("updated_by_user_id") @db.Uuid
+  activePublicationId   String?  @unique @map("active_publication_id") @db.Uuid
   createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
-  updatedByUser User? @relation("BotSettingsUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+  updatedByUser     User?                    @relation("BotSettingsUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+  activePublication BotSettingsPublication?  @relation("BotSettingsActivePublication", fields: [activePublicationId], references: [id], onDelete: SetNull)
+  publications      BotSettingsPublication[] @relation("BotSettingsPublications")
 
   @@map("bot_settings")
+}
+
+/**
+ * Immutable published snapshot of BotSettings for bot-TV S2S consumption.
+ */
+model BotSettingsPublication {
+  id                String                       @id @default(uuid()) @db.Uuid
+  botSettingsId     String                       @map("bot_settings_id")
+  versionNumber     Int                          @map("version_number")
+  status            BotSettingsPublicationStatus
+  schemaVersion     Int                          @default(1) @map("schema_version")
+  payload           Json
+  payloadChecksum   String                       @map("payload_checksum") @db.VarChar(64)
+  sourceUpdatedAt   DateTime                     @map("source_updated_at") @db.Timestamptz
+  publishedAt       DateTime                     @map("published_at") @db.Timestamptz
+  publishedByUserId String?                      @map("published_by_user_id") @db.Uuid
+  supersededAt      DateTime?                    @map("superseded_at") @db.Timestamptz
+  createdAt         DateTime                     @default(now()) @map("created_at") @db.Timestamptz
+
+  botSettings       BotSettings @relation("BotSettingsPublications", fields: [botSettingsId], references: [id], onDelete: Restrict)
+  publishedByUser   User?       @relation("BotSettingsPublicationPublishedBy", fields: [publishedByUserId], references: [id], onDelete: SetNull)
+  activeForSettings BotSettings? @relation("BotSettingsActivePublication")
+
+  @@unique([botSettingsId, versionNumber])
+  @@index([botSettingsId, status])
+  @@map("bot_settings_publications")
 }
 
 /**

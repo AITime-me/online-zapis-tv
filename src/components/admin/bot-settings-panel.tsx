@@ -43,6 +43,10 @@ import {
 import type { BotKnowledgeFoundationSummary } from "@/lib/bot-knowledge/types";
 import { isClosedTestConsoleVisible } from "@/lib/bot-core/closed-test-gate";
 import type { BotSettingsDto, BotSettingsWriteInput } from "@/types/bot-settings";
+import type {
+  BotSettingsPublicationStateDto,
+  BotSettingsPublicationSummaryDto,
+} from "@/types/bot-settings-publication";
 import { BotClosedTestConsole } from "@/components/admin/bot-closed-test-console";
 import { BotEventLogsSection } from "@/components/admin/bot-event-logs-section";
 
@@ -51,6 +55,20 @@ type SaveStatus = "idle" | "saving" | "saved" | "error";
 type SettingsResponse = {
   ok: boolean;
   settings?: BotSettingsDto;
+  error?: string;
+};
+
+type PublicationStateResponse = {
+  ok: boolean;
+  state?: BotSettingsPublicationStateDto;
+  publications?: BotSettingsPublicationSummaryDto[];
+  error?: string;
+};
+
+type PublishResponse = {
+  ok: boolean;
+  outcome?: "PUBLISHED" | "UNCHANGED";
+  publication?: BotSettingsPublicationSummaryDto;
   error?: string;
 };
 
@@ -97,22 +115,31 @@ function toFormState(settings: BotSettingsDto) {
 
 export function BotSettingsPanel({
   initialSettings,
+  initialPublicationState,
   knowledgeSummary,
   canEdit,
 }: {
   initialSettings: BotSettingsDto;
+  initialPublicationState: BotSettingsPublicationStateDto;
   knowledgeSummary: BotKnowledgeFoundationSummary;
   canEdit: boolean;
 }) {
   const [settings, setSettings] = useState(initialSettings);
+  const [publicationState, setPublicationState] = useState(initialPublicationState);
   const [form, setForm] = useState(() => toFormState(initialSettings));
   const [status, setStatus] = useState<SaveStatus>("idle");
+  const [publishStatus, setPublishStatus] = useState<SaveStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
+  const [publishMessage, setPublishMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setSettings(initialSettings);
     setForm(toFormState(initialSettings));
   }, [initialSettings]);
+
+  useEffect(() => {
+    setPublicationState(initialPublicationState);
+  }, [initialPublicationState]);
 
   const statusLabel =
     status === "saving"
@@ -129,6 +156,76 @@ export function BotSettingsPanel({
   const applySettings = (next: BotSettingsDto) => {
     setSettings(next);
     setForm(toFormState(next));
+  };
+
+  const refreshPublicationState = async () => {
+    const response = await fetch("/api/admin/bot/settings/publications?limit=8");
+    const payload = await readApiJsonResponse<PublicationStateResponse>(response);
+    if (response.ok && payload.ok && payload.state) {
+      setPublicationState(payload.state);
+    }
+  };
+
+  const publishSettings = async () => {
+    setPublishStatus("saving");
+    setPublishMessage(null);
+    try {
+      const response = await fetch("/api/admin/bot/settings/publish", {
+        method: "POST",
+      });
+      const payload = await readApiJsonResponse<PublishResponse>(response);
+      if (!response.ok || !payload.ok || !payload.publication) {
+        throw new Error(payload.error ?? "Не удалось опубликовать настройки");
+      }
+      await refreshPublicationState();
+      setPublishStatus("saved");
+      setPublishMessage(
+        payload.outcome === "UNCHANGED"
+          ? "Изменений нет — ACTIVE версия уже актуальна"
+          : `Опубликована версия v${payload.publication.versionNumber}`,
+      );
+      window.setTimeout(() => setPublishStatus("idle"), 2000);
+    } catch (error) {
+      setPublishStatus("error");
+      setPublishMessage(
+        error instanceof Error ? error.message : "Не удалось опубликовать настройки",
+      );
+    }
+  };
+
+  const activatePublication = async (publicationId: string) => {
+    if (
+      !window.confirm(
+        "Активировать выбранную опубликованную версию? Текущая ACTIVE будет заменена.",
+      )
+    ) {
+      return;
+    }
+    setPublishStatus("saving");
+    setPublishMessage(null);
+    try {
+      const response = await fetch(
+        `/api/admin/bot/settings/publications/${encodeURIComponent(publicationId)}/activate`,
+        { method: "POST" },
+      );
+      const payload = await readApiJsonResponse<{
+        ok: boolean;
+        publication?: BotSettingsPublicationSummaryDto;
+        error?: string;
+      }>(response);
+      if (!response.ok || !payload.ok || !payload.publication) {
+        throw new Error(payload.error ?? "Не удалось активировать версию");
+      }
+      await refreshPublicationState();
+      setPublishStatus("saved");
+      setPublishMessage(`Активирована версия v${payload.publication.versionNumber}`);
+      window.setTimeout(() => setPublishStatus("idle"), 2000);
+    } catch (error) {
+      setPublishStatus("error");
+      setPublishMessage(
+        error instanceof Error ? error.message : "Не удалось активировать версию",
+      );
+    }
   };
 
   const buildPayload = (): BotSettingsWriteInput => ({
@@ -165,6 +262,7 @@ export function BotSettingsPanel({
       }
 
       applySettings(payload.settings);
+      await refreshPublicationState();
       setStatus("saved");
       window.setTimeout(() => setStatus("idle"), 1500);
     } catch (error) {
@@ -198,6 +296,7 @@ export function BotSettingsPanel({
       }
 
       applySettings(payload.settings);
+      await refreshPublicationState();
       setStatus("saved");
       window.setTimeout(() => setStatus("idle"), 1500);
     } catch (error) {
@@ -207,6 +306,15 @@ export function BotSettingsPanel({
       );
     }
   };
+
+  const publishStatusLabel =
+    publishStatus === "saving"
+      ? "Публикую..."
+      : publishStatus === "saved"
+        ? publishMessage
+        : publishStatus === "error"
+          ? publishMessage
+          : null;
 
   const updateChannel = (key: keyof BotChannels, value: boolean) => {
     if (key === "whatsapp") {
@@ -308,6 +416,109 @@ export function BotSettingsPanel({
           {readiness.summary}
         </p>
         <p className="text-xs text-zinc-500">FSM: {BOT_FSM_PIPELINE}</p>
+      </section>
+
+      <section className={sectionClass}>
+        <h2 className="text-sm font-semibold text-zinc-900">Публикация настроек</h2>
+        <p className="text-xs text-zinc-600">
+          Черновик (DRAFT) сохраняется отдельно. Bot Core получит только ACTIVE
+          published snapshot через S2S. EMERGENCY_LOCK и effective BOT_MODE
+          остаются на стороне bot-TV env.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded border border-zinc-100 bg-zinc-50 px-3 py-2">
+            <p className="text-xs text-zinc-500">DRAFT updatedAt</p>
+            <p className="text-sm font-medium text-zinc-900">
+              {formatDateTime(publicationState.draftUpdatedAt)}
+            </p>
+          </div>
+          <div className="rounded border border-zinc-100 bg-zinc-50 px-3 py-2">
+            <p className="text-xs text-zinc-500">ACTIVE version</p>
+            <p className="text-sm font-medium text-zinc-900">
+              {publicationState.active
+                ? `v${publicationState.active.versionNumber}`
+                : "не опубликовано"}
+            </p>
+          </div>
+          <div className="rounded border border-zinc-100 bg-zinc-50 px-3 py-2">
+            <p className="text-xs text-zinc-500">ACTIVE publishedAt</p>
+            <p className="text-sm font-medium text-zinc-900">
+              {formatDateTime(publicationState.active?.publishedAt ?? null)}
+            </p>
+          </div>
+          <div className="rounded border border-zinc-100 bg-zinc-50 px-3 py-2">
+            <p className="text-xs text-zinc-500">Статус</p>
+            <p className="text-sm font-medium text-zinc-900">
+              {publicationState.hasUnpublishedChanges
+                ? "Есть неопубликованные изменения"
+                : publicationState.active
+                  ? "ACTIVE совпадает с DRAFT"
+                  : "Требуется первая публикация"}
+            </p>
+          </div>
+        </div>
+        {canEdit ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => void publishSettings()}
+              disabled={publishStatus === "saving" || status === "saving"}
+              className="rounded bg-emerald-800 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+            >
+              Опубликовать
+            </button>
+            {publishStatusLabel ? (
+              <span
+                className={`text-sm ${
+                  publishStatus === "error" ? "text-red-700" : "text-zinc-600"
+                }`}
+              >
+                {publishStatusLabel}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+        {publicationState.recentPublications.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-xs text-zinc-700">
+              <thead>
+                <tr className="border-b border-zinc-200 text-zinc-500">
+                  <th className="py-2 pr-3">Версия</th>
+                  <th className="py-2 pr-3">Статус</th>
+                  <th className="py-2 pr-3">Опубликовано</th>
+                  <th className="py-2 pr-3">Checksum</th>
+                  <th className="py-2 pr-3" />
+                </tr>
+              </thead>
+              <tbody>
+                {publicationState.recentPublications.map((row) => (
+                  <tr key={row.id} className="border-b border-zinc-100">
+                    <td className="py-2 pr-3 font-medium">v{row.versionNumber}</td>
+                    <td className="py-2 pr-3">{row.status}</td>
+                    <td className="py-2 pr-3">{formatDateTime(row.publishedAt)}</td>
+                    <td className="py-2 pr-3 font-mono text-[10px]">
+                      {row.payloadChecksum.slice(0, 12)}…
+                    </td>
+                    <td className="py-2 pr-3">
+                      {canEdit && row.status !== "ACTIVE" ? (
+                        <button
+                          type="button"
+                          onClick={() => void activatePublication(row.id)}
+                          disabled={publishStatus === "saving"}
+                          className="rounded border border-zinc-300 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-60"
+                        >
+                          Активировать
+                        </button>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-xs text-zinc-500">История публикаций пока пуста.</p>
+        )}
       </section>
 
       <section className={sectionClass}>

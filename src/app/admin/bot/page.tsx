@@ -3,13 +3,15 @@ import { canEditBotAdmin } from "@/lib/auth/permissions";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { BotSettingsPanel } from "@/components/admin/bot-settings-panel";
 import { getBotSettings } from "@/services/BotSettingsService";
+import { getBotSettingsPublicationState } from "@/services/BotSettingsPublicationService";
 import { buildBotKnowledgeFoundationSummary } from "@/services/BotKnowledgeFoundationService";
 
 export default async function BotAdminPage() {
   const user = await requireAdminSection("bot");
-  const [settings, knowledgeSummary] = await Promise.all([
+  const [settings, knowledgeSummary, publicationState] = await Promise.all([
     getBotSettings(),
     buildBotKnowledgeFoundationSummary(),
+    getBotSettingsPublicationState(),
   ]);
 
   return (
@@ -23,6 +25,7 @@ export default async function BotAdminPage() {
 
       <BotSettingsPanel
         initialSettings={settings}
+        initialPublicationState={publicationState}
         knowledgeSummary={knowledgeSummary}
         canEdit={canEditBotAdmin(user.role)}
       />
