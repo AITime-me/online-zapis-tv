@@ -191,8 +191,9 @@ export async function issueAcquisitionEvidenceForLinkToken(
 }
 
 /**
- * Atomically claim one-time evidence using DB statement_timestamp() for both
- * consumed_at and expiry comparison in the SAME SQL statement.
+ * Atomically claim one-time evidence using DB statement_timestamp() for
+ * consumed_at (business time) and singleton integer clock for feed_order
+ * (commit-ordered feed pagination) in the SAME SQL statement.
  */
 async function claimAcquisitionEvidence(input: {
   db: AcquisitionEvidenceClaimDb;
@@ -216,15 +217,36 @@ async function claimAcquisitionEvidence(input: {
 
   const rows = await input.db.$queryRaw<Array<{ source_key: string }>>(
     Prisma.sql`
-      UPDATE "acquisition_evidence"
-      SET
-        "consumed_at" = statement_timestamp(),
-        "appointment_id" = ${appointmentId}::uuid,
-        "booking_request_id" = ${bookingRequestId}::uuid
-      WHERE "token_hash" = ${tokenHash}
-        AND "consumed_at" IS NULL
-        AND "expires_at" > statement_timestamp()
-      RETURNING "source_key"
+      WITH "locked_clock" AS (
+        SELECT "last_order"
+        FROM "acquisition_evidence_feed_order_clock"
+        WHERE "id" = 'singleton'
+        FOR UPDATE
+      ),
+      "next_order" AS (
+        SELECT "lc"."last_order" + 1 AS "feed_order"
+        FROM "locked_clock" AS "lc"
+      ),
+      "claimed" AS (
+        UPDATE "acquisition_evidence" AS "ae"
+        SET
+          "consumed_at" = statement_timestamp(),
+          "feed_order" = (SELECT "feed_order" FROM "next_order"),
+          "appointment_id" = ${appointmentId}::uuid,
+          "booking_request_id" = ${bookingRequestId}::uuid
+        WHERE "ae"."token_hash" = ${tokenHash}
+          AND "ae"."consumed_at" IS NULL
+          AND "ae"."expires_at" > statement_timestamp()
+        RETURNING "ae"."source_key", "ae"."feed_order"
+      ),
+      "updated_clock" AS (
+        UPDATE "acquisition_evidence_feed_order_clock" AS "c"
+        SET "last_order" = "cl"."feed_order"
+        FROM "claimed" AS "cl"
+        WHERE "c"."id" = 'singleton'
+        RETURNING "c"."last_order"
+      )
+      SELECT "source_key" FROM "claimed"
     `,
   );
 

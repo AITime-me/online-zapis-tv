@@ -557,6 +557,7 @@ async function main(): Promise<void> {
     });
     assert.equal(attrFailEvidence?.consumedAt, null);
     assert.equal(attrFailEvidence?.appointmentId, null);
+    assert.equal(attrFailEvidence?.feedOrder, null);
 
     // 8. statement-time expiry boundary
     const staleToken = generateOpaqueToken();
