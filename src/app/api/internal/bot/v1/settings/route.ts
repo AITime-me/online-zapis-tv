@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withBotInternalApi } from "@/lib/auth/bot-internal-api";
 import { BOT_SETTINGS_NOT_PUBLISHED_CODE } from "@/lib/bot-settings/publication-contract";
+import { BotSettingsPublicationPayloadError } from "@/lib/bot-settings/publication-payload";
 import {
   BotSettingsPublicationError,
   getActiveBotSettingsRuntimePublication,
@@ -79,7 +80,10 @@ export const GET = withBotInternalApi(async () => {
       },
     });
   } catch (error) {
-    if (error instanceof BotSettingsPublicationError) {
+    if (
+      error instanceof BotSettingsPublicationError ||
+      error instanceof BotSettingsPublicationPayloadError
+    ) {
       return NextResponse.json(
         {
           ok: false as const,

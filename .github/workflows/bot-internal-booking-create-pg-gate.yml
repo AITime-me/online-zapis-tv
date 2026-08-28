@@ -37,6 +37,12 @@ on:
       - "scripts/security-bot-master-command*"
       - "scripts/lib/bot-booking-create-*.ts"
       - "scripts/lib/bot-booking-request-*.ts"
+      - "src/app/api/internal/bot/v1/settings/**"
+      - "src/app/api/admin/bot/settings/**"
+      - "src/lib/bot-settings/publication-*"
+      - "src/services/BotSettingsPublicationService.ts"
+      - "src/types/bot-settings-publication.ts"
+      - "scripts/security-bot-settings-publication*"
       - "docs/architecture/bot-internal-api-pr-a.md"
       - "docs/architecture/bot-master-command-api.md"
   push:
@@ -80,6 +86,12 @@ on:
       - "scripts/security-bot-master-command*"
       - "scripts/lib/bot-booking-create-*.ts"
       - "scripts/lib/bot-booking-request-*.ts"
+      - "src/app/api/internal/bot/v1/settings/**"
+      - "src/app/api/admin/bot/settings/**"
+      - "src/lib/bot-settings/publication-*"
+      - "src/services/BotSettingsPublicationService.ts"
+      - "src/types/bot-settings-publication.ts"
+      - "scripts/security-bot-settings-publication*"
   workflow_dispatch:
 
 permissions:
@@ -140,6 +152,12 @@ jobs:
 
       - name: Apply migrations
         run: npx prisma migrate deploy
+
+      - name: Bot settings publication unit and security checks
+        run: npm run test:security:bot-settings-publication
+
+      - name: Bot settings publication required PostgreSQL Gate
+        run: npm run test:security:bot-settings-publication-db:required
 
       - name: Appointment creator provenance (required PG)
         run: npm run test:security:appointment-creator-provenance:required

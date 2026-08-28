@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import {
   BotSettingsPublicationStatus,
   PrismaClient,
+  type Prisma,
 } from "@prisma/client";
 import {
   canReachPostgres,
@@ -64,6 +65,75 @@ async function resolveDatabaseUrl(): Promise<{
   throw new Error("ephemeral postgres unavailable");
 }
 
+async function assertPublicationInvariants(prisma: PrismaClient): Promise<void> {
+  const active = await prisma.botSettingsPublication.findMany({
+    where: {
+      botSettingsId: "default",
+      status: BotSettingsPublicationStatus.ACTIVE,
+    },
+  });
+  assert.equal(active.length, 1, "exactly one ACTIVE publication");
+
+  const settings = await prisma.botSettings.findUniqueOrThrow({
+    where: { id: "default" },
+  });
+  assert.equal(
+    settings.activePublicationId,
+    active[0].id,
+    "bot_settings.active_publication_id must point to ACTIVE publication",
+  );
+
+  const versions = await prisma.botSettingsPublication.findMany({
+    where: { botSettingsId: "default" },
+    select: { versionNumber: true, payload: true },
+    orderBy: { versionNumber: "asc" },
+  });
+  const versionNumbers = versions.map((row) => row.versionNumber);
+  assert.equal(
+    new Set(versionNumbers).size,
+    versionNumbers.length,
+    "version numbers must be unique",
+  );
+  for (let index = 1; index < versionNumbers.length; index += 1) {
+    assert.ok(
+      versionNumbers[index] > versionNumbers[index - 1],
+      "version numbers must be monotonic",
+    );
+  }
+
+  for (const row of versions) {
+    assert.ok(row.payload && typeof row.payload === "object", "payload must be preserved");
+  }
+}
+
+async function resetPublications(prisma: PrismaClient): Promise<void> {
+  await prisma.botSettingsPublication.deleteMany({
+    where: { botSettingsId: "default" },
+  });
+  await prisma.botSettings.update({
+    where: { id: "default" },
+    data: { activePublicationId: null },
+  });
+}
+
+function assertAllFulfilled<T>(
+  results: PromiseSettledResult<T>[],
+  label: string,
+): T[] {
+  const values: T[] = [];
+  for (const result of results) {
+    assert.equal(
+      result.status,
+      "fulfilled",
+      `${label}: expected fulfilled, got ${result.status}${
+        result.status === "rejected" ? `: ${String(result.reason)}` : ""
+      }`,
+    );
+    values.push((result as PromiseFulfilledResult<T>).value);
+  }
+  return values;
+}
+
 async function main(): Promise<void> {
   let cleanup: (() => Promise<void>) | null = null;
   try {
@@ -110,14 +180,29 @@ async function main(): Promise<void> {
     const runtimeBefore = await getActiveBotSettingsRuntimePublication();
     assert.equal(runtimeBefore, null);
 
-    const first = await publishCurrentBotSettings(ownerId);
-    assert.equal(first.outcome, "PUBLISHED");
-    assert.equal(first.publication.versionNumber, 1);
-    assert.equal(first.publication.status, "ACTIVE");
+    await resetPublications(prisma);
+
+    const firstRace = assertAllFulfilled(
+      await Promise.allSettled([
+        publishCurrentBotSettings(ownerId),
+        publishCurrentBotSettings(ownerId),
+      ]),
+      "concurrent first publish",
+    );
+    const publishedFirstRace = firstRace.filter((result) => result.outcome === "PUBLISHED");
+    const unchangedFirstRace = firstRace.filter((result) => result.outcome === "UNCHANGED");
+    assert.equal(publishedFirstRace.length, 1);
+    assert.equal(unchangedFirstRace.length, 1);
+    assert.equal(publishedFirstRace[0].publication.versionNumber, 1);
+    assert.equal(
+      unchangedFirstRace[0].publication.id,
+      publishedFirstRace[0].publication.id,
+    );
+    await assertPublicationInvariants(prisma);
 
     const unchanged = await publishCurrentBotSettings(ownerId);
     assert.equal(unchanged.outcome, "UNCHANGED");
-    assert.equal(unchanged.publication.id, first.publication.id);
+    assert.equal(unchanged.publication.id, publishedFirstRace[0].publication.id);
 
     const countAfterIdempotent = await prisma.botSettingsPublication.count();
     assert.equal(countAfterIdempotent, 1);
@@ -127,9 +212,32 @@ async function main(): Promise<void> {
       data: { handoffRules: `handoff-${runId}` },
     });
 
-    const second = await publishCurrentBotSettings(ownerId);
-    assert.equal(second.outcome, "PUBLISHED");
-    assert.equal(second.publication.versionNumber, 2);
+    const changedRace = assertAllFulfilled(
+      await Promise.allSettled([
+        publishCurrentBotSettings(ownerId),
+        publishCurrentBotSettings(ownerId),
+      ]),
+      "concurrent changed publish",
+    );
+    const publishedChangedRace = changedRace.filter((result) => result.outcome === "PUBLISHED");
+    const unchangedChangedRace = changedRace.filter((result) => result.outcome === "UNCHANGED");
+    assert.equal(publishedChangedRace.length, 1);
+    assert.equal(unchangedChangedRace.length, 1);
+    assert.equal(publishedChangedRace[0].publication.versionNumber, 2);
+    await assertPublicationInvariants(prisma);
+
+    const samePayloadRace = assertAllFulfilled(
+      await Promise.allSettled([
+        publishCurrentBotSettings(ownerId),
+        publishCurrentBotSettings(ownerId),
+      ]),
+      "concurrent same-payload publish",
+    );
+    assert.equal(
+      samePayloadRace.every((result) => result.outcome === "UNCHANGED"),
+      true,
+    );
+    await assertPublicationInvariants(prisma);
 
     const rows = await prisma.botSettingsPublication.findMany({
       orderBy: { versionNumber: "asc" },
@@ -149,20 +257,10 @@ async function main(): Promise<void> {
     });
     assert.deepEqual(v1After.payload, v1PayloadBefore);
 
-    const activeCount = await prisma.botSettingsPublication.count({
-      where: { status: BotSettingsPublicationStatus.ACTIVE },
-    });
-    assert.equal(activeCount, 1);
-
     const rolled = await activateBotSettingsPublication(rows[0].id, ownerId);
     assert.equal(rolled.versionNumber, 1);
     assert.equal(rolled.status, "ACTIVE");
-
-    const activeAfterRollback = await prisma.botSettingsPublication.findMany({
-      where: { status: BotSettingsPublicationStatus.ACTIVE },
-    });
-    assert.equal(activeAfterRollback.length, 1);
-    assert.equal(activeAfterRollback[0].id, rows[0].id);
+    await assertPublicationInvariants(prisma);
 
     await assert.rejects(
       () => activateBotSettingsPublication(randomUUID(), ownerId),
@@ -173,16 +271,29 @@ async function main(): Promise<void> {
       },
     );
 
+    await prisma.botSettings.update({
+      where: { id: "default" },
+      data: { safetyRules: `race-publish-${runId}` },
+    });
+
+    const publishActivateRace = assertAllFulfilled(
+      await Promise.allSettled([
+        publishCurrentBotSettings(ownerId),
+        activateBotSettingsPublication(rows[1].id, ownerId),
+      ]),
+      "publish vs activate race",
+    );
+    assert.ok(
+      publishActivateRace.some((result) => "outcome" in result && result.outcome === "PUBLISHED"),
+    );
+    await assertPublicationInvariants(prisma);
+
     const runtime = await getActiveBotSettingsRuntimePublication();
     assert.ok(runtime);
-    assert.equal(runtime.publicationId, rows[0].id);
-    assert.equal(runtime.version, 1);
-    assert.equal(runtime.checksum, rows[0].payloadChecksum);
     assert.equal(runtime.settings.operationalSafety.emergencyLockOwnedByBotCoreEnv, true);
 
     const state = await getBotSettingsPublicationState();
     assert.equal(state.hasUnpublishedChanges, true);
-    assert.equal(state.active?.versionNumber, 1);
 
     const { hashBotSettingsPublicationPayload, buildBotSettingsPublicationPayloadFromDraft } =
       await loadPayload();
@@ -211,6 +322,30 @@ async function main(): Promise<void> {
     const payload = buildBotSettingsPublicationPayloadFromDraft(draft);
     const checksum = hashBotSettingsPublicationPayload(payload);
     assert.notEqual(checksum, runtime.checksum);
+
+    const activeRow = await prisma.botSettingsPublication.findFirstOrThrow({
+      where: {
+        botSettingsId: "default",
+        status: BotSettingsPublicationStatus.ACTIVE,
+      },
+    });
+    const corruptedPayload = {
+      ...(activeRow.payload as Prisma.JsonObject),
+      corruptedField: "must-reject",
+    };
+    await prisma.botSettingsPublication.update({
+      where: { id: activeRow.id },
+      data: { payload: corruptedPayload },
+    });
+
+    await assert.rejects(
+      () => getActiveBotSettingsRuntimePublication(),
+      (error: unknown) => {
+        assert.ok(error instanceof BotSettingsPublicationError);
+        assert.equal(error.code, "CONFLICT");
+        return true;
+      },
+    );
 
     const settingsRow = await prisma.botSettings.findUniqueOrThrow({
       where: { id: "default" },

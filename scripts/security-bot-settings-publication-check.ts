@@ -35,7 +35,10 @@ function testServiceSemantics(): void {
   assert.match(service, /outcome: "UNCHANGED"/);
   assert.match(service, /BotSettingsPublicationStatus\.ACTIVE/);
   assert.match(service, /BotSettingsPublicationStatus\.SUPERSEDED/);
-  assert.match(service, /getActiveBotSettingsRuntimePublication/);
+  assert.match(service, /withSerializedBotSettingsPublication/);
+  assert.match(service, /FOR UPDATE/);
+  assert.match(service, /loadDraftRowInTx/);
+  assert.match(service, /findActivePublicationInTx/);
   assert.match(service, /botSettingsPublication\.findFirst/);
   assert.doesNotMatch(service, /prisma\.botSettings\.update\([\s\S]*mainInstruction/);
 }
@@ -50,6 +53,8 @@ function testPayloadContract(): void {
   const payload = read("src/lib/bot-settings/publication-payload.ts");
   assert.match(payload, /stableStringify/);
   assert.match(payload, /hashBotSettingsPublicationPayload/);
+  assert.match(payload, /assertExactKeys/);
+  assert.match(payload, /BotSettingsPublicationPayloadError/);
   assert.doesNotMatch(payload, /apiKey|password|secret/i);
 }
 
@@ -75,6 +80,8 @@ function testInternalRuntimeRoute(): void {
   assert.match(route, /getActiveBotSettingsRuntimePublication/);
   assert.match(route, /BOT_SETTINGS_NOT_PUBLISHED/);
   assert.match(route, /status: 404/);
+  assert.match(route, /BotSettingsPublicationPayloadError/);
+  assert.match(route, /status: 409/);
   assert.doesNotMatch(route, /getBotSettings/);
   assert.doesNotMatch(route, /DEFAULT_BOT_SETTINGS/);
   assert.doesNotMatch(route, /findUnique\(\{[\s\S]*botSettings/);
@@ -93,6 +100,76 @@ function testPackageScripts(): void {
   const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
   assert.ok(pkg.scripts["test:security:bot-settings-publication"]);
   assert.ok(pkg.scripts["test:security:bot-settings-publication-db"]);
+  assert.ok(pkg.scripts["test:security:bot-settings-publication-db:required"]);
+}
+
+function testCiWorkflow(): void {
+  const workflow = read(".github/workflows/bot-internal-booking-create-pg-gate.yml");
+  assert.match(workflow, /test:security:bot-settings-publication/);
+  assert.match(workflow, /test:security:bot-settings-publication-db:required/);
+  assert.match(workflow, /src\/lib\/bot-settings\/publication-/);
+  assert.match(workflow, /BotSettingsPublicationService\.ts/);
+  assert.doesNotMatch(workflow, /bot-settings-publication-db-check[\s\S]*SKIPPED/);
+}
+
+async function testStrictPayloadValidation(): Promise<void> {
+  const {
+    assertValidBotSettingsPublicationPayload,
+    BotSettingsPublicationPayloadError,
+    buildBotSettingsPublicationPayloadFromDraft,
+  } = await import("../src/lib/bot-settings/publication-payload");
+
+  const valid = buildBotSettingsPublicationPayloadFromDraft({
+    id: "default",
+    isEnabled: false,
+    mode: "OFF",
+    provider: "NONE",
+    responseMode: "DRAFT",
+    channels: { siteWidget: false, vk: false, max: false, telegram: false, whatsapp: false },
+    mainInstruction: "a",
+    knowledgeBaseNote: null,
+    handoffRules: null,
+    taggingRules: null,
+    safetyRules: null,
+    maxMessagesPerClient: 20,
+    maxDailyMessages: 200,
+    logRetentionDays: 30,
+    errorLogRetentionDays: 90,
+    maxStoredBotEvents: 5000,
+    updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+  });
+  assertValidBotSettingsPublicationPayload(valid);
+
+  const malformedCases: unknown[] = [
+    { ...valid, schemaVersion: 2 },
+    { ...valid, unexpectedKey: true },
+    {
+      ...valid,
+      desiredAdminState: { ...valid.desiredAdminState, mode: "ENABLED_LATER" },
+    },
+    {
+      ...valid,
+      channels: { ...valid.channels, extra: true },
+    },
+    {
+      ...valid,
+      limits: { ...valid.limits, maxMessagesPerClient: 0 },
+    },
+    {
+      ...valid,
+      operationalSafety: {
+        emergencyLockOwnedByBotCoreEnv: false,
+        effectiveRuntimeModeOwnedByBotCoreEnv: true,
+      },
+    },
+  ];
+
+  for (const malformed of malformedCases) {
+    assert.throws(
+      () => assertValidBotSettingsPublicationPayload(malformed),
+      (error: unknown) => error instanceof BotSettingsPublicationPayloadError,
+    );
+  }
 }
 
 async function testPayloadChecksumDeterministic(): Promise<void> {
@@ -131,6 +208,8 @@ async function main(): Promise<void> {
   testInternalRuntimeRoute();
   testAdminUi();
   testPackageScripts();
+  testCiWorkflow();
+  await testStrictPayloadValidation();
   await testPayloadChecksumDeterministic();
   console.log("security-bot-settings-publication-check: OK");
 }

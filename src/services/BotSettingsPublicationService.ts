@@ -9,6 +9,7 @@ import { prisma } from "@/lib/db";
 import { BOT_SETTINGS_ID } from "@/lib/bot-settings/defaults";
 import {
   assertValidBotSettingsPublicationPayload,
+  BotSettingsPublicationPayloadError,
   buildBotSettingsPublicationPayloadFromDraft,
   hashBotSettingsPublicationPayload,
 } from "@/lib/bot-settings/publication-payload";
@@ -36,6 +37,8 @@ export class BotSettingsPublicationError extends Error {
     this.name = "BotSettingsPublicationError";
   }
 }
+
+type TransactionClient = Prisma.TransactionClient;
 
 const draftSelect = {
   id: true,
@@ -93,6 +96,31 @@ function mapPublicationSummary(row: PublicationRow): BotSettingsPublicationSumma
   };
 }
 
+async function withSerializedBotSettingsPublication<T>(
+  fn: (tx: TransactionClient) => Promise<T>,
+): Promise<T> {
+  return prisma.$transaction(async (tx) => {
+    const locked = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM bot_settings WHERE id = ${BOT_SETTINGS_ID} FOR UPDATE
+    `;
+    if (locked.length !== 1) {
+      throw new BotSettingsPublicationError("Настройки бота не найдены", "NOT_FOUND");
+    }
+    return fn(tx);
+  });
+}
+
+async function loadDraftRowInTx(tx: TransactionClient) {
+  const row = await tx.botSettings.findUnique({
+    where: { id: BOT_SETTINGS_ID },
+    select: draftSelect,
+  });
+  if (!row) {
+    throw new BotSettingsPublicationError("Настройки бота не найдены", "NOT_FOUND");
+  }
+  return row;
+}
+
 async function loadDraftRow() {
   const row = await prisma.botSettings.findUnique({
     where: { id: BOT_SETTINGS_ID },
@@ -130,6 +158,16 @@ function validateDraftForPublication(row: Awaited<ReturnType<typeof loadDraftRow
   }
 
   return mapped;
+}
+
+async function findActivePublicationInTx(tx: TransactionClient) {
+  return tx.botSettingsPublication.findFirst({
+    where: {
+      botSettingsId: BOT_SETTINGS_ID,
+      status: BotSettingsPublicationStatus.ACTIVE,
+    },
+    select: publicationSelect,
+  });
 }
 
 export async function getBotSettingsPublicationState(): Promise<BotSettingsPublicationStateDto> {
@@ -179,33 +217,18 @@ export async function listBotSettingsPublications(
 export async function publishCurrentBotSettings(
   publishedByUserId: string,
 ): Promise<BotSettingsPublishResultDto> {
-  const draft = await loadDraftRow();
-  const payload = validateDraftForPublication(draft);
-  const payloadChecksum = hashBotSettingsPublicationPayload(payload);
-  const sourceUpdatedAt = draft.updatedAt;
+  return withSerializedBotSettingsPublication(async (tx) => {
+    const draft = await loadDraftRowInTx(tx);
+    const payload = validateDraftForPublication(draft);
+    const payloadChecksum = hashBotSettingsPublicationPayload(payload);
+    const sourceUpdatedAt = draft.updatedAt;
 
-  const existingActive = await prisma.botSettingsPublication.findFirst({
-    where: {
-      botSettingsId: BOT_SETTINGS_ID,
-      status: BotSettingsPublicationStatus.ACTIVE,
-    },
-    select: publicationSelect,
-  });
-
-  if (existingActive && existingActive.payloadChecksum === payloadChecksum) {
-    return {
-      outcome: "UNCHANGED",
-      publication: mapPublicationSummary(existingActive),
-    };
-  }
-
-  const created = await prisma.$transaction(async (tx) => {
-    const settings = await tx.botSettings.findUnique({
-      where: { id: BOT_SETTINGS_ID },
-      select: { id: true, activePublicationId: true },
-    });
-    if (!settings) {
-      throw new BotSettingsPublicationError("Настройки бота не найдены", "NOT_FOUND");
+    const existingActive = await findActivePublicationInTx(tx);
+    if (existingActive && existingActive.payloadChecksum === payloadChecksum) {
+      return {
+        outcome: "UNCHANGED",
+        publication: mapPublicationSummary(existingActive),
+      };
     }
 
     const activeRows = await tx.botSettingsPublication.findMany({
@@ -260,13 +283,11 @@ export async function publishCurrentBotSettings(
       data: { activePublicationId: publication.id },
     });
 
-    return publication;
+    return {
+      outcome: "PUBLISHED",
+      publication: mapPublicationSummary(publication),
+    };
   });
-
-  return {
-    outcome: "PUBLISHED",
-    publication: mapPublicationSummary(created),
-  };
 }
 
 export async function activateBotSettingsPublication(
@@ -277,23 +298,23 @@ export async function activateBotSettingsPublication(
     throw new BotSettingsPublicationError("Некорректная публикация", "NOT_FOUND");
   }
 
-  const target = await prisma.botSettingsPublication.findFirst({
-    where: {
-      id: publicationId,
-      botSettingsId: BOT_SETTINGS_ID,
-    },
-    select: publicationSelect,
-  });
+  return withSerializedBotSettingsPublication(async (tx) => {
+    const target = await tx.botSettingsPublication.findFirst({
+      where: {
+        id: publicationId,
+        botSettingsId: BOT_SETTINGS_ID,
+      },
+      select: publicationSelect,
+    });
 
-  if (!target) {
-    throw new BotSettingsPublicationError("Публикация не найдена", "NOT_FOUND");
-  }
+    if (!target) {
+      throw new BotSettingsPublicationError("Публикация не найдена", "NOT_FOUND");
+    }
 
-  if (target.status === BotSettingsPublicationStatus.ACTIVE) {
-    return mapPublicationSummary(target);
-  }
+    if (target.status === BotSettingsPublicationStatus.ACTIVE) {
+      return mapPublicationSummary(target);
+    }
 
-  const activated = await prisma.$transaction(async (tx) => {
     const activeRows = await tx.botSettingsPublication.findMany({
       where: {
         botSettingsId: BOT_SETTINGS_ID,
@@ -334,10 +355,8 @@ export async function activateBotSettingsPublication(
       data: { activePublicationId: publicationId },
     });
 
-    return updated;
+    return mapPublicationSummary(updated);
   });
-
-  return mapPublicationSummary(activated);
 }
 
 export async function getActiveBotSettingsRuntimePublication(): Promise<BotSettingsRuntimePublicationDto | null> {
@@ -361,7 +380,19 @@ export async function getActiveBotSettingsRuntimePublication(): Promise<BotSetti
     return null;
   }
 
-  const payload = assertValidBotSettingsPublicationPayload(row.payload);
+  let payload;
+  try {
+    payload = assertValidBotSettingsPublicationPayload(row.payload);
+  } catch (error) {
+    if (error instanceof BotSettingsPublicationPayloadError) {
+      throw new BotSettingsPublicationError(
+        "ACTIVE публикация содержит некорректный payload",
+        "CONFLICT",
+      );
+    }
+    throw error;
+  }
+
   const checksum = hashBotSettingsPublicationPayload(payload);
   if (checksum !== row.payloadChecksum) {
     throw new BotSettingsPublicationError(
