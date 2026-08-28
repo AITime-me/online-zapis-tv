@@ -24,6 +24,10 @@ const REQUIRE_POSTGRES =
   process.argv.includes("--require-postgres") ||
   process.env.SECURITY_REQUIRE_PG === "1";
 
+async function loadBotSettingsService() {
+  return import("../src/services/BotSettingsService");
+}
+
 async function loadPublicationService() {
   return import("../src/services/BotSettingsPublicationService");
 }
@@ -176,6 +180,24 @@ async function main(): Promise<void> {
       getBotSettingsPublicationState,
       BotSettingsPublicationError,
     } = await loadPublicationService();
+
+    const settingsBeforeBootstrap = await prisma.botSettings.findUnique({
+      where: { id: "default" },
+    });
+    assert.equal(
+      settingsBeforeBootstrap,
+      null,
+      "fresh migrated DB must not seed bot_settings/default",
+    );
+
+    const { getBotSettings } = await loadBotSettingsService();
+    const bootstrappedSettings = await getBotSettings();
+    assert.equal(bootstrappedSettings.id, "default");
+
+    const settingsAfterBootstrap = await prisma.botSettings.findUniqueOrThrow({
+      where: { id: "default" },
+    });
+    assert.equal(settingsAfterBootstrap.id, "default");
 
     const runtimeBefore = await getActiveBotSettingsRuntimePublication();
     assert.equal(runtimeBefore, null);
