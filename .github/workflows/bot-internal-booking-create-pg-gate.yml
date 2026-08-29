@@ -43,6 +43,14 @@ on:
       - "src/services/BotSettingsPublicationService.ts"
       - "src/types/bot-settings-publication.ts"
       - "scripts/security-bot-settings-publication*"
+      - "src/app/api/internal/bot/v1/knowledge/**"
+      - "src/app/api/admin/bot/knowledge/**"
+      - "src/lib/bot-knowledge/publication-*"
+      - "src/services/BotKnowledgeEntryService.ts"
+      - "src/services/BotKnowledgePublicationService.ts"
+      - "src/types/bot-knowledge.ts"
+      - "src/components/admin/bot-knowledge-panel.tsx"
+      - "scripts/security-bot-knowledge-publication*"
       - "docs/architecture/bot-internal-api-pr-a.md"
       - "docs/architecture/bot-master-command-api.md"
   push:
@@ -92,6 +100,14 @@ on:
       - "src/services/BotSettingsPublicationService.ts"
       - "src/types/bot-settings-publication.ts"
       - "scripts/security-bot-settings-publication*"
+      - "src/app/api/internal/bot/v1/knowledge/**"
+      - "src/app/api/admin/bot/knowledge/**"
+      - "src/lib/bot-knowledge/publication-*"
+      - "src/services/BotKnowledgeEntryService.ts"
+      - "src/services/BotKnowledgePublicationService.ts"
+      - "src/types/bot-knowledge.ts"
+      - "src/components/admin/bot-knowledge-panel.tsx"
+      - "scripts/security-bot-knowledge-publication*"
   workflow_dispatch:
 
 permissions:
@@ -158,6 +174,12 @@ jobs:
 
       - name: Bot settings publication required PostgreSQL Gate
         run: npm run test:security:bot-settings-publication-db:required
+
+      - name: Bot knowledge publication unit and security checks
+        run: npm run test:security:bot-knowledge-publication
+
+      - name: Bot knowledge publication required PostgreSQL Gate
+        run: npm run test:security:bot-knowledge-publication-db:required
 
       - name: Appointment creator provenance (required PG)
         run: npm run test:security:appointment-creator-provenance:required
