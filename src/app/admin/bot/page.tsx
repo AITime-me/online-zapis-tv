@@ -34,7 +34,7 @@ export default async function BotAdminPage() {
     <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 p-4 md:p-6">
       <AdminPageHeader
         title="Бот студии"
-        description="Control plane внешнего AI Bot Core. Runtime бота не внутри Next.js; сейчас Bot Core не развёрнут, AUTO заблокирован."
+        description="Управление настройками, публикациями и базой знаний Теи."
         current="bot"
         role={user.role}
       />
@@ -42,6 +42,7 @@ export default async function BotAdminPage() {
       <BotSettingsPanel
         initialSettings={settings}
         initialPublicationState={publicationState}
+        knowledgePublicationState={knowledgePublicationState}
         knowledgeSummary={knowledgeSummary}
         canEdit={canEditBotAdmin(user.role)}
       />
