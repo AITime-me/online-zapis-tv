@@ -39,6 +39,10 @@ import {
   BOT_READINESS_GROUP_LABELS,
 } from "../src/lib/bot-settings/readiness";
 import {
+  BOT_LAUNCH_STATUS_ITEMS,
+  BOT_LAUNCH_STATUS_OMITTED_IMPLEMENTED,
+} from "../src/lib/bot-settings/launch-status";
+import {
   BOT_CRM_INTEGRATIONS,
   BOT_MESSAGING_CHANNELS,
 } from "../src/lib/bot-settings/integrations";
@@ -148,8 +152,12 @@ function assertBotCoreBoundary(): void {
   assert.match(BOT_FSM_PIPELINE, /КЛАССИФИКАЦИЯ/);
 
   const panel = read("src/components/admin/bot-settings-panel.tsx");
-  assert.match(panel, /Control plane/);
-  assert.match(panel, /Bot Core не развёрнут/);
+  assert.doesNotMatch(panel, /Bot Core не развёрнут/);
+  assert.doesNotMatch(panel, /Канонический порядок подключения/);
+  assert.doesNotMatch(panel, /Готовность AUTO по группам/);
+  assert.doesNotMatch(panel, /readiness\.groups/);
+  assert.match(panel, /Автоответ клиентам пока не активирован/);
+  assert.match(panel, /BotLaunchStatusPanel|Этап запуска/);
   assert.doesNotMatch(panel, /openai\.chat|fetch\(["']https:\/\/api\.openai/i);
 
   const knowledge = stripComments(
@@ -189,10 +197,37 @@ function assertPhasedPlan(): void {
   assert.equal(whatsapp?.phase, 6);
 
   const panel = read("src/components/admin/bot-settings-panel.tsx");
-  assert.match(panel, /Этап 0|Внутренние API|amoCRM/);
+  assert.doesNotMatch(panel, /Этап 0 · Foundation|BOT_CONNECTION_PHASES|BOT_FSM_PIPELINE/);
   assert.doesNotMatch(
     panel,
     /сайт, VK и MAX одновременно стартов|стартовые каналы: сайт/i,
+  );
+
+  const launchStatus = read("src/lib/bot-settings/launch-status.ts");
+  assert.match(launchStatus, /not_connected/);
+  assert.match(launchStatus, /yandex_provider_live/);
+  assert.match(launchStatus, /temporary_hold_api/);
+  assert.match(launchStatus, /needs_runtime_check/);
+  assert.match(launchStatus, /BOT_LAUNCH_STATUS_OMITTED_IMPLEMENTED/);
+
+  const itemIds = new Set(BOT_LAUNCH_STATUS_ITEMS.map((item) => item.id));
+  for (const omitted of BOT_LAUNCH_STATUS_OMITTED_IMPLEMENTED) {
+    assert.equal(
+      itemIds.has(omitted),
+      false,
+      `implemented item must not appear in launch checklist: ${omitted}`,
+    );
+  }
+  assert.ok(BOT_LAUNCH_STATUS_ITEMS.every((item) => item.kind !== undefined));
+  assert.ok(
+    BOT_LAUNCH_STATUS_ITEMS.some((item) => item.kind === "not_connected"),
+  );
+  assert.ok(BOT_LAUNCH_STATUS_ITEMS.some((item) => item.kind === "partial"));
+  assert.ok(
+    BOT_LAUNCH_STATUS_ITEMS.some((item) => item.kind === "not_implemented"),
+  );
+  assert.ok(
+    BOT_LAUNCH_STATUS_ITEMS.some((item) => item.kind === "needs_runtime_check"),
   );
 
   const integrations = read("src/lib/bot-settings/integrations.ts");
@@ -213,8 +248,11 @@ function assertChannelsVsCrm(): void {
   assert.ok(amo?.botMustNot.some((i) => /закрывать сделки/i.test(i)));
 
   const panel = read("src/components/admin/bot-settings-panel.tsx");
-  assert.match(panel, /CRM integration/);
+  assert.doesNotMatch(panel, /CRM integration · amoCRM/);
+  assert.doesNotMatch(panel, /font-semibold text-amber-800">Нет/);
   assert.doesNotMatch(panel, /AUTO_LATER|HINTS_ONLY|ENABLED_LATER/);
+  assert.match(panel, /canEnableAuto|autoBlocked/);
+  assert.match(panel, /Каналы общения с клиентом/);
 
   const integrations = read("src/lib/bot-settings/integrations.ts");
   assert.match(integrations, /Token health/);
@@ -321,6 +359,17 @@ function assertReadinessBlocksAuto(): void {
   const service = read("src/services/BotSettingsService.ts");
   assert.match(service, /assertAutoAllowed|canEnableAuto/);
   assert.match(service, /нельзя включить/);
+
+  const panel = read("src/components/admin/bot-settings-panel.tsx");
+  assert.match(panel, /autoBlocked|canEnableAuto/);
+  assert.doesNotMatch(panel, /readiness\.checks\.filter|readiness\.groups/);
+  assert.doesNotMatch(panel, /\/\d+\s*checks/);
+  assert.match(panel, /Автоответ клиентам пока не активирован/);
+
+  const page = read("src/app/admin/bot/page.tsx");
+  assert.match(page, /Управление настройками, публикациями и базой знаний/);
+  assert.doesNotMatch(page, /Bot Core не развёрнут/);
+  assert.match(page, /knowledgePublicationState/);
 }
 
 function assertKnowledgeAndGaps(): void {

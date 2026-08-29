@@ -164,10 +164,12 @@ export function BotClosedTestConsole({ canEdit }: { canEdit: boolean }) {
   return (
     <section className="space-y-3 rounded border border-zinc-200 bg-white p-4">
       <div className="space-y-1">
-        <h2 className="text-sm font-semibold text-zinc-900">Закрытый тест</h2>
+        <h2 className="text-sm font-semibold text-zinc-900">
+          Synthetic closed-test (не AI / не live-клиент)
+        </h2>
         <p className="text-xs text-zinc-500">
-          Synthetic-only контур Bot Core через server proxy. Не публичный канал,
-          не AI-провайдер и не запись в booking. Маркер{" "}
+          Тестовый synthetic-only контур Bot Core через server proxy. Не
+          публичный канал, не AI-диалог и не запись в booking. Маркер{" "}
           <code className="rounded bg-zinc-100 px-1">SYNTHETIC_OK</code> — не
           ответ модели.
         </p>
