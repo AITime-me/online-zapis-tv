@@ -32,7 +32,7 @@
 | Компонент | Статус | Комментарий |
 | --- | --- | --- |
 | Public booking catalog/slots/create | `DONE` | Клиентский публичный API, не Internal Bot API |
-| Internal Bot API read routes | `DONE` | eligibility, available-days, slots (CURSOR-15/21) |
+| Internal Bot API read routes | `DONE` | eligibility, available-days, slots, live-facts (BOT-CONTROL-PLANE-05) |
 | Internal Bot API booking create | `DONE` | `POST /api/internal/bot/v1/bookings` (CURSOR-24), Bearer + persistent idempotency |
 | Internal Bot Master Command API | `IMPLEMENTED` | CURSOR-26 code+ADR; **pending** migration apply + required PG race gate |
 | S2S Bearer auth | `DONE` | `BOT_INTERNAL_API_TOKEN`; HMAC/timestamp/nonce request signing ещё нет |
