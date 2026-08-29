@@ -46,7 +46,9 @@ export type BotKnowledgePublicationPayloadV1 = {
 
 /**
  * Structured live facts are forbidden in the KB contract.
- * Runtime live SoT (catalog/availability/promo) must override any prose later.
+ * Runtime LIVE SoT is `GET /api/internal/bot/v1/live-facts` (BOT-CONTROL-PLANE-05)
+ * and must win over any KB prose for price/duration/masters/bookingMode/active
+ * state/structured studio fields. Availability stays on request-time booking APIs.
  * Semantic AI validation is intentionally out of scope; only schema + light
  * exact-price copy guards exist at publish time.
  */

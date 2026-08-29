@@ -51,6 +51,11 @@ on:
       - "src/types/bot-knowledge.ts"
       - "src/components/admin/bot-knowledge-panel.tsx"
       - "scripts/security-bot-knowledge-publication*"
+      - "src/app/api/internal/bot/v1/live-facts/**"
+      - "src/lib/bot-api/live-facts-contract.ts"
+      - "src/services/BotLiveFactsService.ts"
+      - "scripts/security-bot-live-facts*"
+      - "docs/architecture/bot-live-facts.md"
       - "docs/architecture/bot-internal-api-pr-a.md"
       - "docs/architecture/bot-master-command-api.md"
   push:
@@ -108,6 +113,11 @@ on:
       - "src/types/bot-knowledge.ts"
       - "src/components/admin/bot-knowledge-panel.tsx"
       - "scripts/security-bot-knowledge-publication*"
+      - "src/app/api/internal/bot/v1/live-facts/**"
+      - "src/lib/bot-api/live-facts-contract.ts"
+      - "src/services/BotLiveFactsService.ts"
+      - "scripts/security-bot-live-facts*"
+      - "docs/architecture/bot-live-facts.md"
   workflow_dispatch:
 
 permissions:
@@ -180,6 +190,12 @@ jobs:
 
       - name: Bot knowledge publication required PostgreSQL Gate
         run: npm run test:security:bot-knowledge-publication-db:required
+
+      - name: Bot live facts unit and security checks
+        run: npm run test:security:bot-live-facts
+
+      - name: Bot live facts required PostgreSQL Gate
+        run: npm run test:security:bot-live-facts-db:required
 
       - name: Appointment creator provenance (required PG)
         run: npm run test:security:appointment-creator-provenance:required
