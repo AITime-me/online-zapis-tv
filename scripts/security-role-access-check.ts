@@ -496,6 +496,14 @@ function testOwnerOnlyRoutesUseOwnerRoleConstants(): void {
       needle: /BOT_SETTINGS_(VIEW|EDIT)_ROLES/,
     },
     {
+      file: "src/app/api/admin/bot/knowledge/entries/route.ts",
+      needle: /BOT_SETTINGS_(VIEW|EDIT)_ROLES/,
+    },
+    {
+      file: "src/app/api/admin/bot/knowledge/publish/route.ts",
+      needle: /BOT_SETTINGS_EDIT_ROLES/,
+    },
+    {
       file: "src/app/api/admin/bot/events/route.ts",
       needle: /BOT_SETTINGS_VIEW_ROLES/,
     },

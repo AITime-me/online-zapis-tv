@@ -215,6 +215,9 @@ model User {
   clientMergeLogs         ClientMergeLog[]        @relation("ClientMergePerformedBy")
   botSettingsUpdated      BotSettings[]           @relation("BotSettingsUpdatedBy")
   botSettingsPublicationsPublished BotSettingsPublication[] @relation("BotSettingsPublicationPublishedBy")
+  botKnowledgeEntriesCreated BotKnowledgeEntry[] @relation("BotKnowledgeEntryCreatedBy")
+  botKnowledgeEntriesUpdated BotKnowledgeEntry[] @relation("BotKnowledgeEntryUpdatedBy")
+  botKnowledgePublicationsPublished BotKnowledgePublication[] @relation("BotKnowledgePublicationPublishedBy")
   passwordResetTokens     PasswordResetToken[]
   communicationImports    CommunicationImportJob[] @relation("CommunicationImportCreatedBy")
   communicationCampaignsCreated CommunicationCampaign[] @relation("CommunicationCampaignCreatedBy")
@@ -325,6 +328,7 @@ model Service {
   bookingLinks   BookingLink[]
   bookingRequests BookingRequest[]
   promotions     PromotionService[]
+  botKnowledgeEntries BotKnowledgeEntry[]
 
   @@map("services")
 }
@@ -1228,6 +1232,90 @@ model BotSettingsPublication {
   @@unique([botSettingsId, versionNumber])
   @@index([botSettingsId, status])
   @@map("bot_settings_publications")
+}
+
+enum BotKnowledgeCategory {
+  PROCEDURE_EXPLANATION
+  FAQ
+  PREPARATION
+  AFTERCARE
+  OBJECTION_HANDLING
+  SAFETY_INFORMATION
+  POLICY_EXPLANATION
+  ESCALATION_GUIDANCE
+}
+
+enum BotKnowledgePublicationStatus {
+  ACTIVE
+  SUPERSEDED
+}
+
+/**
+ * Singleton workspace for mutable Teя knowledge drafts.
+ * Runtime consumers must read ACTIVE BotKnowledgePublication only.
+ */
+model BotKnowledgeWorkspace {
+  id                  String   @id @default("default")
+  activePublicationId String?  @unique @map("active_publication_id") @db.Uuid
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  activePublication BotKnowledgePublication?  @relation("BotKnowledgeWorkspaceActivePublication", fields: [activePublicationId], references: [id], onDelete: SetNull)
+  publications      BotKnowledgePublication[] @relation("BotKnowledgeWorkspacePublications")
+
+  @@map("bot_knowledge_workspace")
+}
+
+/**
+ * Mutable knowledge entry workspace. Save != Publish.
+ * serviceId is linkage only — never snapshot live prices/duration/masters.
+ */
+model BotKnowledgeEntry {
+  id              String               @id @default(uuid()) @db.Uuid
+  stableKey       String               @unique @map("stable_key") @db.VarChar(120)
+  category        BotKnowledgeCategory
+  title           String               @db.VarChar(200)
+  content         String               @db.Text
+  tags            String[]             @default([])
+  serviceId       String?              @map("service_id") @db.Uuid
+  isEnabled       Boolean              @default(true) @map("is_enabled")
+  createdByUserId String?              @map("created_by_user_id") @db.Uuid
+  updatedByUserId String?              @map("updated_by_user_id") @db.Uuid
+  createdAt       DateTime             @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime             @updatedAt @map("updated_at") @db.Timestamptz
+
+  service       Service? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  createdByUser User?    @relation("BotKnowledgeEntryCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedByUser User?    @relation("BotKnowledgeEntryUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([category, isEnabled])
+  @@index([serviceId])
+  @@map("bot_knowledge_entries")
+}
+
+/**
+ * Immutable published knowledge snapshot for bot-TV S2S consumption.
+ */
+model BotKnowledgePublication {
+  id                String                         @id @default(uuid()) @db.Uuid
+  workspaceId       String                         @map("workspace_id")
+  versionNumber     Int                            @map("version_number")
+  status            BotKnowledgePublicationStatus
+  schemaVersion     Int                            @default(1) @map("schema_version")
+  payload           Json
+  payloadChecksum   String                         @map("payload_checksum") @db.VarChar(64)
+  publishedAt       DateTime                       @map("published_at") @db.Timestamptz
+  publishedByUserId String?                        @map("published_by_user_id") @db.Uuid
+  supersededAt      DateTime?                      @map("superseded_at") @db.Timestamptz
+  createdAt         DateTime                       @default(now()) @map("created_at") @db.Timestamptz
+
+  workspace         BotKnowledgeWorkspace @relation("BotKnowledgeWorkspacePublications", fields: [workspaceId], references: [id], onDelete: Restrict)
+  publishedByUser   User?                 @relation("BotKnowledgePublicationPublishedBy", fields: [publishedByUserId], references: [id], onDelete: SetNull)
+  activeForWorkspace BotKnowledgeWorkspace? @relation("BotKnowledgeWorkspaceActivePublication")
+
+  @@unique([workspaceId, versionNumber])
+  @@index([workspaceId, status])
+  @@map("bot_knowledge_publications")
 }
 
 /**
