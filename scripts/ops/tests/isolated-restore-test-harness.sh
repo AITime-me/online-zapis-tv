@@ -56,6 +56,8 @@ EOF
   export FAKE_DOCKER_MODE="${1:-ok}"
   export IRT_DUMP_DIR_OVERRIDE="$DUMPS"
   export IRT_SKIP_FORBIDDEN_CHECK="${IRT_SKIP_FORBIDDEN_CHECK:-1}"
+  # Fake-docker retry scenarios do not need real wall-clock backoff.
+  export IRT_CREATE_DB_RETRY_DELAY_SEC="${IRT_CREATE_DB_RETRY_DELAY_SEC:-0}"
 }
 
 make_dump() {
@@ -188,6 +190,97 @@ scenario_notready() {
   set -e
   unset IRT_PG_READY_TIMEOUT_SEC
   if [[ "$rc" -eq 20 ]]; then ok "notready"; else bad "notready" "rc=$rc"; fi
+}
+
+assert_create_db_fail_diag() {
+  local attempt="${EVIDENCE}/production/last-attempt.env"
+  [[ -f "$attempt" ]] || { bad "${1}_evidence" "no last-attempt"; return 1; }
+  [[ "$(read_key "$attempt" ERROR_CODE)" == "CREATE_DB_FAILED" ]] \
+    && ok "${1}_code" \
+    || { bad "${1}_code" "ERROR_CODE=$(read_key "$attempt" ERROR_CODE)"; return 1; }
+  [[ "$(read_key "$attempt" CLEANUP_OK)" == "1" ]] || { bad "${1}_cleanup" "CLEANUP_OK!=1"; return 1; }
+  [[ "$(read_key "$attempt" TEMP_RESOURCES_ABSENT)" == "1" ]] || { bad "${1}_absent" "absent!=1"; return 1; }
+  ok "${1}_cleanup"
+  ok "${1}_absent"
+  local run_id diag_rel diag_path latest
+  run_id="$(read_key "$attempt" RUN_ID)"
+  diag_rel="$(read_key "$attempt" CREATE_DB_ERROR_LOG)"
+  if [[ -n "$run_id" && "$diag_rel" == "history/create_db_${run_id}.error.log" ]]; then
+    ok "${1}_diag_link"
+  else
+    bad "${1}_diag_link" "RUN_ID=$run_id CREATE_DB_ERROR_LOG=$diag_rel"
+    return 1
+  fi
+  diag_path="${EVIDENCE}/production/${diag_rel}"
+  latest="${EVIDENCE}/production/last-create-db-error.log"
+  if [[ -f "$diag_path" && -f "$latest" ]]; then
+    ok "${1}_diag_files"
+  else
+    bad "${1}_diag_files" "missing diag path=$diag_path latest=$latest"
+    return 1
+  fi
+  if grep -Eq 'persistent database creation failure|simulated startup race' "$diag_path" 2>/dev/null; then
+    ok "${1}_diag_content"
+  else
+    bad "${1}_diag_content" "expected create_db error text"
+    return 1
+  fi
+  if grep -Eq 'super-secret-token-do-not-leak|postgres://user:secret@|do-not-leak-9f3a' "$diag_path" "$latest" 2>/dev/null; then
+    bad "${1}_diag_no_secret" "secret leaked into diagnostic evidence"
+  else
+    ok "${1}_diag_no_secret"
+  fi
+  if grep -Eq 'PGPASSWORD=<redacted>|DATABASE_URL=<redacted>' "$diag_path" 2>/dev/null; then
+    ok "${1}_diag_redacted"
+  else
+    bad "${1}_diag_redacted" "expected redacted markers"
+  fi
+  if [[ -d "${STATE}/containers" ]] && compgen -G "${STATE}/containers/*" >/dev/null; then
+    bad "${1}_docker_cleaned" "container still present"
+  else
+    ok "${1}_docker_cleaned"
+  fi
+}
+
+scenario_create_db_fail() {
+  setup_case createdbfail
+  make_dump >/dev/null
+  set +e
+  run_irt production
+  local rc=$?
+  set -e
+  if [[ "$rc" -eq 30 ]]; then ok "createdbfail_rc"; else bad "createdbfail_rc" "rc=$rc"; fi
+  assert_create_db_fail_diag "createdbfail"
+}
+
+scenario_create_db_retry() {
+  setup_case createdb-retry
+  make_dump >/dev/null
+  set +e
+  run_irt production
+  local rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]]; then ok "createdb_retry_rc"; else bad "createdb_retry_rc" "rc=$rc"; fi
+  local success="${EVIDENCE}/production/last-success.env"
+  [[ -f "$success" ]] || { bad "createdb_retry_success_evidence" "no last-success"; return; }
+  [[ "$(read_key "$success" STATUS)" == "success" ]] \
+    && ok "createdb_retry_status" \
+    || bad "createdb_retry_status" "STATUS=$(read_key "$success" STATUS)"
+  [[ "$(read_key "$success" CREATE_DB_ERROR_LOG)" == "" ]] \
+    && ok "createdb_retry_no_diag_on_success" \
+    || bad "createdb_retry_no_diag_on_success" "CREATE_DB_ERROR_LOG set"
+  [[ -f "${EVIDENCE}/production/last-create-db-error.log" ]] \
+    && bad "createdb_retry_no_active_diag" "active create_db error log present" \
+    || ok "createdb_retry_no_active_diag"
+  local count
+  count="$(tr -d '[:space:]' <"${STATE}/create_db_attempts" 2>/dev/null || echo 0)"
+  if [[ "$count" == "2" ]]; then
+    ok "createdb_retry_attempt_count"
+  else
+    bad "createdb_retry_attempt_count" "count=$count (expected 2)"
+  fi
+  [[ "$(read_key "$success" CLEANUP_OK)" == "1" ]] && ok "createdb_retry_cleanup" \
+    || bad "createdb_retry_cleanup" "CLEANUP_OK!=1"
 }
 
 scenario_restorefail() {
@@ -1441,6 +1534,8 @@ main() {
   scenario_dump_unreadable
   scenario_noimage
   scenario_notready
+  scenario_create_db_fail
+  scenario_create_db_retry
   scenario_restorefail
   scenario_foreign_owner_ok
   scenario_diag_cleared_on_success

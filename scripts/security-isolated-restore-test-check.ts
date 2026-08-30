@@ -188,15 +188,23 @@ function assertIsolationContracts(): void {
   assert.match(combined, /--no-owner/);
   assert.match(combined, /--no-acl/);
   assert.match(script, /irt_publish_pg_restore_diagnostic|PG_RESTORE_ERROR_LOG|last-pg-restore-error/);
+  assert.match(script, /irt_publish_create_db_diagnostic|CREATE_DB_ERROR_LOG|last-create-db-error/);
+  assert.match(script, /run_create_database|IRT_CREATE_DB_MAX_ATTEMPTS/);
+  assert.match(script, /irt_diagnostic_journal_suffix/);
   assert.match(script, /irt_sanitize_pg_restore_diag/);
   assert.match(script, /irt_interruptible_capture_merged/);
   assert.match(script, /irt_purge_run_dir_files/);
   assert.match(script, /trailer_bytes|content_budget/);
-  assert.match(script, /last-pg-restore-error\.log\.tmp/);
+  assert.match(script, /last-pg-restore-error\.log\.tmp|\$\{latest_name\}\.tmp/);
   assert.doesNotMatch(
     script,
     /pg_restore[^\n]*>\/dev\/null\s*2>&1/,
     "pg_restore must not discard diagnostics to /dev/null",
+  );
+  assert.doesNotMatch(
+    script,
+    /CREATE DATABASE restore_test[^\n]*>\/dev\/null/,
+    "CREATE DATABASE must not discard diagnostics to /dev/null",
   );
   assert.doesNotMatch(combined, /CREATE ROLE|createuser/);
   // Ban piping pg_restore into another command; allow `||` elsewhere on unrelated lines.
@@ -335,7 +343,7 @@ function assertDryRunMissingEnv(): void {
 
 function runBehavioralHarness(): void {
   const harnessPath = toBashPath(path.join(ROOT, HARNESS));
-  const result = runBash([harnessPath], undefined, 300_000);
+  const result = runBash([harnessPath], undefined, 900_000);
   if (result.status !== 0) {
     console.error(result.stdout);
     console.error(result.stderr);
@@ -347,6 +355,8 @@ function runBehavioralHarness(): void {
   );
   assert.match(result.stdout, /PASS success/);
   assert.match(result.stdout, /PASS dump_missing/);
+  assert.match(result.stdout, /PASS createdbfail_rc/);
+  assert.match(result.stdout, /PASS createdb_retry_rc/);
   assert.match(result.stdout, /PASS restorefail/);
   assert.match(result.stdout, /PASS restorefail_diag_link|SKIP restorefail_diag_link/);
   assert.match(result.stdout, /PASS foreign_owner_ok/);

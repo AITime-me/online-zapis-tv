@@ -30,14 +30,25 @@
     last-attempt.env
     last-success.env       # не затирается неудачной попыткой
     last-pg-restore-error.log  # активный diagnostic; удаляется при success
+    last-create-db-error.log   # активный CREATE DATABASE diagnostic; удаляется при success
     history/               # unique names: timestamp+PID+run-id
                            # + pg_restore_<RUN_ID>.error.log (0600, bounded)
+                           # + create_db_<RUN_ID>.error.log (0600, bounded)
     runtime/               # 0700: cidfile, current.env, private dump snapshot
   staging/
     ...
 ```
 
 Permissions: evidence dirs `0750`, runtime `0700`, evidence files `0600`, владелец `deploy:deploy`.
+
+## CREATE DATABASE (temp PG)
+
+После `pg_isready` скрипт создаёт `restore_test` с bounded retry (по умолчанию **3** попытки, пауза **2s**).
+Stdout/stderr каждой попытки пишутся в runtime `create_db.log`, при окончательном fail
+публикуются как sanitized `history/create_db_<RUN_ID>.error.log` + `last-create-db-error.log`
+(тот же redact/cap контур, что у `pg_restore`). Journal summary содержит
+`code=CREATE_DB_FAILED phase=create_db createDbDiag=history/create_db_….error.log`.
+Пароли/`PGPASSWORD` в diagnostic и journal **не** попадают.
 
 ## Lifecycle (единый EXIT-финализатор)
 

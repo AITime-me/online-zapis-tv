@@ -187,6 +187,32 @@ case "$cmd" in
     fi
     if [[ "$tool" == "psql" ]]; then
       sql="$*"
+      if [[ "$sql" == *"CREATE DATABASE restore_test"* ]]; then
+        if [[ "$MODE" == "createdbfail" ]]; then
+          echo 'psql: ERROR: persistent database creation failure (harness)' >&2
+          echo 'PGPASSWORD=super-secret-token-do-not-leak' >&2
+          echo 'DATABASE_URL=postgres://user:secret@localhost/db' >&2
+          exit 1
+        fi
+        if [[ "$MODE" == "createdb-retry" ]]; then
+          count_file="${STATE}/create_db_attempts"
+          count=0
+          if [[ -f "$count_file" ]]; then
+            count="$(tr -d '[:space:]' <"$count_file" 2>/dev/null || echo 0)"
+          fi
+          if [[ ! "$count" =~ ^[0-9]+$ ]]; then
+            count=0
+          fi
+          count=$((count + 1))
+          printf '%s' "$count" >"$count_file"
+          if (( count < 2 )); then
+            echo 'psql: ERROR: database creation failed (simulated startup race)' >&2
+            echo 'PGPASSWORD=super-secret-token-do-not-leak' >&2
+            exit 1
+          fi
+          exit 0
+        fi
+      fi
       if [[ "$MODE" == "integrityfail" ]]; then
         if [[ "$sql" == *"information_schema"* || "$sql" == *"pg_catalog.pg_class"* || "$sql" == *"pg_catalog.pg_namespace"* ]]; then
           exit 1
