@@ -88,3 +88,25 @@ export type BotKnowledgeServiceOptionDto = {
   id: string;
   publicName: string;
 };
+
+/** Managed KB draft import file (schemaVersion=1). Not a publication payload. */
+export type BotKnowledgeImportEntryV1 = {
+  key: string;
+  category: BotKnowledgeCategoryId;
+  title: string;
+  content: string;
+  tags: string[];
+  serviceId: string | null;
+};
+
+export type BotKnowledgeImportFileV1 = {
+  schemaVersion: 1;
+  entries: BotKnowledgeImportEntryV1[];
+};
+
+export type BotKnowledgeImportResultDto = {
+  total: number;
+  created: number;
+  updated: number;
+  unchanged: number;
+};

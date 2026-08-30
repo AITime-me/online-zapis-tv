@@ -42,6 +42,15 @@ type ActivateResponse = {
   error?: string;
 };
 
+type ImportResponse = {
+  ok: boolean;
+  total?: number;
+  created?: number;
+  updated?: number;
+  unchanged?: number;
+  error?: string;
+};
+
 const fieldClass =
   "w-full rounded border border-zinc-300 px-2 py-1.5 text-sm text-zinc-900 disabled:bg-zinc-100 disabled:text-zinc-500";
 const labelClass = "text-xs font-medium text-zinc-700";
@@ -129,6 +138,11 @@ export function BotKnowledgePanel({
   const [statusLabel, setStatusLabel] = useState<string | null>(null);
   const [publishStatus, setPublishStatus] = useState<SaveStatus>("idle");
   const [publishStatusLabel, setPublishStatusLabel] = useState<string | null>(null);
+  const [importFileName, setImportFileName] = useState<string | null>(null);
+  const [importPayload, setImportPayload] = useState<unknown | null>(null);
+  const [importEntryCount, setImportEntryCount] = useState<number | null>(null);
+  const [importStatus, setImportStatus] = useState<SaveStatus>("idle");
+  const [importStatusLabel, setImportStatusLabel] = useState<string | null>(null);
 
   const filteredEntries = useMemo(() => {
     return entries.filter((entry) => {
@@ -269,6 +283,87 @@ export function BotKnowledgePanel({
     }
   }
 
+  function resetImportSelection() {
+    setImportFileName(null);
+    setImportPayload(null);
+    setImportEntryCount(null);
+    setImportStatus("idle");
+    setImportStatusLabel(null);
+  }
+
+  async function onImportFileSelected(file: File | null) {
+    if (!file || !canEdit) {
+      resetImportSelection();
+      return;
+    }
+    setImportStatus("idle");
+    setImportStatusLabel(null);
+    setImportFileName(file.name);
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as unknown;
+      if (
+        !parsed ||
+        typeof parsed !== "object" ||
+        Array.isArray(parsed) ||
+        !("entries" in parsed) ||
+        !Array.isArray((parsed as { entries: unknown }).entries)
+      ) {
+        resetImportSelection();
+        setImportStatus("error");
+        setImportStatusLabel("Ожидается JSON с массивом entries");
+        return;
+      }
+      const count = (parsed as { entries: unknown[] }).entries.length;
+      setImportPayload(parsed);
+      setImportEntryCount(count);
+    } catch {
+      resetImportSelection();
+      setImportStatus("error");
+      setImportStatusLabel("Некорректный JSON-файл");
+    }
+  }
+
+  async function commitImport() {
+    if (!canEdit || importPayload == null) {
+      return;
+    }
+    setImportStatus("saving");
+    setImportStatusLabel(null);
+    try {
+      const response = await fetch("/api/admin/bot/knowledge/entries/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(importPayload),
+      });
+      const data = await readApiJsonResponse<ImportResponse>(response);
+      if (
+        !response.ok ||
+        !data.ok ||
+        typeof data.created !== "number" ||
+        typeof data.updated !== "number" ||
+        typeof data.unchanged !== "number"
+      ) {
+        setImportStatus("error");
+        setImportStatusLabel(data.error ?? "Ошибка импорта");
+        return;
+      }
+      await refreshFromServer();
+      setImportStatus("saved");
+      setImportStatusLabel(
+        `Импортировано: создано ${data.created}, обновлено ${data.updated}, без изменений ${data.unchanged}`,
+      );
+      setImportPayload(null);
+      setImportEntryCount(null);
+      setImportFileName(null);
+    } catch (error) {
+      setImportStatus("error");
+      setImportStatusLabel(
+        error instanceof Error ? error.message : "Ошибка импорта",
+      );
+    }
+  }
+
   return (
     <div className="space-y-4">
       <section className={sectionClass}>
@@ -325,6 +420,60 @@ export function BotKnowledgePanel({
             </button>
           ) : null}
         </div>
+
+        {canEdit ? (
+          <div className="space-y-2 rounded border border-dashed border-zinc-300 bg-zinc-50 p-3">
+            <p className="text-xs font-medium text-zinc-800">
+              Импортировать из файла
+            </p>
+            <p className="text-xs text-zinc-600">
+              Импорт меняет только черновик. Тея не увидит изменения до
+              «Опубликовать KB».
+            </p>
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="space-y-1">
+                <span className={labelClass}>JSON-файл</span>
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  className="block max-w-full text-xs text-zinc-700"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0] ?? null;
+                    void onImportFileSelected(file);
+                    event.target.value = "";
+                  }}
+                />
+              </label>
+              {importEntryCount != null ? (
+                <p className="text-xs text-zinc-700">
+                  Найдено {importEntryCount} записей
+                  {importFileName ? ` · ${importFileName}` : ""}
+                </p>
+              ) : null}
+              <button
+                type="button"
+                className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                disabled={importPayload == null || importStatus === "saving"}
+                onClick={() => {
+                  void commitImport();
+                }}
+              >
+                Загрузить в черновик
+              </button>
+            </div>
+            {importStatusLabel ? (
+              <p
+                className={
+                  importStatus === "error"
+                    ? "text-xs text-red-700"
+                    : "text-xs text-zinc-700"
+                }
+              >
+                {importStatusLabel}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="overflow-x-auto">
           <table className="min-w-full text-left text-xs text-zinc-700">

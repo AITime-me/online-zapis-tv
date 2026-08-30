@@ -9,6 +9,10 @@ import {
   type BotKnowledgePublicationPayloadV1,
   type BotKnowledgePublishedEntryV1,
 } from "@/lib/bot-knowledge/publication-contract";
+import {
+  BOT_KNOWLEDGE_MAX_STABLE_KEY,
+  BOT_KNOWLEDGE_STABLE_KEY_RE,
+} from "@/lib/bot-knowledge/stable-key";
 
 export { BOT_KNOWLEDGE_PUBLICATION_SCHEMA_VERSION };
 
@@ -24,11 +28,10 @@ const ENTRY_KEYS = ["key", "category", "title", "content", "tags", "serviceId"] 
 
 const ALLOWED_CATEGORIES = new Set<string>(BOT_KNOWLEDGE_CATEGORIES);
 
-const STABLE_KEY_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-const MAX_STABLE_KEY = 120;
+const MAX_STABLE_KEY = BOT_KNOWLEDGE_MAX_STABLE_KEY;
 const MAX_TITLE = 200;
 const MAX_CONTENT = 20_000;
 const MAX_TAG = 64;
@@ -89,7 +92,7 @@ function assertNonEmptyBoundedString(
 
 function assertStableKey(value: unknown): asserts value is string {
   assertNonEmptyBoundedString(value, MAX_STABLE_KEY, "BOT_KNOWLEDGE_ENTRY_KEY_INVALID");
-  if (!STABLE_KEY_RE.test(value)) {
+  if (!BOT_KNOWLEDGE_STABLE_KEY_RE.test(value)) {
     fail("BOT_KNOWLEDGE_ENTRY_KEY_INVALID");
   }
 }
