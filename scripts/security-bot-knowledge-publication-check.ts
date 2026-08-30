@@ -47,6 +47,7 @@ function testServiceSemantics(): void {
   const entries = read("src/services/BotKnowledgeEntryService.ts");
   assert.match(entries, /createBotKnowledgeEntry/);
   assert.match(entries, /updateBotKnowledgeEntry/);
+  assert.match(entries, /importBotKnowledgeEntries/);
   assert.match(entries, /stableKey нельзя менять/);
   assert.doesNotMatch(entries, /publishCurrentKnowledge/);
 
@@ -299,6 +300,20 @@ async function testStrictPayloadValidation(): Promise<void> {
     },
   ]);
   assert.equal(hashBotKnowledgePublicationPayload(reorderedInput), checksumA);
+
+  const dotted = buildBotKnowledgePublicationPayloadFromEntries([
+    {
+      stableKey: "procedure.pm_general",
+      category: "PROCEDURE_EXPLANATION",
+      title: "PM general",
+      content: "Описание без цен.",
+      tags: ["pm"],
+      serviceId: null,
+      isEnabled: true,
+    },
+  ]);
+  assert.equal(dotted.entries[0].key, "procedure.pm_general");
+  assertValidBotKnowledgePublicationPayload(dotted);
 }
 
 async function main(): Promise<void> {

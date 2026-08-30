@@ -46,11 +46,13 @@ on:
       - "src/app/api/internal/bot/v1/knowledge/**"
       - "src/app/api/admin/bot/knowledge/**"
       - "src/lib/bot-knowledge/publication-*"
+      - "src/lib/bot-knowledge/stable-key.ts"
       - "src/services/BotKnowledgeEntryService.ts"
       - "src/services/BotKnowledgePublicationService.ts"
       - "src/types/bot-knowledge.ts"
       - "src/components/admin/bot-knowledge-panel.tsx"
       - "scripts/security-bot-knowledge-publication*"
+      - "scripts/security-bot-knowledge-import*"
       - "src/app/api/internal/bot/v1/live-facts/**"
       - "src/lib/bot-api/live-facts-contract.ts"
       - "src/services/BotLiveFactsService.ts"
@@ -108,11 +110,13 @@ on:
       - "src/app/api/internal/bot/v1/knowledge/**"
       - "src/app/api/admin/bot/knowledge/**"
       - "src/lib/bot-knowledge/publication-*"
+      - "src/lib/bot-knowledge/stable-key.ts"
       - "src/services/BotKnowledgeEntryService.ts"
       - "src/services/BotKnowledgePublicationService.ts"
       - "src/types/bot-knowledge.ts"
       - "src/components/admin/bot-knowledge-panel.tsx"
       - "scripts/security-bot-knowledge-publication*"
+      - "scripts/security-bot-knowledge-import*"
       - "src/app/api/internal/bot/v1/live-facts/**"
       - "src/lib/bot-api/live-facts-contract.ts"
       - "src/services/BotLiveFactsService.ts"
@@ -190,6 +194,12 @@ jobs:
 
       - name: Bot knowledge publication required PostgreSQL Gate
         run: npm run test:security:bot-knowledge-publication-db:required
+
+      - name: Bot knowledge import unit and security checks
+        run: npm run test:security:bot-knowledge-import
+
+      - name: Bot knowledge import required PostgreSQL Gate
+        run: npm run test:security:bot-knowledge-import-db:required
 
       - name: Bot live facts unit and security checks
         run: npm run test:security:bot-live-facts
