@@ -54,8 +54,11 @@ IRT_PHASE=""
 IRT_EXIT_CODE=0
 # Relative path under env evidence (e.g. history/pg_restore_<RUN_ID>.error.log); never multiline.
 IRT_PG_RESTORE_ERROR_LOG=""
+IRT_CREATE_DB_ERROR_LOG=""
 # Cap diagnostic capture so evidence cannot grow without bound.
 IRT_PG_RESTORE_DIAG_MAX_BYTES=16384
+IRT_CREATE_DB_MAX_ATTEMPTS=3
+IRT_CREATE_DB_RETRY_DELAY_SEC=2
 IRT_WORK_OK=0
 IRT_FINALIZED=0
 IRT_LOCK_HELD=0
@@ -196,7 +199,7 @@ fail() {
   IRT_ERROR_CODE="$err"
   IRT_STATUS="failed"
   IRT_PHASE="${IRT_PHASE:-unknown}"
-  irt_info "ISOLATED_RESTORE_TEST FAIL env=${IRT_ENV:-unknown} code=${IRT_ERROR_CODE} phase=${IRT_PHASE}"
+  irt_info "ISOLATED_RESTORE_TEST FAIL env=${IRT_ENV:-unknown} code=${IRT_ERROR_CODE} phase=${IRT_PHASE}$(irt_diagnostic_journal_suffix)"
   exit "$IRT_EXIT_CODE"
 }
 
@@ -301,18 +304,22 @@ irt_sanitize_pg_restore_diag() {
     -e 's#postgres(ql)?://[^[:space:]]+#postgres://<redacted>#gi'
 }
 
-# Publish bounded, sanitized pg_restore diagnostic next to history; link via RUN_ID.
-# Best-effort: failure here must not mask the original PG_RESTORE_FAILED.
-# Final published bytes (history + active) are hard-capped at max_bytes including trailer.
-irt_publish_pg_restore_diagnostic() {
+# Publish bounded, sanitized diagnostic next to history; link via RUN_ID.
+# rel_path: e.g. history/create_db_<RUN_ID>.error.log
+# latest_name: e.g. last-create-db-error.log
+# Best-effort: failure here must not mask the original phase error.
+irt_publish_bounded_diagnostic() {
   local src="$1"
+  local rel="$2"
+  local latest_name="$3"
   local max_bytes="${IRT_PG_RESTORE_DIAG_MAX_BYTES:-16384}"
-  local rel dest latest tmp size trailer trailer_bytes content_budget truncated latest_tmp
+  local dest latest tmp size trailer trailer_bytes content_budget truncated latest_tmp
 
-  IRT_PG_RESTORE_ERROR_LOG=""
   [[ -n "${IRT_RUN_ID:-}" ]] || return 1
   [[ "$IRT_RUN_ID" =~ $IRT_RUN_ID_RE ]] || return 1
   [[ -f "$src" ]] || return 1
+  [[ "$rel" == history/* ]] || return 1
+  [[ "$latest_name" != */* ]] || return 1
   if ! irt_ensure_evidence_dirs; then
     return 1
   fi
@@ -320,9 +327,8 @@ irt_publish_pg_restore_diagnostic() {
     max_bytes=16384
   fi
 
-  rel="history/pg_restore_${IRT_RUN_ID}.error.log"
   dest="${IRT_ENV_EVIDENCE_DIR}/${rel}"
-  latest="${IRT_ENV_EVIDENCE_DIR}/last-pg-restore-error.log"
+  latest="${IRT_ENV_EVIDENCE_DIR}/${latest_name}"
   tmp="${dest}.tmp.$$.$RANDOM"
 
   if ! irt_sanitize_pg_restore_diag <"$src" >"$tmp" 2>/dev/null; then
@@ -392,7 +398,7 @@ irt_publish_pg_restore_diagnostic() {
   chmod 600 "$dest" 2>/dev/null || true
 
   # Atomic active pointer in the same directory (mv replaces a symlink entry; does not follow it).
-  latest_tmp="${IRT_ENV_EVIDENCE_DIR}/last-pg-restore-error.log.tmp.$$.$RANDOM"
+  latest_tmp="${IRT_ENV_EVIDENCE_DIR}/${latest_name}.tmp.$$.$RANDOM"
   if [[ -L "$latest" ]]; then
     rm -f -- "$latest" 2>/dev/null || true
   fi
@@ -405,8 +411,45 @@ irt_publish_pg_restore_diagnostic() {
     # Do not leave a partial/wrong active file; history path still links the failure.
   fi
 
-  IRT_PG_RESTORE_ERROR_LOG="$rel"
   return 0
+}
+
+# Publish bounded, sanitized pg_restore diagnostic next to history; link via RUN_ID.
+# Best-effort: failure here must not mask the original PG_RESTORE_FAILED.
+irt_publish_pg_restore_diagnostic() {
+  local src="$1"
+  local rel="history/pg_restore_${IRT_RUN_ID}.error.log"
+
+  IRT_PG_RESTORE_ERROR_LOG=""
+  if irt_publish_bounded_diagnostic "$src" "$rel" "last-pg-restore-error.log"; then
+    IRT_PG_RESTORE_ERROR_LOG="$rel"
+    return 0
+  fi
+  return 1
+}
+
+# Publish bounded CREATE DATABASE diagnostic (all retry attempts).
+irt_publish_create_db_diagnostic() {
+  local src="$1"
+  local rel="history/create_db_${IRT_RUN_ID}.error.log"
+
+  IRT_CREATE_DB_ERROR_LOG=""
+  if irt_publish_bounded_diagnostic "$src" "$rel" "last-create-db-error.log"; then
+    IRT_CREATE_DB_ERROR_LOG="$rel"
+    return 0
+  fi
+  return 1
+}
+
+irt_diagnostic_journal_suffix() {
+  local suffix=""
+  if [[ -n "${IRT_CREATE_DB_ERROR_LOG:-}" ]]; then
+    suffix="${suffix} createDbDiag=${IRT_CREATE_DB_ERROR_LOG}"
+  fi
+  if [[ -n "${IRT_PG_RESTORE_ERROR_LOG:-}" ]]; then
+    suffix="${suffix} pgRestoreDiag=${IRT_PG_RESTORE_ERROR_LOG}"
+  fi
+  printf '%s' "$suffix"
 }
 
 irt_clear_active_pg_restore_diagnostic() {
@@ -416,6 +459,18 @@ irt_clear_active_pg_restore_diagnostic() {
   if [[ -n "${IRT_ENV_EVIDENCE_DIR:-}" ]]; then
     rm -f -- "${IRT_ENV_EVIDENCE_DIR}/last-pg-restore-error.log" 2>/dev/null || true
   fi
+}
+
+irt_clear_active_create_db_diagnostic() {
+  IRT_CREATE_DB_ERROR_LOG=""
+  if [[ -n "${IRT_ENV_EVIDENCE_DIR:-}" ]]; then
+    rm -f -- "${IRT_ENV_EVIDENCE_DIR}/last-create-db-error.log" 2>/dev/null || true
+  fi
+}
+
+irt_clear_active_diagnostics() {
+  irt_clear_active_pg_restore_diagnostic
+  irt_clear_active_create_db_diagnostic
 }
 
 # Map interruptible command status: parent interrupt → exit 50 INTERRUPTED;
@@ -561,7 +616,7 @@ finalize_once() {
   if [[ "$IRT_STATUS" == "success" ]]; then
     irt_info "ISOLATED_RESTORE_TEST SUCCESS env=${IRT_ENV} dump=${IRT_DUMP_BASENAME} tables=${IRT_USER_TABLE_COUNT} schemas=${IRT_USER_SCHEMA_COUNT} durationSec=$(irt_duration_sec)"
   elif [[ "$IRT_DRY_RUN" -eq 0 && "$IRT_SKIP_EVIDENCE" -eq 0 ]]; then
-    irt_info "ISOLATED_RESTORE_TEST FAIL env=${IRT_ENV:-unknown} code=${IRT_ERROR_CODE:-unknown} phase=${IRT_PHASE:-unknown} cleanup=${IRT_CLEANUP_OK} absent=${IRT_TEMP_ABSENT} durationSec=$(irt_duration_sec)"
+    irt_info "ISOLATED_RESTORE_TEST FAIL env=${IRT_ENV:-unknown} code=${IRT_ERROR_CODE:-unknown} phase=${IRT_PHASE:-unknown} cleanup=${IRT_CLEANUP_OK} absent=${IRT_TEMP_ABSENT} durationSec=$(irt_duration_sec)$(irt_diagnostic_journal_suffix)"
   fi
 
   exit "$IRT_EXIT_CODE"
@@ -781,18 +836,75 @@ start_temp_postgres() {
   fail 20 "TEMP_PG_NOT_READY"
 }
 
-run_restore() {
-  IRT_PHASE="pg_restore"
-  local create_rc=0
-  trap - ERR
-  set +e
-  irt_interruptible_run docker exec -e "PGPASSWORD=${IRT_TEMP_PASSWORD}" "$IRT_TEMP_CID" \
-    psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE restore_test;" >/dev/null 2>&1
-  create_rc=$?
-  set -e
-  trap on_err ERR
-  irt_require_cmd_ok "$create_rc" 30 "CREATE_DB_FAILED"
+run_create_database() {
+  IRT_PHASE="create_db"
+  local create_log="${IRT_RUN_DIR}/create_db.log"
+  local attempt max_attempts delay attempt_rc attempt_file
+  max_attempts="${IRT_CREATE_DB_MAX_ATTEMPTS:-3}"
+  delay="${IRT_CREATE_DB_RETRY_DELAY_SEC:-2}"
+  if [[ ! "$max_attempts" =~ ^[1-9][0-9]*$ ]]; then
+    max_attempts=3
+  fi
+  if [[ ! "$delay" =~ ^[0-9]+$ ]]; then
+    delay=2
+  fi
 
+  : >"$create_log"
+  chmod 600 "$create_log" 2>/dev/null || true
+
+  for (( attempt=1; attempt<=max_attempts; attempt++ )); do
+    if (( attempt > 1 )); then
+      printf '\n--- retry attempt %s/%s ---\n' "$attempt" "$max_attempts" >>"$create_log"
+      if (( delay > 0 )); then
+        trap - ERR
+        set +e
+        irt_interruptible_run sleep "$delay"
+        set -e
+        trap on_err ERR
+        if [[ "${IRT_SIGNAL_RECEIVED:-0}" -eq 1 ]]; then
+          exit 50
+        fi
+      fi
+    fi
+
+    attempt_file="${IRT_RUN_DIR}/create_db_attempt_${attempt}.log"
+    trap - ERR
+    set +e
+    irt_interruptible_capture_merged "$attempt_file" docker exec -e "PGPASSWORD=${IRT_TEMP_PASSWORD}" "$IRT_TEMP_CID" \
+      psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE restore_test;"
+    attempt_rc=$?
+    set -e
+    trap on_err ERR
+
+    {
+      printf '=== CREATE DATABASE attempt %s/%s exit=%s ===\n' "$attempt" "$max_attempts" "$attempt_rc"
+      cat "$attempt_file" 2>/dev/null || true
+    } >>"$create_log"
+    rm -f -- "$attempt_file" 2>/dev/null || true
+
+    if [[ "${IRT_SIGNAL_RECEIVED:-0}" -eq 1 ]]; then
+      exit 50
+    fi
+    if (( attempt_rc > 128 )); then
+      if [[ "${IRT_SIGNAL_RECEIVED:-0}" -ne 1 ]]; then
+        irt_publish_create_db_diagnostic "$create_log" || true
+      fi
+      fail 50 "CREATE_DB_FAILED"
+    fi
+    if [[ "$attempt_rc" -eq 0 ]]; then
+      return 0
+    fi
+  done
+
+  if [[ "${IRT_SIGNAL_RECEIVED:-0}" -ne 1 ]]; then
+    irt_publish_create_db_diagnostic "$create_log" || true
+  fi
+  fail 30 "CREATE_DB_FAILED"
+}
+
+run_restore() {
+  run_create_database
+  IRT_PHASE="pg_restore"
   local rc=0
   local restore_log="${IRT_RUN_DIR}/pg_restore.log"
   : >"$restore_log"
@@ -1012,6 +1124,12 @@ irt_purge_run_dir_files() {
     "${run_dir}/dump.snapshot.partial" \
     "${run_dir}/schemas.count" \
     "${run_dir}/tables.count" \
+    "${run_dir}/create_db.log" \
+    "${run_dir}/create_db_attempt_1.log" \
+    "${run_dir}/create_db_attempt_2.log" \
+    "${run_dir}/create_db_attempt_3.log" \
+    "${run_dir}/create_db_attempt_4.log" \
+    "${run_dir}/create_db_attempt_5.log" \
     "${run_dir}/pg_restore.log" \
     "${run_dir}/proof-20260806.deploy.log" \
     "${run_dir}/proof-20260806.status.log" \
@@ -1162,7 +1280,9 @@ verify_cleanup_proof() {
   # Known per-run leftovers must not remain (raw pg_restore.log included).
   if [[ -n "${IRT_RUN_DIR:-}" ]]; then
     leftover=0
-    for f in pg_restore.log schemas.count tables.count dump.snapshot.partial; do
+    for f in create_db.log create_db_attempt_1.log create_db_attempt_2.log create_db_attempt_3.log \
+             create_db_attempt_4.log create_db_attempt_5.log \
+             pg_restore.log schemas.count tables.count dump.snapshot.partial; do
       if [[ -e "${IRT_RUN_DIR}/${f}" ]]; then
         leftover=1
         break
@@ -1256,6 +1376,7 @@ CLEANUP_OK=${IRT_CLEANUP_OK}
 TEMP_RESOURCES_ABSENT=${IRT_TEMP_ABSENT}
 SNAPSHOT_ABSENT=${IRT_SNAPSHOT_ABSENT}
 PG_RESTORE_ERROR_LOG=$(irt_escape_manifest_value "${IRT_PG_RESTORE_ERROR_LOG:-}")
+CREATE_DB_ERROR_LOG=$(irt_escape_manifest_value "${IRT_CREATE_DB_ERROR_LOG:-}")
 EOF
 }
 
@@ -1275,8 +1396,8 @@ write_attempt_evidence() {
   attempt="${IRT_ENV_EVIDENCE_DIR}/last-attempt.env"
   hist="${IRT_HISTORY_DIR}/${uniq}_${IRT_STATUS}.env"
   if [[ "$IRT_STATUS" == "success" ]]; then
-    # Drop active error pointer before publishing success manifests.
-    irt_clear_active_pg_restore_diagnostic
+    # Drop active error pointers before publishing success manifests.
+    irt_clear_active_diagnostics
   fi
   local lines
   mapfile -t lines < <(evidence_lines) || return 1
